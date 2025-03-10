@@ -27,7 +27,7 @@
  * SUCH DAMAGE.
  *
  */
-#include <sys/cdefs.h>
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -46,7 +46,7 @@
 #include <arm/ti/ti_sysc.h>
 #include "gpio_if.h"
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
@@ -687,8 +687,8 @@ ti_sdhci_attach(device_t dev)
 	if (OF_hasprop(node, "non-removable"))
 		sc->force_card_present = true;
 
-	bus_generic_probe(dev);
-	bus_generic_attach(dev);
+	bus_identify_children(dev);
+	bus_attach_children(dev);
 
 	sdhci_start_slot(&sc->slot);
 	return (0);

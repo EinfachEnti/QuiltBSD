@@ -27,7 +27,6 @@
 
 #include "opt_platform.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/endian.h>
 #include <sys/systm.h>
@@ -145,7 +144,8 @@ opal_i2c_attach(device_t dev)
 
 	I2C_LOCK_INIT(sc);
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 static int

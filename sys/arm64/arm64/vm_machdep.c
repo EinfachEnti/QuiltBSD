@@ -27,7 +27,6 @@
 
 #include "opt_platform.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/limits.h>
@@ -54,6 +53,13 @@
 #endif
 
 #include <dev/psci/psci.h>
+
+/*
+ * psci.c is "default" in ARM64 kernel config files
+ * psci_reset will do nothing until/unless the psci device probes/attaches.
+ * Therefore, it is safe to default the cpu_reset_hook to psci_reset.
+ */
+cpu_reset_hook_t cpu_reset_hook = psci_reset;
 
 /*
  * Finish a fork operation, with process p2 nearly set up.
@@ -124,21 +130,11 @@ void
 cpu_reset(void)
 {
 
-	psci_reset();
+	cpu_reset_hook();
 
 	printf("cpu_reset failed");
 	while(1)
 		__asm volatile("wfi" ::: "memory");
-}
-
-void
-cpu_thread_swapin(struct thread *td)
-{
-}
-
-void
-cpu_thread_swapout(struct thread *td)
-{
 }
 
 void
@@ -206,7 +202,7 @@ cpu_copy_thread(struct thread *td, struct thread *td0)
  * Set that machine state for performing an upcall that starts
  * the entry function with the given argument.
  */
-void
+int
 cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 	stack_t *stack)
 {
@@ -214,15 +210,18 @@ cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 
 	/* 32bits processes use r13 for sp */
 	if (td->td_frame->tf_spsr & PSR_M_32) {
-		tf->tf_x[13] = STACKALIGN((uintptr_t)stack->ss_sp + stack->ss_size);
+		tf->tf_x[13] = STACKALIGN((uintptr_t)stack->ss_sp +
+		    stack->ss_size);
 		if ((register_t)entry & 1)
 			tf->tf_spsr |= PSR_T;
 	} else
-		tf->tf_sp = STACKALIGN((uintptr_t)stack->ss_sp + stack->ss_size);
+		tf->tf_sp = STACKALIGN((uintptr_t)stack->ss_sp +
+		    stack->ss_size);
 	tf->tf_elr = (register_t)entry;
 	tf->tf_x[0] = (register_t)arg;
 	tf->tf_x[29] = 0;
 	tf->tf_lr = 0;
+	return (0);
 }
 
 int
@@ -289,6 +288,14 @@ cpu_fork_kthread_handler(struct thread *td, void (*func)(void *), void *arg)
 
 	td->td_pcb->pcb_x[PCB_X19] = (uintptr_t)func;
 	td->td_pcb->pcb_x[PCB_X20] = (uintptr_t)arg;
+}
+
+void
+cpu_update_pcb(struct thread *td)
+{
+	MPASS(td == curthread);
+	td->td_pcb->pcb_tpidr_el0 = READ_SPECIALREG(tpidr_el0);
+	td->td_pcb->pcb_tpidrro_el0 = READ_SPECIALREG(tpidrro_el0);
 }
 
 void

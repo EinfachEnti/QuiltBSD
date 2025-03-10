@@ -26,7 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bio.h>
 #include <sys/disklabel.h>
@@ -107,6 +106,7 @@ static struct g_part_scheme g_part_bsd_scheme = {
 	sizeof(struct g_part_bsd_table),
 	.gps_entrysz = sizeof(struct g_part_bsd_entry),
 	.gps_minent = 8,
+	.gps_defent = 8,
 	.gps_maxent = 20,	/* Only 22 entries fit in 512 byte sectors */
 	.gps_bootcodesz = BBSIZE,
 };
@@ -136,7 +136,7 @@ bsd_parse_type(const char *type, uint8_t *fstype)
 
 	if (type[0] == '!') {
 		lt = strtol(type + 1, &endp, 0);
-		if (type[1] == '\0' || *endp != '\0' || lt <= 0 || lt >= 256)
+		if (type[1] == '\0' || *endp != '\0' || lt < 0 || lt >= 256)
 			return (EINVAL);
 		*fstype = (u_int)lt;
 		return (0);

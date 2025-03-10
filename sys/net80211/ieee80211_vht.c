@@ -23,10 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-#ifdef __FreeBSD__
-#endif
-
 /*
  * IEEE 802.11ac-2013 protocol support.
  */
@@ -144,20 +140,20 @@ ieee80211_vht_vattach(struct ieee80211vap *vap)
 	if (! IEEE80211_CONF_VHT(ic))
 		return;
 
-	vap->iv_vhtcaps = ic->ic_vhtcaps;
+	vap->iv_vht_cap.vht_cap_info = ic->ic_vht_cap.vht_cap_info;
 	vap->iv_vhtextcaps = ic->ic_vhtextcaps;
 
 	/* XXX assume VHT80 support; should really check vhtcaps */
-	vap->iv_flags_vht =
+	vap->iv_vht_flags =
 	    IEEE80211_FVHT_VHT
 	    | IEEE80211_FVHT_USEVHT40
 	    | IEEE80211_FVHT_USEVHT80;
-	if (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160MHZ(vap->iv_vhtcaps))
-		vap->iv_flags_vht |= IEEE80211_FVHT_USEVHT160;
-	if (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160_80P80MHZ(vap->iv_vhtcaps))
-		vap->iv_flags_vht |= IEEE80211_FVHT_USEVHT80P80;
+	if (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160MHZ(vap->iv_vht_cap.vht_cap_info))
+		vap->iv_vht_flags |= IEEE80211_FVHT_USEVHT160;
+	if (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160_80P80MHZ(vap->iv_vht_cap.vht_cap_info))
+		vap->iv_vht_flags |= IEEE80211_FVHT_USEVHT80P80;
 
-	memcpy(&vap->iv_vht_mcsinfo, &ic->ic_vht_mcsinfo,
+	memcpy(&vap->iv_vht_cap.supp_mcs, &ic->ic_vht_cap.supp_mcs,
 	    sizeof(struct ieee80211_vht_mcs_info));
 }
 
@@ -199,19 +195,19 @@ ieee80211_vht_announce(struct ieee80211com *ic)
 
 	/* Channel width */
 	ic_printf(ic, "[VHT] Channel Widths: 20MHz, 40MHz, 80MHz%s%s\n",
-	    (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160MHZ(ic->ic_vhtcaps)) ?
+	    (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160MHZ(ic->ic_vht_cap.vht_cap_info)) ?
 		", 160MHz" : "",
-	    (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160_80P80MHZ(ic->ic_vhtcaps)) ?
+	    (IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_IS_160_80P80MHZ(ic->ic_vht_cap.vht_cap_info)) ?
 		 ", 80+80MHz" : "");
 	/* Features */
-	ic_printf(ic, "[VHT] Features: %b\n", ic->ic_vhtcaps,
+	ic_printf(ic, "[VHT] Features: %b\n", ic->ic_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_BITS);
 
 	/* For now, just 5GHz VHT.  Worry about 2GHz VHT later */
 	for (i = 0; i < 8; i++) {
 		/* Each stream is 2 bits */
-		tx = (ic->ic_vht_mcsinfo.tx_mcs_map >> (2*i)) & 0x3;
-		rx = (ic->ic_vht_mcsinfo.rx_mcs_map >> (2*i)) & 0x3;
+		tx = (ic->ic_vht_cap.supp_mcs.tx_mcs_map >> (2*i)) & 0x3;
+		rx = (ic->ic_vht_cap.supp_mcs.rx_mcs_map >> (2*i)) & 0x3;
 		if (tx == 3 && rx == 3)
 			continue;
 		ic_printf(ic, "[VHT] NSS %d: TX MCS 0..%d, RX MCS 0..%d\n",
@@ -288,14 +284,65 @@ ieee80211_vht_updateparams(struct ieee80211_node *ni,
 	return (0);
 }
 
+/**
+ * @brief calculate the supported MCS rates for this node
+ *
+ * This is called once a node has finished association /
+ * joined a BSS.  The vhtcap / vhtop IEs are from the
+ * peer.  The transmit rate tables need to be combined
+ * together to setup the list of available rates.
+ *
+ * This must be called after the ieee80211_node VHT fields
+ * have been parsed / populated by either ieee80211_vht_updateparams() or
+ * ieee80211_parse_vhtcap(),
+ *
+ * This does not take into account the channel bandwidth,
+ * which (a) may change during operation, and (b) depends
+ * upon packet to packet rate transmission selection.
+ * There are various rate combinations which are not
+ * available in various channel widths and those will
+ * need to be masked off separately.
+ *
+ * (See 802.11-2020 21.5 Parameters for VHT-MCSs for the
+ * tables and supported rates.)
+ *
+ * ALSO: i need to do some filtering based on the HT set too.
+ * (That should be done here too, and in the negotiation, sigh.)
+ * (See 802.11-2016 10.7.12.3 Additional rate selection constraints
+ * for VHT PPDUs)
+ *
+ * @param ni	struct ieee80211_node to configure
+ */
 void
-ieee80211_setup_vht_rates(struct ieee80211_node *ni,
-    const uint8_t *vhtcap_ie,
-    const uint8_t *vhtop_ie)
+ieee80211_setup_vht_rates(struct ieee80211_node *ni)
 {
+	struct ieee80211vap *vap = ni->ni_vap;
+	uint32_t val, val1, val2;
+	uint16_t tx_mcs_map = 0;
+	int i;
 
-	//printf("%s: called\n", __func__);
-	/* XXX TODO */
+	/*
+	 * Merge our tx_mcs_map with the peer rx_mcs_map to determine what
+	 * can be actually transmitted to the peer.
+	 */
+
+	for (i = 0; i < 8; i++) {
+		/*
+		 * Merge the two together; remember that 0..2 is in order
+		 * of increasing MCS support, but 3 equals
+		 * IEEE80211_VHT_MCS_NOT_SUPPORTED so must "win".
+		 */
+		val1 = (vap->iv_vht_cap.supp_mcs.tx_mcs_map >> (i*2)) & 0x3;
+		val2 = (ni->ni_vht_mcsinfo.rx_mcs_map >> (i*2)) & 0x3;
+		val = MIN(val1, val2);
+		if (val1 == IEEE80211_VHT_MCS_NOT_SUPPORTED ||
+		    val2 == IEEE80211_VHT_MCS_NOT_SUPPORTED)
+			val = IEEE80211_VHT_MCS_NOT_SUPPORTED;
+		tx_mcs_map |= (val << (i*2));
+	}
+
+	/* Store the TX MCS map somewhere in the node that can be used */
+	ni->ni_vht_tx_map = tx_mcs_map;
 }
 
 void
@@ -342,16 +389,13 @@ ieee80211_vht_node_leave(struct ieee80211_node *ni)
  */
 void
 ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
-    struct ieee80211_ie_vhtcap *vhtcap, int opmode)
+    struct ieee80211_vht_cap *vhtcap, int opmode)
 {
 	struct ieee80211vap *vap = ni->ni_vap;
 //	struct ieee80211com *ic = vap->iv_ic;
 	uint32_t val, val1, val2;
 	uint32_t new_vhtcap;
 	int i;
-
-	vhtcap->ie = IEEE80211_ELEMID_VHT_CAP;
-	vhtcap->len = sizeof(struct ieee80211_ie_vhtcap) - 2;
 
 	/*
 	 * Capabilities - it depends on whether we are a station
@@ -366,7 +410,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 */
 
 	/* Limit MPDU size to the smaller of the two */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_MAX_MPDU_MASK);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -376,24 +420,24 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	new_vhtcap |= _IEEE80211_SHIFTMASK(val, IEEE80211_VHTCAP_MAX_MPDU_MASK);
 
 	/* Limit supp channel config */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_MASK);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
 		    IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_MASK);
 	}
 	if ((val2 == 2) &&
-	    ((vap->iv_flags_vht & IEEE80211_FVHT_USEVHT80P80) == 0))
+	    ((vap->iv_vht_flags & IEEE80211_FVHT_USEVHT80P80) == 0))
 		val2 = 1;
 	if ((val2 == 1) &&
-	    ((vap->iv_flags_vht & IEEE80211_FVHT_USEVHT160) == 0))
+	    ((vap->iv_vht_flags & IEEE80211_FVHT_USEVHT160) == 0))
 		val2 = 0;
 	val = MIN(val1, val2);
 	new_vhtcap |= _IEEE80211_SHIFTMASK(val,
 	     IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_MASK);
 
 	/* RX LDPC */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_RXLDPC);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -403,7 +447,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	new_vhtcap |= _IEEE80211_SHIFTMASK(val, IEEE80211_VHTCAP_RXLDPC);
 
 	/* Short-GI 80 */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_SHORT_GI_80);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -413,7 +457,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	new_vhtcap |= _IEEE80211_SHIFTMASK(val, IEEE80211_VHTCAP_SHORT_GI_80);
 
 	/* Short-GI 160 */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_SHORT_GI_160);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -438,7 +482,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 */
 
 	/* TX STBC */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_TXSTBC);
 	if (opmode == 1) {
 		/* STA mode - enable it only if node RXSTBC is non-zero */
@@ -446,13 +490,12 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 		    IEEE80211_VHTCAP_RXSTBC_MASK);
 	}
 	val = MIN(val1, val2);
-	/* XXX For now, use the 11n config flag */
-	if ((vap->iv_flags_ht & IEEE80211_FHT_STBC_TX) == 0)
+	if ((vap->iv_vht_flags & IEEE80211_FVHT_STBC_TX) == 0)
 		val = 0;
 	new_vhtcap |= _IEEE80211_SHIFTMASK(val, IEEE80211_VHTCAP_TXSTBC);
 
 	/* RX STBC1..4 */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_RXSTBC_MASK);
 	if (opmode == 1) {
 		/* STA mode - enable it only if node TXSTBC is non-zero */
@@ -460,8 +503,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 		   IEEE80211_VHTCAP_TXSTBC);
 	}
 	val = MIN(val1, val2);
-	/* XXX For now, use the 11n config flag */
-	if ((vap->iv_flags_ht & IEEE80211_FHT_STBC_RX) == 0)
+	if ((vap->iv_vht_flags & IEEE80211_FVHT_STBC_RX) == 0)
 		val = 0;
 	new_vhtcap |= _IEEE80211_SHIFTMASK(val, IEEE80211_VHTCAP_RXSTBC_MASK);
 
@@ -483,7 +525,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 */
 
 	/* SU Beamformer capable */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_SU_BEAMFORMER_CAPABLE);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -494,7 +536,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	    IEEE80211_VHTCAP_SU_BEAMFORMER_CAPABLE);
 
 	/* SU Beamformee capable */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_SU_BEAMFORMEE_CAPABLE);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -505,7 +547,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	    IEEE80211_VHTCAP_SU_BEAMFORMEE_CAPABLE);
 
 	/* Beamformee STS capability - only if SU beamformee capable */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_BEAMFORMEE_STS_MASK);
 	if (opmode == 1) {
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -518,7 +560,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	    IEEE80211_VHTCAP_BEAMFORMEE_STS_MASK);
 
 	/* Sounding dimensions - only if SU beamformer capable */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_SOUNDING_DIMENSIONS_MASK);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -533,7 +575,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 * MU Beamformer capable - only if SU BFF capable, MU BFF capable
 	 * and STA (not AP)
 	 */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_MU_BEAMFORMER_CAPABLE);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -550,7 +592,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 * MU Beamformee capable - only if SU BFE capable, MU BFE capable
 	 * and AP (not STA)
 	 */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_MU_BEAMFORMEE_CAPABLE);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -564,7 +606,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	   IEEE80211_VHTCAP_SU_BEAMFORMEE_CAPABLE);
 
 	/* VHT TXOP PS */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_VHT_TXOP_PS);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -573,7 +615,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	new_vhtcap |= _IEEE80211_SHIFTMASK(val, IEEE80211_VHTCAP_VHT_TXOP_PS);
 
 	/* HTC_VHT */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_HTC_VHT);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -583,7 +625,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 
 	/* A-MPDU length max */
 	/* XXX TODO: we need a userland config knob for this */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -596,7 +638,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 * Link adaptation is only valid if HTC-VHT capable is 1.
 	 * Otherwise, always set it to 0.
 	 */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_VHT_LINK_ADAPTATION_VHT_MASK);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -613,7 +655,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 */
 
 	/* RX antenna pattern */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_RX_ANTENNA_PATTERN);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -623,7 +665,7 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	    IEEE80211_VHTCAP_RX_ANTENNA_PATTERN);
 
 	/* TX antenna pattern */
-	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vhtcaps,
+	val2 = val1 = _IEEE80211_MASKSHIFT(vap->iv_vht_cap.vht_cap_info,
 	    IEEE80211_VHTCAP_TX_ANTENNA_PATTERN);
 	if (opmode == 1)
 		val2 = _IEEE80211_MASKSHIFT(ni->ni_vhtcap,
@@ -639,9 +681,9 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 	 */
 
 	/* MCS set - start with whatever the device supports */
-	vhtcap->supp_mcs.rx_mcs_map = vap->iv_vht_mcsinfo.rx_mcs_map;
+	vhtcap->supp_mcs.rx_mcs_map = vap->iv_vht_cap.supp_mcs.rx_mcs_map;
 	vhtcap->supp_mcs.rx_highest = 0;
-	vhtcap->supp_mcs.tx_mcs_map = vap->iv_vht_mcsinfo.tx_mcs_map;
+	vhtcap->supp_mcs.tx_mcs_map = vap->iv_vht_cap.supp_mcs.tx_mcs_map;
 	vhtcap->supp_mcs.tx_highest = 0;
 
 	vhtcap->vht_cap_info = new_vhtcap;
@@ -680,19 +722,12 @@ ieee80211_vht_get_vhtcap_ie(struct ieee80211_node *ni,
 uint8_t *
 ieee80211_add_vhtcap(uint8_t *frm, struct ieee80211_node *ni)
 {
-	struct ieee80211_ie_vhtcap vhtcap;
-	int opmode;
+	struct ieee80211_vht_cap vhtcap;
 
-	opmode = 0;
-	if (ni->ni_vap->iv_opmode == IEEE80211_M_STA)
-		opmode = 1;
-
-	ieee80211_vht_get_vhtcap_ie(ni, &vhtcap, opmode);
-
-	memset(frm, '\0', sizeof(struct ieee80211_ie_vhtcap));
+	ieee80211_vht_get_vhtcap_ie(ni, &vhtcap, 1);
 
 	frm[0] = IEEE80211_ELEMID_VHT_CAP;
-	frm[1] = sizeof(struct ieee80211_ie_vhtcap) - 2;
+	frm[1] = sizeof(vhtcap);
 	frm += 2;
 
 	/* 32-bit VHT capability */
@@ -703,6 +738,33 @@ ieee80211_add_vhtcap(uint8_t *frm, struct ieee80211_node *ni)
 	ADDSHORT(frm, vhtcap.supp_mcs.rx_highest);
 	ADDSHORT(frm, vhtcap.supp_mcs.tx_mcs_map);
 	ADDSHORT(frm, vhtcap.supp_mcs.tx_highest);
+
+	return (frm);
+}
+
+/*
+ * Non-associated probe requests.  Add VHT capabilities based on
+ * the current channel configuration.  No BSS yet.
+ */
+uint8_t *
+ieee80211_add_vhtcap_ch(uint8_t *frm, struct ieee80211vap *vap,
+    struct ieee80211_channel *c)
+{
+	struct ieee80211_vht_cap *vhtcap;
+
+	memset(frm, 0, 2 + sizeof(*vhtcap));
+	frm[0] = IEEE80211_ELEMID_VHT_CAP;
+	frm[1] = sizeof(*vhtcap);
+	frm += 2;
+
+	/* 32-bit VHT capability */
+	ADDWORD(frm, vap->iv_vht_cap.vht_cap_info);
+
+	/* supp_mcs */
+	ADDSHORT(frm, vap->iv_vht_cap.supp_mcs.rx_mcs_map);
+	ADDSHORT(frm, vap->iv_vht_cap.supp_mcs.rx_highest);
+	ADDSHORT(frm, vap->iv_vht_cap.supp_mcs.tx_mcs_map);
+	ADDSHORT(frm, vap->iv_vht_cap.supp_mcs.tx_highest);
 
 	return (frm);
 }
@@ -748,10 +810,9 @@ ieee80211_vht_get_chwidth_ie(struct ieee80211_channel *c)
 uint8_t *
 ieee80211_add_vhtinfo(uint8_t *frm, struct ieee80211_node *ni)
 {
-	memset(frm, '\0', sizeof(struct ieee80211_ie_vht_operation));
 
 	frm[0] = IEEE80211_ELEMID_VHT_OPMODE;
-	frm[1] = sizeof(struct ieee80211_ie_vht_operation) - 2;
+	frm[1] = sizeof(struct ieee80211_vht_operation);
 	frm += 2;
 
 	/* 8-bit chanwidth */
@@ -859,7 +920,193 @@ ieee80211_vht_adjust_channel(struct ieee80211com *ic,
  */
 void
 ieee80211_vht_get_vhtinfo_ie(struct ieee80211_node *ni,
-    struct ieee80211_ie_vht_operation *vhtop, int opmode)
+    struct ieee80211_vht_operation *vhtop, int opmode)
 {
 	printf("%s: called; TODO!\n", __func__);
+}
+
+/*
+ * Return true if VHT rates can be used for the given node.
+ */
+bool
+ieee80211_vht_check_tx_vht(const struct ieee80211_node *ni)
+{
+	const struct ieee80211vap *vap;
+	const struct ieee80211_channel *bss_chan;
+
+	if (ni == NULL || ni->ni_chan == IEEE80211_CHAN_ANYC ||
+	    ni->ni_vap == NULL || ni->ni_vap->iv_bss == NULL)
+		return (false);
+
+	vap = ni->ni_vap;
+	bss_chan = vap->iv_bss->ni_chan;
+
+	if (bss_chan == IEEE80211_CHAN_ANYC)
+		return (false);
+
+	return (IEEE80211_IS_CHAN_VHT(ni->ni_chan));
+}
+
+/*
+ * Return true if VHT40 rates can be transmitted to the given node.
+ *
+ * This verifies that the BSS is VHT40 capable and the current
+ * node channel width is 40MHz.
+ */
+static bool
+ieee80211_vht_check_tx_vht40(const struct ieee80211_node *ni)
+{
+	struct ieee80211vap *vap;
+	struct ieee80211_channel *bss_chan;
+
+	if (!ieee80211_vht_check_tx_vht(ni))
+		return (false);
+
+	vap = ni->ni_vap;
+	bss_chan = vap->iv_bss->ni_chan;
+
+	return (IEEE80211_IS_CHAN_VHT40(bss_chan) &&
+	    IEEE80211_IS_CHAN_VHT40(ni->ni_chan) &&
+	    (ni->ni_chw == IEEE80211_STA_RX_BW_40));
+}
+
+/*
+ * Return true if VHT80 rates can be transmitted to the given node.
+ *
+ * This verifies that the BSS is VHT80 capable and the current
+ * node channel width is 80MHz.
+ */
+static bool
+ieee80211_vht_check_tx_vht80(const struct ieee80211_node *ni)
+{
+	struct ieee80211vap *vap;
+	struct ieee80211_channel *bss_chan;
+
+	if (!ieee80211_vht_check_tx_vht(ni))
+		return (false);
+
+	vap = ni->ni_vap;
+	bss_chan = vap->iv_bss->ni_chan;
+
+	return (IEEE80211_IS_CHAN_VHT80(bss_chan) &&
+	    IEEE80211_IS_CHAN_VHT80(ni->ni_chan) &&
+	    (ni->ni_chw == IEEE80211_STA_RX_BW_80));
+}
+
+/*
+ * Return true if VHT 160 rates can be transmitted to the given node.
+ *
+ * This verifies that the BSS is VHT80+80 or VHT160 capable and the current
+ * node channel width is 80+80MHz or 160MHz.
+ */
+static bool
+ieee80211_vht_check_tx_vht160(const struct ieee80211_node *ni)
+{
+	struct ieee80211vap *vap;
+	struct ieee80211_channel *bss_chan;
+
+	if (!ieee80211_vht_check_tx_vht(ni))
+		return (false);
+
+	vap = ni->ni_vap;
+	bss_chan = vap->iv_bss->ni_chan;
+
+	if (ni->ni_chw != IEEE80211_STA_RX_BW_160)
+		return (false);
+
+	if (IEEE80211_IS_CHAN_VHT160(bss_chan) &&
+	    IEEE80211_IS_CHAN_VHT160(ni->ni_chan))
+		return (true);
+
+	if (IEEE80211_IS_CHAN_VHT80P80(bss_chan) &&
+	    IEEE80211_IS_CHAN_VHT80P80(ni->ni_chan))
+		return (true);
+
+	return (false);
+}
+
+/**
+ * @brief Check if the given transmit bandwidth is available to the given node
+ *
+ * This checks that the node and BSS both allow the given bandwidth,
+ * and that the current node bandwidth (which can dynamically change)
+ * also allows said bandwidth.
+ *
+ * This relies on the channels having the flags for the narrower
+ * channels as well - eg a VHT160 channel will have the CHAN_VHT80,
+ * CHAN_VHT40, CHAN_VHT flags also set.
+ *
+ * @param ni		the ieee80211_node to check
+ * @param bw		the required bandwidth to check
+ *
+ * @returns true if it is allowed, false otherwise
+ */
+bool
+ieee80211_vht_check_tx_bw(const struct ieee80211_node *ni,
+    enum ieee80211_sta_rx_bw bw)
+{
+
+	switch (bw) {
+	case IEEE80211_STA_RX_BW_20:
+		return (ieee80211_vht_check_tx_vht(ni));
+	case IEEE80211_STA_RX_BW_40:
+		return (ieee80211_vht_check_tx_vht40(ni));
+	case IEEE80211_STA_RX_BW_80:
+		return (ieee80211_vht_check_tx_vht80(ni));
+	case IEEE80211_STA_RX_BW_160:
+		return (ieee80211_vht_check_tx_vht160(ni));
+	case IEEE80211_STA_RX_BW_320:
+		return (false);
+	default:
+		return (false);
+	}
+}
+
+/**
+ * @brief Check if the given VHT bw/nss/mcs combination is valid
+ *        for the give node.
+ *
+ * This checks whether the given VHT bw/nss/mcs is valid based on
+ * the negotiated rate mask in the node.
+ *
+ * @param ni	struct ieee80211_node node to check
+ * @param bw	channel bandwidth to check
+ * @param nss	NSS
+ * @param mcs	MCS
+ * @returns True if this combination is available, false otherwise.
+ */
+bool
+ieee80211_vht_node_check_tx_valid_mcs(const struct ieee80211_node *ni,
+    enum ieee80211_sta_rx_bw bw, uint8_t nss, uint8_t mcs)
+{
+	uint8_t mc;
+
+	/* Validate arguments */
+	if (nss < 1 || nss > 8)
+		return (false);
+	if (mcs > 9)
+		return (false);
+
+	/* Check our choice of rate is actually valid */
+	if (!ieee80211_phy_vht_validate_mcs(bw, nss, mcs))
+		return (false);
+
+	/*
+	 * Next, check if the MCS rate is available for the
+	 * given NSS.
+	 */
+	mc = ni->ni_vht_tx_map >> (2*(nss-1)) & 0x3;
+	switch (mc) {
+	case IEEE80211_VHT_MCS_NOT_SUPPORTED:
+		/* Not supported at this NSS */
+		return (false);
+	case IEEE80211_VHT_MCS_SUPPORT_0_9:
+		return (mcs <= 9);
+	case IEEE80211_VHT_MCS_SUPPORT_0_8:
+		return (mcs <= 8);
+	case IEEE80211_VHT_MCS_SUPPORT_0_7:
+		return (mcs <= 7);
+	default:
+		return (false);
+	}
 }

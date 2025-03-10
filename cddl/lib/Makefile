@@ -1,4 +1,3 @@
-
 .include <src.opts.mk>
 
 .if ${MK_DTRACE} == yes || ${MK_ZFS} == yes
@@ -20,6 +19,7 @@ SUBDIR.${MK_ZFS}+= \
 	libtpool \
 	libumem \
 	libuutil \
+	libzdb \
 	libzfs \
 	libzfs_core \
 	libzfsbootenv \

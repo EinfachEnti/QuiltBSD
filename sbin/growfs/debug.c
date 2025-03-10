@@ -57,7 +57,7 @@ static FILE		*dbg_log = NULL;
 static unsigned int	indent = 0;
 
 /*
- * prototypes not done here, as they come with debug.h
+ * prototypes are not done here, as they come with debug.h
  */
 
 /*
@@ -305,8 +305,6 @@ dbg_dump_fs(struct fs *sb, const char *comment)
 	    sb->fs_avgfilesize);
 	fprintf(dbg_log, "avgfpdir          int32_t          0x%08x\n",
 	    sb->fs_avgfpdir);
-	fprintf(dbg_log, "save_cgsize       int32_t          0x%08x\n",
-	    sb->fs_save_cgsize);
 	fprintf(dbg_log, "flags             int32_t          0x%08x\n",
 	    sb->fs_flags);
 	fprintf(dbg_log, "contigsumsize     int32_t          0x%08x\n",

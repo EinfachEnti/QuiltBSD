@@ -30,12 +30,11 @@
 #ifndef _DEVINFO_H_INCLUDED
 #define _DEVINFO_H_INCLUDED
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/bus.h>
 
 typedef __uintptr_t	devinfo_handle_t;
-#define DEVINFO_ROOT_DEVICE	((devinfo_handle_t)0)
+#define DEVINFO_ROOT_DEVICE	((devinfo_handle_t)-1)
 
 typedef enum device_state devinfo_state_t;
 

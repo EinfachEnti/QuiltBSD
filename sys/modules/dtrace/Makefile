@@ -1,4 +1,3 @@
-
 .include "Makefile.inc"
 
 SUBDIR=		dtaudit		\
@@ -10,7 +9,6 @@ SUBDIR=		dtaudit		\
 		fbt		\
 		profile		\
 		prototype	\
-		sdt		\
 		systrace
 
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
@@ -29,7 +27,12 @@ SUBDIR+=	fasttrap
 .if ${MACHINE_CPUARCH} == "amd64" || \
     ${MACHINE_CPUARCH} == "aarch64" || \
     ${MACHINE_ARCH} == "powerpc64"
+.if !empty(COMPAT_FREEBSD32_ENABLED)
 SUBDIR+=	systrace_freebsd32
+.endif
+.endif
+.if ${MACHINE_CPUARCH} != "powerpc" || ${MACHINE_ARCH} == "powerpc64"
+SUBDIR+=	sdt
 .endif
 
 .include <bsd.subdir.mk>

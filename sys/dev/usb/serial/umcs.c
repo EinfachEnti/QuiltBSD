@@ -39,7 +39,6 @@
  * quad-port mos7840.
  *
  */
-#include <sys/cdefs.h>
 #include <sys/stdint.h>
 #include <sys/stddef.h>
 #include <sys/param.h>
@@ -1047,7 +1046,7 @@ umcs7840_set_baudrate(struct umcs7840_softc *sc, uint8_t portno, uint32_t rate)
 	}
 	DPRINTF("Port %d set speed: %d (%02x / %d)\n", portno, rate, clk, divisor);
 
-	/* Set clock source for standard BAUD frequences */
+	/* Set clock source for standard BAUD frequencies */
 	err = umcs7840_get_reg_sync(sc, umcs7840_port_registers[portno].reg_sp, &data);
 	if (err)
 		return (err);
@@ -1078,7 +1077,7 @@ umcs7840_set_baudrate(struct umcs7840_softc *sc, uint8_t portno, uint32_t rate)
 	return (0);
 }
 
-/* Maximum speeds for standard frequences, when PLL is not used */
+/* Maximum speeds for standard frequencies, when PLL is not used */
 static const uint32_t umcs7840_baudrate_divisors[] = {0, 115200, 230400, 403200, 460800, 806400, 921600, 1572864, 3145728,};
 static const uint8_t umcs7840_baudrate_divisors_len = nitems(umcs7840_baudrate_divisors);
 

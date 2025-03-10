@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)igmp.c	8.1 (Berkeley) 7/19/93
  */
 
 /*
@@ -168,7 +166,6 @@ static const struct netisr_handler igmp_nh = {
  *    Any may be taken independently; if any are held at the same
  *    time, the above lock order must be followed.
  *  * All output is delegated to the netisr.
- *    Now that Giant has been eliminated, the netisr may be inlined.
  *  * IN_MULTI_LIST_LOCK covers in_multi.
  *  * IGMP_LOCK covers igmp_ifsoftc and any global variables in this file,
  *    including the output queue.
@@ -1474,6 +1471,7 @@ igmp_input(struct mbuf **mp, int *offp, int proto)
 	m = *mp;
 	ifp = m->m_pkthdr.rcvif;
 	*mp = NULL;
+	M_ASSERTMAPPED(m);
 
 	IGMPSTAT_INC(igps_rcv_total);
 
@@ -1674,7 +1672,6 @@ igmp_fasttimo(void *arg __unused)
 
 /*
  * Fast timeout handler (per-vnet).
- * Sends are shuffled off to a netisr to deal with Giant.
  *
  * VIMAGE: Assume caller has set up our curvnet.
  */
@@ -3385,7 +3382,7 @@ igmp_v3_dispatch_general_query(struct igmp_ifsoftc *igi)
 	 * many packets, we should finish sending them before starting of
 	 * queuing the new reply.
 	 */
-	if (mbufq_len(&igi->igi_gq) != 0)
+	if (!mbufq_empty(&igi->igi_gq))
 		goto send;
 
 	ifp = igi->igi_ifp;

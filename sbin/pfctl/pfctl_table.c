@@ -32,14 +32,14 @@
  *
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <net/if.h>
 #include <net/pfvar.h>
-#include <arpa/inet.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -61,6 +61,7 @@ static void	print_table(struct pfr_table *, int, int);
 static void	print_tstats(struct pfr_tstats *, int);
 static int	load_addr(struct pfr_buffer *, int, char *[], char *, int);
 static void	print_addrx(struct pfr_addr *, struct pfr_addr *, int);
+static int 	nonzero_astats(struct pfr_astats *);
 static void	print_astats(struct pfr_astats *, int);
 static void	radix_perror(void);
 static void	xprintf(int, const char *, ...);
@@ -89,7 +90,7 @@ static const char	*istats_text[2][2][2] = {
 		table.pfrt_flags |= PFR_TFLAG_PERSIST;			\
 		if ((!(opts & PF_OPT_NOACTION) ||			\
 		    (opts & PF_OPT_DUMMYACTION)) &&			\
-		    (pfr_add_tables(&table, 1, &nadd, flags)) &&	\
+		    (pfr_add_table(&table, &nadd, flags)) &&		\
 		    (errno != EPERM)) {					\
 			radix_perror();					\
 			goto _error;					\
@@ -104,7 +105,7 @@ static const char	*istats_text[2][2][2] = {
 	} while(0)
 
 int
-pfctl_clear_tables(const char *anchor, int opts)
+pfctl_do_clear_tables(const char *anchor, int opts)
 {
 	return pfctl_table(0, NULL, NULL, "-F", NULL, anchor, opts);
 }
@@ -157,7 +158,7 @@ pfctl_table(int argc, char *argv[], char *tname, const char *command,
 	if (!strcmp(command, "-F")) {
 		if (argc || file != NULL)
 			usage();
-		RVTEST(pfr_clr_tables(&table, &ndel, flags));
+		RVTEST(pfctl_clear_tables(pfh, &table, &ndel, flags));
 		xprintf(opts, "%d tables deleted", ndel);
 	} else if (!strcmp(command, "-s")) {
 		b.pfrb_type = (opts & PF_OPT_VERBOSE2) ?
@@ -189,7 +190,7 @@ pfctl_table(int argc, char *argv[], char *tname, const char *command,
 	} else if (!strcmp(command, "kill")) {
 		if (argc || file != NULL)
 			usage();
-		RVTEST(pfr_del_tables(&table, 1, &ndel, flags));
+		RVTEST(pfr_del_table(&table, &ndel, flags));
 		xprintf(opts, "%d table deleted", ndel);
 	} else if (!strcmp(command, "flush")) {
 		if (argc || file != NULL)
@@ -294,6 +295,36 @@ pfctl_table(int argc, char *argv[], char *tname, const char *command,
 				if ((opts & PF_OPT_VERBOSE2) || a->pfra_fback)
 					print_addrx(a, NULL,
 					    opts & PF_OPT_USEDNS);
+	} else if (!strcmp(command, "reset")) {
+		struct pfr_astats 	*as;
+
+		b.pfrb_type = PFRB_ASTATS;
+		b2.pfrb_type = PFRB_ADDRS;
+		if (argc || file != NULL)
+			usage();
+		do {
+			pfr_buf_grow(&b, b.pfrb_size);
+			b.pfrb_size = b.pfrb_msize;
+			RVTEST(pfr_get_astats(&table, b.pfrb_caddr,
+			    &b.pfrb_size, flags));
+		} while (b.pfrb_size > b.pfrb_msize);
+		PFRB_FOREACH(as, &b) {
+			as->pfras_a.pfra_fback = 0;
+			if (nonzero_astats(as))
+				if (pfr_buf_add(&b2, &as->pfras_a))
+					err(1, "duplicate buffer");
+		}
+
+		if (opts & PF_OPT_VERBOSE)
+			flags |= PFR_FLAG_FEEDBACK;
+		RVTEST(pfr_clr_astats(&table, b2.pfrb_caddr, b2.pfrb_size,
+		    &nzero, flags));
+		xprintf(opts, "%d/%d stats cleared", nzero, b.pfrb_size);
+		if (opts & PF_OPT_VERBOSE)
+			PFRB_FOREACH(a, &b2)
+				if ((opts & PF_OPT_VERBOSE2) || a->pfra_fback)
+					print_addrx(a, NULL,
+					    opts & PF_OPT_USEDNS);
 	} else if (!strcmp(command, "show")) {
 		b.pfrb_type = (opts & PF_OPT_VERBOSE) ?
 			PFRB_ASTATS : PFRB_ADDRS;
@@ -345,9 +376,22 @@ pfctl_table(int argc, char *argv[], char *tname, const char *command,
 		}
 		if (nmatch < b.pfrb_size)
 			rv = 2;
+	} else if (!strcmp(command, "zero") && (argc || file != NULL)) {
+		b.pfrb_type = PFRB_ADDRS;
+		if (load_addr(&b, argc, argv, file, 0))
+			goto _error;
+		if (opts & PF_OPT_VERBOSE)
+			flags |= PFR_FLAG_FEEDBACK;
+		RVTEST(pfr_clr_astats(&table, b.pfrb_caddr, b.pfrb_size,
+		    &nzero, flags));
+		xprintf(opts, "%d/%d addresses cleared", nzero, b.pfrb_size);
+		if (opts & PF_OPT_VERBOSE)
+			PFRB_FOREACH(a, &b)
+				if (opts & PF_OPT_VERBOSE2 ||
+				    a->pfra_fback != PFR_FB_NONE)
+					print_addrx(a, NULL,
+					    opts & PF_OPT_USEDNS);
 	} else if (!strcmp(command, "zero")) {
-		if (argc || file != NULL)
-			usage();
 		flags |= PFR_FLAG_ADDRSTOO;
 		RVTEST(pfr_clr_tstats(&table, 1, &nzero, flags));
 		xprintf(opts, "%d table/stats cleared", nzero);
@@ -453,23 +497,40 @@ print_addrx(struct pfr_addr *ad, struct pfr_addr *rad, int dns)
 		printf("\t nomatch");
 	if (dns && ad->pfra_net == hostnet) {
 		char host[NI_MAXHOST];
-		union sockaddr_union sa;
+		struct sockaddr_storage ss;
 
 		strlcpy(host, "?", sizeof(host));
-		bzero(&sa, sizeof(sa));
-		sa.sa.sa_family = ad->pfra_af;
-		if (sa.sa.sa_family == AF_INET) {
-			sa.sa.sa_len = sizeof(sa.sin);
-			sa.sin.sin_addr = ad->pfra_ip4addr;
+		bzero(&ss, sizeof(ss));
+		ss.ss_family = ad->pfra_af;
+		if (ss.ss_family == AF_INET) {
+			struct sockaddr_in *sin = (struct sockaddr_in *)&ss;
+
+			sin->sin_len = sizeof(*sin);
+			sin->sin_addr = ad->pfra_ip4addr;
 		} else {
-			sa.sa.sa_len = sizeof(sa.sin6);
-			sa.sin6.sin6_addr = ad->pfra_ip6addr;
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
+
+			sin6->sin6_len = sizeof(*sin6);
+			sin6->sin6_addr = ad->pfra_ip6addr;
 		}
-		if (getnameinfo(&sa.sa, sa.sa.sa_len, host, sizeof(host),
-		    NULL, 0, NI_NAMEREQD) == 0)
+		if (getnameinfo((struct sockaddr *)&ss, ss.ss_len, host,
+		    sizeof(host), NULL, 0, NI_NAMEREQD) == 0)
 			printf("\t(%s)", host);
 	}
 	printf("\n");
+}
+
+int
+nonzero_astats(struct pfr_astats *as)
+{
+	uint64_t s = 0;
+
+	for (int dir = 0; dir < PFR_DIR_MAX; dir++)
+		for (int op = 0; op < PFR_OP_ADDR_MAX; op++)
+			s |= as->pfras_packets[dir][op] |
+			     as->pfras_bytes[dir][op];
+
+	return (!!s);
 }
 
 void

@@ -1,5 +1,3 @@
-#	@(#)Makefile	8.1 (Berkeley) 5/31/93
-#
 # C Shell with process control; VM/UNIX VAX Makefile
 # Bill Joy UC Berkeley; Jim Kulp IIASA, Austria
 #
@@ -15,6 +13,7 @@ ROOTPACKAGE=	csh
 ETC=	csh.cshrc csh.login csh.logout
 ROOT=	dot.cshrc dot.login
 ROOTDIR=	/root
+ROOTDIR_MODE=	0750
 ROOTNAME_dot.cshrc=	.cshrc
 ROOTNAME_dot.login=	.login
 TCSHDIR= ${SRCTOP}/contrib/tcsh
@@ -122,9 +121,14 @@ build-tools: gethost
 tc.defs.c: gethost
 
 DEPENDOBJS+= gethost
-gethost: gethost.c sh.err.h tc.const.h sh.h ${BUILD_TOOLS_META}
+gethost: gethost.c sh.err.h sh.h ${BUILD_TOOLS_META}
 	@rm -f ${.TARGET}
-	${CC:N${CCACHE_BIN}} -o gethost ${LDFLAGS} ${CFLAGS:C/-DHAVE_ICONV//} \
+	# Define _h_tc_const so that tc.h will skip including tc.const.h.
+	# gethost.c does not actually require any of the definitions in there,
+	# and building tc.const.h requires target headers which are not
+	# available when we need to build gethost.
+	${HOST_CC:N${CCACHE_BIN}} -o gethost ${LDFLAGS} ${CFLAGS:C/-DHAVE_ICONV//} \
+	    -D_h_tc_const \
 	    ${TCSHDIR}/gethost.c
 .endif
 
@@ -160,6 +164,7 @@ tc.const.h: tc.const.c sh.char.h config.h config_f.h sh.types.h sh.err.h ${BUILD
 	    sort >> ${.TARGET}
 	@echo '#endif /* _h_tc_const */' >> ${.TARGET}
 
+<<<<<<< HEAD
 #beforeinstallconfig:
 #	rm -f ${DESTDIR}/.cshrc
 
@@ -169,4 +174,6 @@ afterinstallconfig:
 	${INSTALL_LINK} ${TAG_ARGS} -m ${CONFMODE} ${DESTDIR}/root/.cshrc \
 	    ${DESTDIR}/.cshrc
 
+=======
+>>>>>>> freebsd/main
 .include <bsd.prog.mk>

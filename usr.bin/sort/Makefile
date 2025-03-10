@@ -1,10 +1,8 @@
-
 .include <src.opts.mk>
 
 PACKAGE= runtime
 PROG=	sort
 SRCS=	bwstring.c coll.c file.c mem.c radixsort.c sort.c vsort.c
-CSTD=	c11
 
 sort.1: sort.1.in
 	sed ${MAN_SUB} ${.ALLSRC} >${.TARGET}

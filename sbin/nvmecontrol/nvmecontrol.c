@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/ioccom.h>
 #include <sys/stat.h>
@@ -144,11 +143,38 @@ read_namespace_data(int fd, uint32_t nsid, struct nvme_namespace_data *nsdata)
 }
 
 int
+read_active_namespaces(int fd, uint32_t nsid, struct nvme_ns_list *nslist)
+{
+	struct nvme_pt_command	pt;
+
+	memset(&pt, 0, sizeof(pt));
+	pt.cmd.opc = NVME_OPC_IDENTIFY;
+	pt.cmd.nsid = htole32(nsid);
+	pt.cmd.cdw10 = htole32(2);
+	pt.buf = nslist;
+	pt.len = sizeof(*nslist);
+	pt.is_read = 1;
+
+	if (ioctl(fd, NVME_PASSTHROUGH_CMD, &pt) < 0)
+		return (errno);
+
+	/* Convert data to host endian */
+	nvme_ns_list_swapbytes(nslist);
+
+	if (nvme_completion_is_error(&pt.cpl))
+		return (EIO);
+	return (0);
+}
+
+int
 open_dev(const char *str, int *fd, int write, int exit_on_error)
 {
-	char		full_path[64];
+	char		full_path[MAXPATHLEN];
 
-	snprintf(full_path, sizeof(full_path), _PATH_DEV"%s", str);
+	if (str[0] == '/')	/* Full path */
+		strlcpy(full_path, str, sizeof(full_path));
+	else			/* Add /dev/ */
+		snprintf(full_path, sizeof(full_path), _PATH_DEV"%s", str);
 	*fd = open(full_path, write ? O_RDWR : O_RDONLY);
 	if (*fd < 0) {
 		if (exit_on_error) {

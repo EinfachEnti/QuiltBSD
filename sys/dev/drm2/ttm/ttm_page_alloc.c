@@ -158,16 +158,19 @@ static vm_page_t
 ttm_vm_page_alloc_dma32(int req, vm_memattr_t memattr)
 {
 	vm_page_t p;
-	int tries;
+	int err, tries;
 
 	for (tries = 0; ; tries++) {
 		p = vm_page_alloc_noobj_contig(req, 1, 0, 0xffffffff, PAGE_SIZE,
 		    0, memattr);
 		if (p != NULL || tries > 2)
 			return (p);
-		if (!vm_page_reclaim_contig(req, 1, 0, 0xffffffff,
-		    PAGE_SIZE, 0))
+		err = vm_page_reclaim_contig(req, 1, 0, 0xffffffff,
+		    PAGE_SIZE, 0);
+		if (err == ENOMEM)
 			vm_wait(NULL);
+		else if (err != 0)
+			return (NULL);
 	}
 }
 
@@ -438,7 +441,7 @@ static int ttm_pool_get_num_unused_pages(void)
 /**
  * Callback for mm to request pool to reduce number of page held.
  */
-static int ttm_pool_mm_shrink(void *arg)
+static int ttm_pool_mm_shrink(void *arg, int flags __unused)
 {
 	static unsigned int start_pool = 0;
 	unsigned i;

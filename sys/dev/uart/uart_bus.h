@@ -56,7 +56,6 @@
 
 /* UART quirk flags */
 #define	UART_F_BUSY_DETECT		0x1
-#define	UART_F_IGNORE_SPCR_REGSHFT	0x2
 
 /*
  * UART class & instance (=softc)
@@ -69,6 +68,9 @@ struct uart_class {
 	u_int	uc_rshift;		/* Default regshift for this device. */
 	u_int	uc_riowidth;		/* Default reg io width for this device. */
 };
+
+#define	UART_CLASS(class)						\
+    DATA_SET(uart_class_set, class)
 
 struct uart_softc {
 	KOBJ_FIELDS;

@@ -29,7 +29,6 @@
  * Marvell Xenon SDHCI controller driver.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -46,7 +45,7 @@
 #include <machine/bus.h>
 #include <machine/resource.h>
 
-#include <dev/extres/regulator/regulator.h>
+#include <dev/regulator/regulator.h>
 
 #include <dev/mmc/bridge.h>
 #include <dev/mmc/mmcbrvar.h>
@@ -593,7 +592,7 @@ sdhci_xenon_detach(device_t dev)
 {
 	struct sdhci_xenon_softc *sc = device_get_softc(dev);
 
-	bus_generic_detach(dev);
+	bus_detach_children(dev);
 	bus_teardown_intr(dev, sc->irq_res, sc->intrhand);
 	bus_release_resource(dev, SYS_RES_IRQ, rman_get_rid(sc->irq_res),
 	    sc->irq_res);

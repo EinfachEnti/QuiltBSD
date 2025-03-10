@@ -86,6 +86,7 @@
 #include <sys/timex.h>
 #include <sys/unistd.h>
 #include <sys/ucontext.h>
+#include <sys/ucred.h>
 #include <sys/vnode.h>
 #include <sys/wait.h>
 #include <sys/ipc.h>
@@ -115,6 +116,7 @@
 #endif
 
 #include <security/audit/audit.h>
+#include <security/mac/mac_syscalls.h>
 
 #include <compat/freebsd32/freebsd32_util.h>
 #include <compat/freebsd32/freebsd32.h>
@@ -123,7 +125,20 @@
 #include <compat/freebsd32/freebsd32_signal.h>
 #include <compat/freebsd32/freebsd32_proto.h>
 
-FEATURE(compat_freebsd_32bit, "Compatible with 32-bit FreeBSD");
+int compat_freebsd_32bit = 1;
+
+static void
+register_compat32_feature(void *arg)
+{
+	if (!compat_freebsd_32bit)
+		return;
+
+	FEATURE_ADD("compat_freebsd32", "Compatible with 32-bit FreeBSD");
+	FEATURE_ADD("compat_freebsd_32bit",
+	    "Compatible with 32-bit FreeBSD (legacy feature name)");
+}
+SYSINIT(freebsd32, SI_SUB_EXEC, SI_ORDER_ANY, register_compat32_feature,
+    NULL);
 
 struct ptrace_io_desc32 {
 	int		piod_op;
@@ -234,7 +249,7 @@ freebsd32_wait6(struct thread *td, struct freebsd32_wait6_args *uap)
 {
 	struct __wrusage32 wru32;
 	struct __wrusage wru, *wrup;
-	struct siginfo32 si32;
+	struct __siginfo32 si32;
 	struct __siginfo si, *sip;
 	int error, status;
 
@@ -1013,7 +1028,7 @@ freebsd32_ptrace(struct thread *td, struct freebsd32_ptrace_args *uap)
 		 */
 		data = sizeof(r.pl);
 		if (uap->data < offsetof(struct ptrace_lwpinfo32, pl_siginfo) +
-		    sizeof(struct siginfo32))
+		    sizeof(struct __siginfo32))
 			data = offsetof(struct ptrace_lwpinfo, pl_siginfo);
 		break;
 	case PT_GETREGS:
@@ -1178,37 +1193,34 @@ freebsd32_ptrace(struct thread *td, struct freebsd32_ptrace_args *uap)
 }
 
 int
-freebsd32_copyinuio(struct iovec32 *iovp, u_int iovcnt, struct uio **uiop)
+freebsd32_copyinuio(const struct iovec32 *iovp, u_int iovcnt, struct uio **uiop)
 {
 	struct iovec32 iov32;
 	struct iovec *iov;
 	struct uio *uio;
-	u_int iovlen;
 	int error, i;
 
 	*uiop = NULL;
 	if (iovcnt > UIO_MAXIOV)
 		return (EINVAL);
-	iovlen = iovcnt * sizeof(struct iovec);
-	uio = malloc(iovlen + sizeof *uio, M_IOV, M_WAITOK);
-	iov = (struct iovec *)(uio + 1);
+	uio = allocuio(iovcnt);
+	iov = uio->uio_iov;
 	for (i = 0; i < iovcnt; i++) {
 		error = copyin(&iovp[i], &iov32, sizeof(struct iovec32));
 		if (error) {
-			free(uio, M_IOV);
+			freeuio(uio);
 			return (error);
 		}
 		iov[i].iov_base = PTRIN(iov32.iov_base);
 		iov[i].iov_len = iov32.iov_len;
 	}
-	uio->uio_iov = iov;
 	uio->uio_iovcnt = iovcnt;
 	uio->uio_segflg = UIO_USERSPACE;
 	uio->uio_offset = -1;
 	uio->uio_resid = 0;
 	for (i = 0; i < iovcnt; i++) {
 		if (iov->iov_len > INT_MAX - uio->uio_resid) {
-			free(uio, M_IOV);
+			freeuio(uio);
 			return (EINVAL);
 		}
 		uio->uio_resid += iov->iov_len;
@@ -1228,7 +1240,7 @@ freebsd32_readv(struct thread *td, struct freebsd32_readv_args *uap)
 	if (error)
 		return (error);
 	error = kern_readv(td, uap->fd, auio);
-	free(auio, M_IOV);
+	freeuio(auio);
 	return (error);
 }
 
@@ -1242,7 +1254,7 @@ freebsd32_writev(struct thread *td, struct freebsd32_writev_args *uap)
 	if (error)
 		return (error);
 	error = kern_writev(td, uap->fd, auio);
-	free(auio, M_IOV);
+	freeuio(auio);
 	return (error);
 }
 
@@ -1256,7 +1268,7 @@ freebsd32_preadv(struct thread *td, struct freebsd32_preadv_args *uap)
 	if (error)
 		return (error);
 	error = kern_preadv(td, uap->fd, auio, PAIR32TO64(off_t,uap->offset));
-	free(auio, M_IOV);
+	freeuio(auio);
 	return (error);
 }
 
@@ -1270,7 +1282,7 @@ freebsd32_pwritev(struct thread *td, struct freebsd32_pwritev_args *uap)
 	if (error)
 		return (error);
 	error = kern_pwritev(td, uap->fd, auio, PAIR32TO64(off_t,uap->offset));
-	free(auio, M_IOV);
+	freeuio(auio);
 	return (error);
 }
 
@@ -2182,13 +2194,13 @@ freebsd32_do_sendfile(struct thread *td,
 	fdrop(fp, td);
 
 	if (uap->sbytes != NULL)
-		copyout(&sbytes, uap->sbytes, sizeof(off_t));
+		(void)copyout(&sbytes, uap->sbytes, sizeof(off_t));
 
 out:
 	if (hdr_uio)
-		free(hdr_uio, M_IOV);
+		freeuio(hdr_uio);
 	if (trl_uio)
-		free(trl_uio, M_IOV);
+		freeuio(trl_uio);
 	return (error);
 }
 
@@ -2239,6 +2251,7 @@ copy_stat(struct stat *in, struct stat32 *out)
 	CP(*in, *out, st_blksize);
 	CP(*in, *out, st_flags);
 	CP(*in, *out, st_gen);
+	CP(*in, *out, st_filerev);
 	TS_CP(*in, *out, st_birthtim);
 	out->st_padding0 = 0;
 	out->st_padding1 = 0;
@@ -2662,9 +2675,9 @@ freebsd32___sysctl(struct thread *td, struct freebsd32___sysctl_args *uap)
 		uap->new, uap->newlen, &j, SCTL_MASK32);
 	if (error)
 		return (error);
-	if (uap->oldlenp)
-		suword32(uap->oldlenp, j);
-	return (0);
+	if (uap->oldlenp != NULL && suword32(uap->oldlenp, j) != 0)
+		error = EFAULT;
+	return (error);
 }
 
 int
@@ -2687,9 +2700,8 @@ freebsd32___sysctlbyname(struct thread *td,
 	    &oldlen, uap->new, uap->newlen, &rv, SCTL_MASK32, 1);
 	if (error != 0)
 		return (error);
-	if (uap->oldlenp != NULL)
-		error = suword32(uap->oldlenp, rv);
-
+	if (uap->oldlenp != NULL && suword32(uap->oldlenp, rv) != 0)
+		error = EFAULT;
 	return (error);
 }
 
@@ -2768,7 +2780,7 @@ freebsd32_jail_set(struct thread *td, struct freebsd32_jail_set_args *uap)
 	if (error)
 		return (error);
 	error = kern_jail_set(td, auio, uap->flags);
-	free(auio, M_IOV);
+	freeuio(auio);
 	return (error);
 }
 
@@ -2795,7 +2807,7 @@ freebsd32_jail_get(struct thread *td, struct freebsd32_jail_get_args *uap)
 			if (error != 0)
 				break;
 		}
-	free(auio, M_IOV);
+	freeuio(auio);
 	return (error);
 }
 
@@ -3262,7 +3274,7 @@ freebsd32_thr_suspend(struct thread *td, struct freebsd32_thr_suspend_args *uap)
 }
 
 void
-siginfo_to_siginfo32(const siginfo_t *src, struct siginfo32 *dst)
+siginfo_to_siginfo32(const siginfo_t *src, struct __siginfo32 *dst)
 {
 	bzero(dst, sizeof(*dst));
 	dst->si_signo = src->si_signo;
@@ -3311,7 +3323,7 @@ freebsd32_sigtimedwait(struct thread *td, struct freebsd32_sigtimedwait_args *ua
 	struct timespec *timeout;
 	sigset_t set;
 	ksiginfo_t ksi;
-	struct siginfo32 si32;
+	struct __siginfo32 si32;
 	int error;
 
 	if (uap->timeout) {
@@ -3334,7 +3346,7 @@ freebsd32_sigtimedwait(struct thread *td, struct freebsd32_sigtimedwait_args *ua
 
 	if (uap->info) {
 		siginfo_to_siginfo32(&ksi.ksi_info, &si32);
-		error = copyout(&si32, uap->info, sizeof(struct siginfo32));
+		error = copyout(&si32, uap->info, sizeof(struct __siginfo32));
 	}
 
 	if (error == 0)
@@ -3349,7 +3361,7 @@ int
 freebsd32_sigwaitinfo(struct thread *td, struct freebsd32_sigwaitinfo_args *uap)
 {
 	ksiginfo_t ksi;
-	struct siginfo32 si32;
+	struct __siginfo32 si32;
 	sigset_t set;
 	int error;
 
@@ -3363,7 +3375,7 @@ freebsd32_sigwaitinfo(struct thread *td, struct freebsd32_sigwaitinfo_args *uap)
 
 	if (uap->info) {
 		siginfo_to_siginfo32(&ksi.ksi_info, &si32);
-		error = copyout(&si32, uap->info, sizeof(struct siginfo32));
+		error = copyout(&si32, uap->info, sizeof(struct __siginfo32));
 	}	
 	if (error == 0)
 		td->td_retval[0] = ksi.ksi_signo;
@@ -3528,7 +3540,7 @@ freebsd32_nmount(struct thread *td,
 		return (error);
 	error = vfs_donmount(td, flags, auio);
 
-	free(auio, M_IOV);
+	freeuio(auio);
 	return error;
 }
 
@@ -3851,6 +3863,7 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 	case PROC_TRAPCAP_CTL:
 	case PROC_NO_NEW_PRIVS_CTL:
 	case PROC_WXMAP_CTL:
+	case PROC_LOGSIGEXIT_CTL:
 		error = copyin(PTRIN(uap->data), &flags, sizeof(flags));
 		if (error != 0)
 			return (error);
@@ -3886,6 +3899,7 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 	case PROC_TRAPCAP_STATUS:
 	case PROC_NO_NEW_PRIVS_STATUS:
 	case PROC_WXMAP_STATUS:
+	case PROC_LOGSIGEXIT_STATUS:
 		data = &flags;
 		break;
 	case PROC_PDEATHSIG_CTL:
@@ -3919,6 +3933,7 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 	case PROC_TRAPCAP_STATUS:
 	case PROC_NO_NEW_PRIVS_STATUS:
 	case PROC_WXMAP_STATUS:
+	case PROC_LOGSIGEXIT_STATUS:
 		if (error == 0)
 			error = copyout(&flags, uap->data, sizeof(flags));
 		break;
@@ -3933,7 +3948,7 @@ freebsd32_procctl(struct thread *td, struct freebsd32_procctl_args *uap)
 int
 freebsd32_fcntl(struct thread *td, struct freebsd32_fcntl_args *uap)
 {
-	long tmp;
+	intptr_t tmp;
 
 	switch (uap->cmd) {
 	/*
@@ -4162,3 +4177,10 @@ ofreebsd32_sethostid(struct thread *td, struct ofreebsd32_sethostid_args *uap)
 	    sizeof(hostid), NULL, 0));
 }
 #endif
+
+int
+freebsd32_setcred(struct thread *td, struct freebsd32_setcred_args *uap)
+{
+	/* Last argument is 'is_32bit'. */
+	return (user_setcred(td, uap->flags, uap->wcred, uap->size, true));
+}

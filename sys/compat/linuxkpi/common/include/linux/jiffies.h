@@ -52,6 +52,7 @@
 	(time_after_eq(a,b) && time_before_eq(a,c))
 #define	time_is_after_eq_jiffies(a) time_after_eq(a, jiffies)
 #define	time_is_after_jiffies(a) time_after(a, jiffies)
+#define	time_is_before_jiffies(a)	time_before(a, jiffies)
 
 #define	HZ	hz
 
@@ -66,19 +67,6 @@ extern uint64_t lkpi_usec2hz_max;
 extern uint64_t lkpi_msec2hz_rem;
 extern uint64_t lkpi_msec2hz_div;
 extern uint64_t lkpi_msec2hz_max;
-
-static inline int
-timespec_to_jiffies(const struct timespec *ts)
-{
-	u64 result;
-
-	result = ((u64)hz * ts->tv_sec) +
-	    (((u64)hz * ts->tv_nsec + NSEC_PER_SEC - 1) / NSEC_PER_SEC);
-	if (result > MAX_JIFFY_OFFSET)
-		result = MAX_JIFFY_OFFSET;
-
-	return ((int)result);
-}
 
 static inline int
 msecs_to_jiffies(uint64_t msec)

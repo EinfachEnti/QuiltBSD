@@ -35,7 +35,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/elf.h>
 #include <sys/time.h>
@@ -51,6 +50,7 @@
 #define	_WANT_SOCKET
 #include <sys/socketvar.h>
 #include <sys/domain.h>
+#define	_WANT_PROTOSW
 #include <sys/protosw.h>
 #include <sys/un.h>
 #define	_WANT_UNPCB
@@ -84,8 +84,6 @@
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
-#define	_WANT_INPCB
-#include <netinet/in_pcb.h>
 
 #include <assert.h>
 #include <ctype.h>
@@ -1474,7 +1472,6 @@ procstat_get_socket_info_kvm(kvm_t *kd, struct filestat *fst,
     struct sockstat *sock, char *errbuf)
 {
 	struct domain dom;
-	struct inpcb inpcb;
 	struct protosw proto;
 	struct socket s;
 	struct unpcb unpcb;
@@ -1523,28 +1520,15 @@ procstat_get_socket_info_kvm(kvm_t *kd, struct filestat *fst,
 	sock->proto = proto.pr_protocol;
 	sock->dom_family = dom.dom_family;
 	sock->so_pcb = (uintptr_t)s.so_pcb;
+	sock->sendq = s.so_snd.sb_ccc;
+	sock->recvq = s.so_rcv.sb_ccc;
+	sock->so_rcv_sb_state = s.so_rcv.sb_state;
+	sock->so_snd_sb_state = s.so_snd.sb_state;
 
 	/*
 	 * Protocol specific data.
 	 */
 	switch (dom.dom_family) {
-	case AF_INET:
-	case AF_INET6:
-		if (proto.pr_protocol == IPPROTO_TCP) {
-			if (s.so_pcb) {
-				if (kvm_read(kd, (u_long)s.so_pcb,
-				    (char *)&inpcb, sizeof(struct inpcb))
-				    != sizeof(struct inpcb)) {
-					warnx("can't read inpcb at %p",
-					    (void *)s.so_pcb);
-				} else
-					sock->inp_ppcb =
-					    (uintptr_t)inpcb.inp_ppcb;
-				sock->sendq = s.so_snd.sb_ccc;
-				sock->recvq = s.so_rcv.sb_ccc;
-			}
-		}
-		break;
 	case AF_UNIX:
 		if (s.so_pcb) {
 			if (kvm_read(kd, (u_long)s.so_pcb, (char *)&unpcb,
@@ -1552,11 +1536,7 @@ procstat_get_socket_info_kvm(kvm_t *kd, struct filestat *fst,
 				warnx("can't read unpcb at %p",
 				    (void *)s.so_pcb);
 			} else if (unpcb.unp_conn) {
-				sock->so_rcv_sb_state = s.so_rcv.sb_state;
-				sock->so_snd_sb_state = s.so_snd.sb_state;
 				sock->unp_conn = (uintptr_t)unpcb.unp_conn;
-				sock->sendq = s.so_snd.sb_ccc;
-				sock->recvq = s.so_rcv.sb_ccc;
 			}
 		}
 		break;
@@ -1604,7 +1584,6 @@ procstat_get_socket_info_sysctl(struct filestat *fst, struct sockstat *sock,
 	case AF_INET:
 	case AF_INET6:
 		if (sock->proto == IPPROTO_TCP) {
-			sock->inp_ppcb = kif->kf_un.kf_sock.kf_sock_inpcb;
 			sock->sendq = kif->kf_un.kf_sock.kf_sock_sendq;
 			sock->recvq = kif->kf_un.kf_sock.kf_sock_recvq;
 		}
@@ -2381,7 +2360,7 @@ procstat_getosrel(struct procstat *procstat, struct kinfo_proc *kp, int *osrelp)
 
 #define PROC_AUXV_MAX	256
 
-#if __ELF_WORD_SIZE == 64
+#ifdef PS_ARCH_HAS_FREEBSD32
 static const char *elf32_sv_names[] = {
 	"Linux ELF32",
 	"FreeBSD ELF32",
@@ -2392,7 +2371,7 @@ is_elf32_sysctl(pid_t pid)
 {
 	int error, name[4];
 	size_t len, i;
-	static char sv_name[256];
+	char sv_name[32];
 
 	name[0] = CTL_KERN;
 	name[1] = KERN_PROC;
@@ -2414,7 +2393,6 @@ procstat_getauxv32_sysctl(pid_t pid, unsigned int *cntp)
 {
 	Elf_Auxinfo *auxv;
 	Elf32_Auxinfo *auxv32;
-	void *ptr;
 	size_t len;
 	unsigned int i, count;
 	int name[4];
@@ -2435,8 +2413,8 @@ procstat_getauxv32_sysctl(pid_t pid, unsigned int *cntp)
 			warn("sysctl: kern.proc.auxv: %d: %d", pid, errno);
 		goto out;
 	}
-	count = len / sizeof(Elf_Auxinfo);
-	auxv = malloc(count  * sizeof(Elf_Auxinfo));
+	count = len / sizeof(Elf32_Auxinfo);
+	auxv = malloc(count * sizeof(Elf_Auxinfo));
 	if (auxv == NULL) {
 		warn("malloc(%zu)", count * sizeof(Elf_Auxinfo));
 		goto out;
@@ -2448,15 +2426,24 @@ procstat_getauxv32_sysctl(pid_t pid, unsigned int *cntp)
 		 * necessarily true.
 		 */
 		auxv[i].a_type = auxv32[i].a_type;
-		ptr = &auxv32[i].a_un;
-		auxv[i].a_un.a_val = *((uint32_t *)ptr);
+		/*
+		 * Don't sign extend values.  Existing entries are positive
+		 * integers or pointers.  Under freebsd32, programs typically
+		 * have a full [0, 2^32) address space (perhaps minus the last
+		 * page) and treating this as a signed integer would be
+		 * confusing since these are not kernel pointers.
+		 *
+		 * XXX: A more complete translation would be ABI and
+		 * type-aware.
+		 */
+		auxv[i].a_un.a_val = (uint32_t)auxv32[i].a_un.a_val;
 	}
 	*cntp = count;
 out:
 	free(auxv32);
 	return (auxv);
 }
-#endif /* __ELF_WORD_SIZE == 64 */
+#endif /* PS_ARCH_HAS_FREEBSD32 */
 
 static Elf_Auxinfo *
 procstat_getauxv_sysctl(pid_t pid, unsigned int *cntp)
@@ -2465,7 +2452,7 @@ procstat_getauxv_sysctl(pid_t pid, unsigned int *cntp)
 	int name[4];
 	size_t len;
 
-#if __ELF_WORD_SIZE == 64
+#ifdef PS_ARCH_HAS_FREEBSD32
 	if (is_elf32_sysctl(pid))
 		return (procstat_getauxv32_sysctl(pid, cntp));
 #endif
@@ -2777,3 +2764,56 @@ procstat_freeadvlock(struct procstat *procstat __unused,
 	free(lst);
 }
 
+static rlim_t *
+procstat_getrlimitusage_sysctl(pid_t pid, unsigned *cntp)
+{
+	int error, name[4];
+	rlim_t *val;
+	size_t len;
+
+	name[0] = CTL_KERN;
+	name[1] = KERN_PROC;
+	name[2] = KERN_PROC_RLIMIT_USAGE;
+	name[3] = pid;
+
+	len = 0;
+	error = sysctl(name, nitems(name), NULL, &len, NULL, 0);
+	if (error == -1)
+		return (NULL);
+	val = malloc(len);
+	if (val == NULL)
+		return (NULL);
+
+	error = sysctl(name, nitems(name), val, &len, NULL, 0);
+	if (error == -1) {
+		free(val);
+		return (NULL);
+	}
+	*cntp = len / sizeof(rlim_t);
+	return (val);
+}
+
+rlim_t *
+procstat_getrlimitusage(struct procstat *procstat, struct kinfo_proc *kp,
+    unsigned int *cntp)
+{
+	switch (procstat->type) {
+	case PROCSTAT_KVM:
+		warnx("kvm method is not supported");
+		return (NULL);
+	case PROCSTAT_SYSCTL:
+		return (procstat_getrlimitusage_sysctl(kp->ki_pid, cntp));
+	case PROCSTAT_CORE:
+		warnx("core method is not supported");
+		return (NULL);
+	default:
+		warnx("unknown access method: %d", procstat->type);
+		return (NULL);
+	}
+}
+
+void
+procstat_freerlimitusage(struct procstat *procstat __unused, rlim_t *resusage)
+{
+	free(resusage);
+}

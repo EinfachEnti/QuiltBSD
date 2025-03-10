@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/bio.h>
@@ -179,7 +178,8 @@ fdc_acpi_probe_children(device_t bus, device_t dev, void *fde)
 	free(ctx, M_TEMP);
 
 	/* Attach any children found during the probe. */
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 static ACPI_STATUS

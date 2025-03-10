@@ -30,7 +30,15 @@
 if ! command -v clonefile > /dev/null ; then
   log_unsupported "clonefile program required to test block cloning"
 fi
+if ! command -v clone_mmap_cached > /dev/null ; then
+  log_unsupported "clone_mmap_cached program required to test block cloning"
+fi
 
 verify_runnable "global"
+
+if tunable_exists BCLONE_ENABLED ; then
+    log_must save_tunable BCLONE_ENABLED
+    log_must set_tunable32 BCLONE_ENABLED 1
+fi
 
 log_pass

@@ -30,7 +30,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 /*
  * USB Open Host Controller driver.
  *
@@ -240,7 +239,7 @@ ohci_pci_attach(device_t self)
 		device_printf(self, "Could not allocate irq\n");
 		goto error;
 	}
-	sc->sc_bus.bdev = device_add_child(self, "usbus", -1);
+	sc->sc_bus.bdev = device_add_child(self, "usbus", DEVICE_UNIT_ANY);
 	if (!sc->sc_bus.bdev) {
 		device_printf(self, "Could not add USB device\n");
 		goto error;
@@ -320,9 +319,12 @@ static int
 ohci_pci_detach(device_t self)
 {
 	ohci_softc_t *sc = device_get_softc(self);
+	int error;
 
 	/* during module unload there are lots of children leftover */
-	device_delete_children(self);
+	error = bus_generic_detach(self);
+	if (error != 0)
+		return (error);
 
 	pci_disable_busmaster(self);
 

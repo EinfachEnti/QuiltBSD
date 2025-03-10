@@ -3,7 +3,7 @@
 #
 
 # PROVIDE: iovctl
-# REQUIRE: FILESYSTEMS sysctl
+# REQUIRE: FILESYSTEMS sysctl kld
 
 . /etc/rc.subr
 
@@ -35,4 +35,8 @@ iovctl_stop()
 }
 
 load_rc_config $name
+
+# doesn't make sense to run in a svcj: config setting
+iovctl_svcj="NO"
+
 run_rc_command "$1"

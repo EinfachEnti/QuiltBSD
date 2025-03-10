@@ -15,7 +15,6 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-#include <sys/cdefs.h>
 /*
  * Driver for Realtek RTL8188SU/RTL8191SU/RTL8192SU.
  *
@@ -1500,7 +1499,8 @@ rsu_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 		ni = ieee80211_ref_node(vap->iv_bss);
 		rs = &ni->ni_rates;
 		/* Indicate highest supported rate. */
-		ni->ni_txrate = rs->rs_rates[rs->rs_nrates - 1];
+		ieee80211_node_set_txrate_dot11rate(ni,
+		    rs->rs_rates[rs->rs_nrates - 1]);
 		(void) rsu_set_fw_power_state(sc, RSU_PWR_SLEEP);
 		ieee80211_free_node(ni);
 		startcal = 1;
@@ -1526,10 +1526,10 @@ rsu_key_alloc(struct ieee80211vap *vap, struct ieee80211_key *k,
 	struct rsu_softc *sc = vap->iv_ic->ic_softc;
 	int is_checked = 0;
 
-	if (&vap->iv_nw_keys[0] <= k &&
-	    k < &vap->iv_nw_keys[IEEE80211_WEP_NKID]) {
+	if (ieee80211_is_key_global(vap, k)) {
 		*keyix = ieee80211_crypto_get_key_wepidx(vap, k);
 	} else {
+		/* Note: assumes this is a pairwise key */
 		if (vap->iv_opmode != IEEE80211_M_STA) {
 			*keyix = 0;
 			/* TODO: obtain keyix from node id */
@@ -1570,8 +1570,7 @@ rsu_process_key(struct ieee80211vap *vap, const struct ieee80211_key *k,
 	}
 
 	/* Handle group keys. */
-	if (&vap->iv_nw_keys[0] <= k &&
-	    k < &vap->iv_nw_keys[IEEE80211_WEP_NKID]) {
+	if (ieee80211_is_key_global(vap, k)) {
 		KASSERT(k->wk_keyix < nitems(sc->group_keys),
 		    ("keyix %u > %zu\n", k->wk_keyix, nitems(sc->group_keys)));
 
@@ -2553,7 +2552,6 @@ rsu_rxeof(struct usb_xfer *xfer, struct rsu_data *data)
 static void
 rsu_bulk_rx_callback(struct usb_xfer *xfer, usb_error_t error)
 {
-	struct epoch_tracker et;
 	struct rsu_softc *sc = usbd_xfer_softc(xfer);
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_node *ni;
@@ -2588,7 +2586,6 @@ tr_setup:
 		 * ieee80211_input() because here is at the end of a USB
 		 * callback and safe to unlock.
 		 */
-		NET_EPOCH_ENTER(et);
 		while (m != NULL) {
 			next = m->m_next;
 			m->m_next = NULL;
@@ -2607,7 +2604,6 @@ tr_setup:
 			RSU_LOCK(sc);
 			m = next;
 		}
-		NET_EPOCH_EXIT(et);
 		break;
 	default:
 		/* needs it to the inactive queue due to a error. */

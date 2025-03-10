@@ -30,7 +30,6 @@
  * Intel Core PMCs.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/pmc.h>
@@ -1052,7 +1051,7 @@ core_intr(struct trapframe *tf)
 		counter_u64_add(pmc_stats.pm_intr_ignored, 1);
 
 	if (found_interrupt)
-		lapic_reenable_pmc();
+		lapic_reenable_pcint();
 
 	return (found_interrupt);
 }
@@ -1151,7 +1150,7 @@ core2_intr(struct trapframe *tf)
 		counter_u64_add(pmc_stats.pm_intr_ignored, 1);
 
 	if (found_interrupt)
-		lapic_reenable_pmc();
+		lapic_reenable_pcint();
 
 	/*
 	 * Reenable all non-stalled PMCs.
@@ -1259,6 +1258,10 @@ void
 pmc_core_finalize(struct pmc_mdep *md)
 {
 	PMCDBG0(MDP,INI,1, "core-finalize");
+
+	for (int i = 0; i < pmc_cpu_max(); i++)
+		KASSERT(core_pcpu[i] == NULL,
+		    ("[core,%d] non-null pcpu cpu %d", __LINE__, i));
 
 	free(core_pcpu, M_PMC);
 	core_pcpu = NULL;

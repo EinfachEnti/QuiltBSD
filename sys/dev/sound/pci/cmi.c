@@ -982,17 +982,18 @@ cmi_attach(device_t dev)
 	if (mixer_init(dev, &cmi_mixer_class, sc))
 		goto bad;
 
-	if (pcm_register(dev, sc, 1, 1))
-		goto bad;
+	pcm_init(dev, sc);
 
 	cmi_initsys(sc);
 
 	pcm_addchan(dev, PCMDIR_PLAY, &cmichan_class, sc);
 	pcm_addchan(dev, PCMDIR_REC, &cmichan_class, sc);
 
-	snprintf(status, SND_STATUSLEN, "at io 0x%jx irq %jd %s",
-		 rman_get_start(sc->reg), rman_get_start(sc->irq),PCM_KLDSTRING(snd_cmi));
-	pcm_setstatus(dev, status);
+	snprintf(status, SND_STATUSLEN, "port 0x%jx irq %jd on %s",
+		 rman_get_start(sc->reg), rman_get_start(sc->irq),
+		 device_get_nameunit(device_get_parent(dev)));
+	if (pcm_register(dev, status))
+		goto bad;
 
 	DEB(printf("cmi_attach: succeeded\n"));
 	return 0;

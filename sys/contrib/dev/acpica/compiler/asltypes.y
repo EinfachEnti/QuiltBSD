@@ -9,7 +9,7 @@ NoEcho('
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2022, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2024, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -359,6 +359,8 @@ NoEcho('
 %type <n> WireModeKeyword
 %type <n> XferSizeKeyword
 %type <n> XferTypeKeyword
+%type <n> ClockScaleKeyword
+%type <n> ClockModeKeyword
 
 /* Types */
 
@@ -411,11 +413,13 @@ NoEcho('
 
 /* Resource Descriptors */
 
+%type <n> ClockInputTerm
 %type <n> ConnectionTerm
 %type <n> Csi2SerialBusTerm
 %type <n> DMATerm
 %type <n> DWordIOTerm
 %type <n> DWordMemoryTerm
+%type <n> DWordPccTerm
 %type <n> DWordSpaceTerm
 %type <n> EndDependentFnTerm
 %type <n> ExtendedIOTerm
@@ -443,6 +447,7 @@ NoEcho('
 %type <n> PinGroupFunctionTerm
 %type <n> QWordIOTerm
 %type <n> QWordMemoryTerm
+%type <n> QWordPccTerm
 %type <n> QWordSpaceTerm
 %type <n> RegisterTerm
 %type <n> SpiSerialBusTerm
@@ -455,6 +460,7 @@ NoEcho('
 %type <n> VendorShortTerm
 %type <n> WordBusNumberTerm
 %type <n> WordIOTerm
+%type <n> WordPccTerm
 %type <n> WordSpaceTerm
 
 /* Local types that help construct the AML, not in ACPI spec */

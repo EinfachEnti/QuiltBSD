@@ -30,8 +30,6 @@
  *	From BSDI: daemon.c,v 1.2 1996/08/15 01:11:09 jch Exp
  */
 
-#include <sys/cdefs.h>
-#include <sys/param.h>
 #include <sys/event.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -50,11 +48,16 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <strings.h>
 #define SYSLOG_NAMES
 #include <syslog.h>
 #include <time.h>
 #include <assert.h>
+
+/* 1 year in seconds */
+#define MAX_RESTART_DELAY 60*60*24*365
+
+/* Maximum number of restarts */
+#define MAX_RESTART_COUNT 128
 
 #define LBUF_SIZE 4096
 
@@ -65,8 +68,10 @@ enum daemon_mode {
 	MODE_NOCHILD,      /* child is terminated, final state of the event loop */
 };
 
+
 struct daemon_state {
-	int pipe_fd[2];
+	unsigned char buf[LBUF_SIZE];
+	size_t pos;
 	char **argv;
 	const char *child_pidfile;
 	const char *parent_pidfile;
@@ -78,7 +83,10 @@ struct daemon_state {
 	struct pidfh *child_pidfh;
 	enum daemon_mode mode;
 	int pid;
+	int pipe_rd;
+	int pipe_wr;
 	int keep_cur_workdir;
+	int kqueue_fd;
 	int restart_delay;
 	int stdmask;
 	int syslog_priority;
@@ -88,12 +96,14 @@ struct daemon_state {
 	bool restart_enabled;
 	bool syslog_enabled;
 	bool log_reopen;
+	int restart_count;
+	int restarted_count;
 };
 
 static void restrict_process(const char *);
 static int  open_log(const char *);
 static void reopen_log(struct daemon_state *);
-static bool listen_child(int, struct daemon_state *);
+static bool listen_child(struct daemon_state *);
 static int  get_log_mapping(const char *, const CODE *);
 static void open_pid_files(struct daemon_state *);
 static void do_output(const unsigned char *, size_t, struct daemon_state *);
@@ -104,8 +114,11 @@ static void daemon_terminate(struct daemon_state *);
 static void daemon_exec(struct daemon_state *);
 static bool daemon_is_child_dead(struct daemon_state *);
 static void daemon_set_child_pipe(struct daemon_state *);
+static int daemon_setup_kqueue(void);
 
-static const char shortopts[] = "+cfHSp:P:ru:o:s:l:t:m:R:T:h";
+static int pidfile_truncate(struct pidfh *);
+
+static const char shortopts[] = "+cfHSp:P:ru:o:s:l:t:m:R:T:C:h";
 
 static const struct option longopts[] = {
 	{ "change-dir",         no_argument,            NULL,           'c' },
@@ -117,6 +130,7 @@ static const struct option longopts[] = {
 	{ "child-pidfile",      required_argument,      NULL,           'p' },
 	{ "supervisor-pidfile", required_argument,      NULL,           'P' },
 	{ "restart",            no_argument,            NULL,           'r' },
+	{ "restart-count",      required_argument,      NULL,           'C' },
 	{ "restart-delay",      required_argument,      NULL,           'R' },
 	{ "title",              required_argument,      NULL,           't' },
 	{ "user",               required_argument,      NULL,           'u' },
@@ -135,6 +149,7 @@ usage(int exitcode)
 	    "              [-u user] [-o output_file] [-t title]\n"
 	    "              [-l syslog_facility] [-s syslog_priority]\n"
 	    "              [-T syslog_tag] [-m output_mask] [-R restart_delay_secs]\n"
+	    "              [-C restart_count]\n"
 	    "command arguments ...\n");
 
 	(void)fprintf(stderr,
@@ -148,6 +163,7 @@ usage(int exitcode)
 	    "  --child-pidfile      -p <file>  Write PID of the child process to file\n"
 	    "  --supervisor-pidfile -P <file>  Write PID of the supervisor process to file\n"
 	    "  --restart            -r         Restart child if it terminates (1 sec delay)\n"
+	    "  --restart-count      -C <N>     Restart child at most N times, then exit\n"
 	    "  --restart-delay      -R <N>     Restart child if it terminates after N sec\n"
 	    "  --title              -t <title> Set the title of the supervisor process\n"
 	    "  --user               -u <user>  Drop privileges, run as given user\n"
@@ -162,7 +178,7 @@ usage(int exitcode)
 int
 main(int argc, char *argv[])
 {
-	char *p = NULL;
+	const char *e = NULL;
 	int ch = 0;
 	struct daemon_state state;
 
@@ -194,6 +210,13 @@ main(int argc, char *argv[])
 		case 'c':
 			state.keep_cur_workdir = 0;
 			break;
+		case 'C':
+			state.restart_count = (int)strtonum(optarg, 0,
+			    MAX_RESTART_COUNT, &e);
+			if (e != NULL) {
+				errx(6, "invalid restart count: %s", e);
+			}
+			break;
 		case 'f':
 			state.keep_fds_open = 0;
 			break;
@@ -210,9 +233,9 @@ main(int argc, char *argv[])
 			state.mode = MODE_SUPERVISE;
 			break;
 		case 'm':
-			state.stdmask = strtol(optarg, &p, 10);
-			if (p == optarg || state.stdmask < 0 || state.stdmask > 3) {
-				errx(6, "unrecognized listening mask");
+			state.stdmask = (int)strtonum(optarg, 0, 3, &e);
+			if (e != NULL) {
+				errx(6, "unrecognized listening mask: %s", e);
 			}
 			break;
 		case 'o':
@@ -239,10 +262,12 @@ main(int argc, char *argv[])
 			break;
 		case 'R':
 			state.restart_enabled = true;
-			state.restart_delay = strtol(optarg, &p, 0);
-			if (p == optarg || state.restart_delay < 1) {
-				errx(6, "invalid restart delay");
+			state.restart_delay = (int)strtonum(optarg, 1,
+			    MAX_RESTART_DELAY, &e);
+			if (e != NULL) {
+				errx(6, "invalid restart delay: %s", e);
 			}
+			state.mode = MODE_SUPERVISE;
 			break;
 		case 's':
 			state.syslog_priority = get_log_mapping(optarg,
@@ -270,7 +295,7 @@ main(int argc, char *argv[])
 			break;
 		case 'h':
 			usage(0);
-			__builtin_unreachable();
+			__unreachable();
 		default:
 			usage(1);
 		}
@@ -321,10 +346,18 @@ main(int argc, char *argv[])
 	/* Write out parent pidfile if needed. */
 	pidfile_write(state.parent_pidfh);
 
+	state.kqueue_fd = daemon_setup_kqueue();
+
 	do {
 		state.mode = MODE_SUPERVISE;
 		daemon_eventloop(&state);
 		daemon_sleep(&state);
+		if (state.restart_enabled && state.restart_count > -1) {
+			if (state.restarted_count >= state.restart_count) {
+				state.restart_enabled = false;
+			}
+			state.restarted_count++;
+		}
 	} while (state.restart_enabled);
 
 	daemon_terminate(&state);
@@ -348,7 +381,7 @@ daemon_exec(struct daemon_state *state)
 }
 
 /* Main event loop: fork the child and watch for events.
- * After SIGTERM is recieved and propagated to the child there are
+ * After SIGTERM is received and propagated to the child there are
  * several options on what to do next:
  * - read until EOF
  * - read until EOF but only for a while
@@ -364,6 +397,7 @@ daemon_eventloop(struct daemon_state *state)
 	struct kevent event;
 	int kq;
 	int ret;
+	int pipe_fd[2];
 
 	/*
 	 * Try to protect against pageout kill. Ignore the
@@ -372,31 +406,19 @@ daemon_eventloop(struct daemon_state *state)
 	 */
 	(void)madvise(NULL, 0, MADV_PROTECT);
 
-	if (pipe(state->pipe_fd)) {
+	if (pipe(pipe_fd)) {
 		err(1, "pipe");
 	}
+	state->pipe_rd = pipe_fd[0];
+	state->pipe_wr = pipe_fd[1];
 
-	kq = kqueuex(KQUEUE_CLOEXEC);
-	EV_SET(&event, state->pipe_fd[0], EVFILT_READ, EV_ADD|EV_CLEAR, 0, 0,
+	kq = state->kqueue_fd;
+	EV_SET(&event, state->pipe_rd, EVFILT_READ, EV_ADD|EV_CLEAR, 0, 0,
 	    NULL);
 	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
 		err(EXIT_FAILURE, "failed to register kevent");
 	}
 
-	EV_SET(&event, SIGHUP,  EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
-		err(EXIT_FAILURE, "failed to register kevent");
-	}
-
-	EV_SET(&event, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
-		err(EXIT_FAILURE, "failed to register kevent");
-	}
-
-	EV_SET(&event, SIGCHLD, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
-	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
-		err(EXIT_FAILURE, "failed to register kevent");
-	}
 	memset(&event, 0, sizeof(struct kevent));
 
 	/* Spawn a child to exec the command. */
@@ -417,8 +439,8 @@ daemon_eventloop(struct daemon_state *state)
 	}
 
 	/* case: pid > 0; fork succeeded */
-	close(state->pipe_fd[1]);
-	state->pipe_fd[1] = -1;
+	close(state->pipe_wr);
+	state->pipe_wr = -1;
 	setproctitle("%s[%d]", state->title, (int)state->pid);
 	setbuf(stdout, NULL);
 
@@ -435,7 +457,7 @@ daemon_eventloop(struct daemon_state *state)
 
 		if (event.flags & EV_ERROR) {
 			errx(EXIT_FAILURE, "Event error: %s",
-			    strerror(event.data));
+			    strerror((int)event.data));
 		}
 
 		switch (event.filter) {
@@ -447,9 +469,9 @@ daemon_eventloop(struct daemon_state *state)
 					/* child is dead, read all until EOF */
 					state->pid = -1;
 					state->mode = MODE_NOCHILD;
-					while (listen_child(state->pipe_fd[0],
-					    state))
-						;
+					while (listen_child(state)) {
+						continue;
+					}
 				}
 				continue;
 			case SIGTERM:
@@ -485,32 +507,99 @@ daemon_eventloop(struct daemon_state *state)
 			 */
 
 			if (event.data > 0) {
-				(void)listen_child(state->pipe_fd[0], state);
+				(void)listen_child(state);
 			}
 			continue;
 		default:
+			assert(0 && "Unexpected kevent filter type");
 			continue;
 		}
 	}
 
-	close(kq);
-	close(state->pipe_fd[0]);
-	state->pipe_fd[0] = -1;
+	/* EVFILT_READ kqueue filter goes away here. */
+	close(state->pipe_rd);
+	state->pipe_rd = -1;
+
+	/*
+	 * We don't have to truncate the pidfile, but it's easier to test
+	 * daemon(8) behavior in some respects if we do.  We won't bother if
+	 * the child won't be restarted.
+	 */
+	if (state->child_pidfh != NULL && state->restart_enabled) {
+		pidfile_truncate(state->child_pidfh);
+	}
 }
 
+/*
+ * Note that daemon_sleep() should not be called with anything but the signal
+ * events in the kqueue without further consideration.
+ */
 static void
 daemon_sleep(struct daemon_state *state)
 {
-	struct timespec ts = { state->restart_delay, 0 };
+	struct kevent event = { 0 };
+	int ret;
+
+	assert(state->pipe_rd == -1);
+	assert(state->pipe_wr == -1);
 
 	if (!state->restart_enabled) {
 		return;
 	}
-	while (nanosleep(&ts, &ts) == -1) {
-		if (errno != EINTR) {
-			err(1, "nanosleep");
+
+	EV_SET(&event, 0, EVFILT_TIMER, EV_ADD|EV_ONESHOT, NOTE_SECONDS,
+	    state->restart_delay, NULL);
+	if (kevent(state->kqueue_fd, &event, 1, NULL, 0, NULL) == -1) {
+		err(1, "failed to register timer");
+	}
+
+	for (;;) {
+		ret = kevent(state->kqueue_fd, NULL, 0, &event, 1, NULL);
+		if (ret == -1) {
+			if (errno != EINTR) {
+				err(1, "kevent");
+			}
+
+			continue;
+		}
+
+		/*
+		 * Any other events being raised are indicative of a problem
+		 * that we need to investigate.  Most likely being that
+		 * something was not cleaned up from the eventloop.
+		 */
+		assert(event.filter == EVFILT_TIMER ||
+		    event.filter == EVFILT_SIGNAL);
+
+		if (event.filter == EVFILT_TIMER) {
+			/* Break's over, back to work. */
+			break;
+		}
+
+		/* Process any pending signals. */
+		switch (event.ident) {
+		case SIGTERM:
+			/*
+			 * We could disarm the timer, but we'll be terminating
+			 * promptly anyways.
+			 */
+			state->restart_enabled = false;
+			return;
+		case SIGHUP:
+			if (state->log_reopen && state->output_fd >= 0) {
+				reopen_log(state);
+			}
+
+			break;
+		case SIGCHLD:
+		default:
+			/* Discard */
+			break;
 		}
 	}
+
+	/* SIGTERM should've returned immediately. */
+	assert(state->restart_enabled);
 }
 
 static void
@@ -581,44 +670,45 @@ restrict_process(const char *user)
  *
  * Return value of false is assumed to mean EOF or error, and true indicates to
  * continue reading.
- *
- * TODO: simplify signature - state contains pipefd
  */
 static bool
-listen_child(int fd, struct daemon_state *state)
+listen_child(struct daemon_state *state)
 {
-	static unsigned char buf[LBUF_SIZE];
-	static size_t bytes_read = 0;
-	int rv;
+	ssize_t rv;
+	unsigned char *cp;
 
 	assert(state != NULL);
-	assert(bytes_read < LBUF_SIZE - 1);
+	assert(state->pos < LBUF_SIZE - 1);
 
-	rv = read(fd, buf + bytes_read, LBUF_SIZE - bytes_read - 1);
+	rv = read(state->pipe_rd, state->buf + state->pos,
+	    LBUF_SIZE - state->pos - 1);
 	if (rv > 0) {
-		unsigned char *cp;
-
-		bytes_read += rv;
-		assert(bytes_read <= LBUF_SIZE - 1);
+		state->pos += rv;
+		assert(state->pos <= LBUF_SIZE - 1);
 		/* Always NUL-terminate just in case. */
-		buf[LBUF_SIZE - 1] = '\0';
+		state->buf[LBUF_SIZE - 1] = '\0';
+
 		/*
-		 * Chomp line by line until we run out of buffer.
+		 * Find position of the last newline in the buffer.
+		 * The buffer is guaranteed to have one or more complete lines
+		 * if at least one newline was found when searching in reverse.
+		 * All complete lines are flushed.
 		 * This does not take NUL characters into account.
 		 */
-		while ((cp = memchr(buf, '\n', bytes_read)) != NULL) {
-			size_t bytes_line = cp - buf + 1;
-			assert(bytes_line <= bytes_read);
-			do_output(buf, bytes_line, state);
-			bytes_read -= bytes_line;
-			memmove(buf, cp + 1, bytes_read);
+		cp = memrchr(state->buf, '\n', state->pos);
+		if (cp != NULL) {
+			size_t bytes_line = cp - state->buf + 1;
+			assert(bytes_line <= state->pos);
+			do_output(state->buf, bytes_line, state);
+			state->pos -= bytes_line;
+			memmove(state->buf, cp + 1, state->pos);
 		}
 		/* Wait until the buffer is full. */
-		if (bytes_read < LBUF_SIZE - 1) {
+		if (state->pos < LBUF_SIZE - 1) {
 			return true;
 		}
-		do_output(buf, bytes_read, state);
-		bytes_read = 0;
+		do_output(state->buf, state->pos, state);
+		state->pos = 0;
 		return true;
 	} else if (rv == -1) {
 		/* EINTR should trigger another read. */
@@ -630,9 +720,9 @@ listen_child(int fd, struct daemon_state *state)
 		}
 	}
 	/* Upon EOF, we have to flush what's left of the buffer. */
-	if (bytes_read > 0) {
-		do_output(buf, bytes_read, state);
-		bytes_read = 0;
+	if (state->pos > 0) {
+		do_output(state->buf, state->pos, state);
+		state->pos = 0;
 	}
 	return false;
 }
@@ -688,7 +778,8 @@ static void
 daemon_state_init(struct daemon_state *state)
 {
 	*state = (struct daemon_state) {
-		.pipe_fd = { -1, -1 },
+		.buf = {0},
+		.pos = 0,
 		.argv = NULL,
 		.parent_pidfh = NULL,
 		.child_pidfh = NULL,
@@ -699,7 +790,10 @@ daemon_state_init(struct daemon_state *state)
 		.mode = MODE_DAEMON,
 		.restart_enabled = false,
 		.pid = 0,
+		.pipe_rd = -1,
+		.pipe_wr = -1,
 		.keep_cur_workdir = 1,
+		.kqueue_fd = -1,
 		.restart_delay = 1,
 		.stdmask = STDOUT_FILENO | STDERR_FILENO,
 		.syslog_enabled = false,
@@ -710,6 +804,8 @@ daemon_state_init(struct daemon_state *state)
 		.keep_fds_open = 1,
 		.output_fd = -1,
 		.output_filename = NULL,
+		.restart_count = -1,
+		.restarted_count = 0
 	};
 }
 
@@ -718,15 +814,18 @@ daemon_terminate(struct daemon_state *state)
 {
 	assert(state != NULL);
 
+	if (state->kqueue_fd >= 0) {
+		close(state->kqueue_fd);
+	}
 	if (state->output_fd >= 0) {
 		close(state->output_fd);
 	}
-	if (state->pipe_fd[0] >= 0) {
-		close(state->pipe_fd[0]);
+	if (state->pipe_rd >= 0) {
+		close(state->pipe_rd);
 	}
 
-	if (state->pipe_fd[1] >= 0) {
-		close(state->pipe_fd[1]);
+	if (state->pipe_wr >= 0) {
+		close(state->pipe_wr);
 	}
 	if (state->syslog_enabled) {
 		closelog();
@@ -743,17 +842,21 @@ daemon_terminate(struct daemon_state *state)
 }
 
 /*
- * Returns true if SIGCHILD came from state->pid
- * This function could hang if SIGCHILD was emittied for a reason other than
- * child dying (e.g., ptrace attach).
+ * Returns true if SIGCHILD came from state->pid due to its exit.
  */
 static bool
 daemon_is_child_dead(struct daemon_state *state)
 {
+	int status;
+
 	for (;;) {
-		int who = waitpid(-1, NULL, WNOHANG);
-		if (state->pid == who) {
+		int who = waitpid(-1, &status, WNOHANG);
+		if (state->pid == who && (WIFEXITED(status) ||
+		    WIFSIGNALED(status))) {
 			return true;
+		}
+		if (who == 0) {
+			return false;
 		}
 		if (who == -1 && errno != EINTR) {
 			warn("waitpid");
@@ -766,20 +869,68 @@ static void
 daemon_set_child_pipe(struct daemon_state *state)
 {
 	if (state->stdmask & STDERR_FILENO) {
-		if (dup2(state->pipe_fd[1], STDERR_FILENO) == -1) {
+		if (dup2(state->pipe_wr, STDERR_FILENO) == -1) {
 			err(1, "dup2");
 		}
 	}
 	if (state->stdmask & STDOUT_FILENO) {
-		if (dup2(state->pipe_fd[1], STDOUT_FILENO) == -1) {
+		if (dup2(state->pipe_wr, STDOUT_FILENO) == -1) {
 			err(1, "dup2");
 		}
 	}
-	if (state->pipe_fd[1] != STDERR_FILENO &&
-	    state->pipe_fd[1] != STDOUT_FILENO) {
-		close(state->pipe_fd[1]);
+	if (state->pipe_wr != STDERR_FILENO &&
+	    state->pipe_wr != STDOUT_FILENO) {
+		close(state->pipe_wr);
 	}
 
 	/* The child gets dup'd pipes. */
-	close(state->pipe_fd[0]);
+	close(state->pipe_rd);
+}
+
+static int
+daemon_setup_kqueue(void)
+{
+	int kq;
+	struct kevent event = { 0 };
+
+	kq = kqueuex(KQUEUE_CLOEXEC);
+	if (kq == -1) {
+		err(EXIT_FAILURE, "kqueue");
+	}
+
+	EV_SET(&event, SIGHUP,  EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+		err(EXIT_FAILURE, "failed to register kevent");
+	}
+
+	EV_SET(&event, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+		err(EXIT_FAILURE, "failed to register kevent");
+	}
+
+	EV_SET(&event, SIGCHLD, EVFILT_SIGNAL, EV_ADD, 0, 0, NULL);
+	if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+		err(EXIT_FAILURE, "failed to register kevent");
+	}
+
+	return (kq);
+}
+
+static int
+pidfile_truncate(struct pidfh *pfh)
+{
+	int pfd = pidfile_fileno(pfh);
+
+	assert(pfd >= 0);
+
+	if (ftruncate(pfd, 0) == -1)
+		return (-1);
+
+	/*
+	 * pidfile_write(3) will always pwrite(..., 0) today, but let's assume
+	 * it may not always and do a best-effort reset of the position just to
+	 * set a good example.
+	 */
+	(void)lseek(pfd, 0, SEEK_SET);
+	return (0);
 }

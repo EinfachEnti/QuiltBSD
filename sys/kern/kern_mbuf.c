@@ -703,7 +703,7 @@ mb_dtor_pack(void *mem, int size, void *arg)
 	KASSERT(m->m_ext.ext_size == MCLBYTES, ("%s: ext_size != MCLBYTES", __func__));
 	KASSERT(m->m_ext.ext_type == EXT_PACKET, ("%s: ext_type != EXT_PACKET", __func__));
 #if defined(INVARIANTS) && !defined(KMSAN)
-	trash_dtor(m->m_ext.ext_buf, MCLBYTES, arg);
+	trash_dtor(m->m_ext.ext_buf, MCLBYTES, zone_clust);
 #endif
 	/*
 	 * If there are processes blocked on zone_clust, waiting for pages
@@ -782,7 +782,7 @@ mb_zfini_pack(void *mem, int size)
 #endif
 	uma_zfree_arg(zone_clust, m->m_ext.ext_buf, NULL);
 #if defined(INVARIANTS) && !defined(KMSAN)
-	trash_dtor(mem, size, NULL);
+	trash_dtor(mem, size, zone_clust);
 #endif
 }
 
@@ -804,7 +804,7 @@ mb_ctor_pack(void *mem, int size, void *arg, int how)
 	MPASS((flags & M_NOFREE) == 0);
 
 #if defined(INVARIANTS) && !defined(KMSAN)
-	trash_ctor(m->m_ext.ext_buf, MCLBYTES, arg, how);
+	trash_ctor(m->m_ext.ext_buf, MCLBYTES, zone_clust, how);
 #endif
 
 	error = m_init(m, how, type, flags);
@@ -936,8 +936,8 @@ mb_unmapped_free_mext(struct mbuf *m)
 	mb_free_extpg(old_m);
 }
 
-static struct mbuf *
-_mb_unmapped_to_ext(struct mbuf *m)
+static int
+_mb_unmapped_to_ext(struct mbuf *m, struct mbuf **mres)
 {
 	struct mbuf *m_new, *top, *prev, *mref;
 	struct sf_buf *sf;
@@ -947,9 +947,15 @@ _mb_unmapped_to_ext(struct mbuf *m)
 	u_int ref_inc = 0;
 
 	M_ASSERTEXTPG(m);
+
+	if (m->m_epg_tls != NULL) {
+		/* can't convert TLS mbuf */
+		m_free(m);
+		*mres = NULL;
+		return (EINVAL);
+	}
+
 	len = m->m_len;
-	KASSERT(m->m_epg_tls == NULL, ("%s: can't convert TLS mbuf %p",
-	    __func__, m));
 
 	/* See if this is the mbuf that holds the embedded refcount. */
 	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
@@ -1014,7 +1020,8 @@ _mb_unmapped_to_ext(struct mbuf *m)
 
 		ref_inc++;
 		m_extadd(m_new, (char *)sf_buf_kva(sf), PAGE_SIZE,
-		    mb_unmapped_free_mext, sf, mref, M_RDONLY, EXT_SFBUF);
+		    mb_unmapped_free_mext, sf, mref, m->m_flags & M_RDONLY,
+		    EXT_SFBUF);
 		m_new->m_data += segoff;
 		m_new->m_len = seglen;
 
@@ -1047,7 +1054,8 @@ _mb_unmapped_to_ext(struct mbuf *m)
 			atomic_add_int(refcnt, ref_inc);
 	}
 	m_free(m);
-	return (top);
+	*mres = top;
+	return (0);
 
 fail:
 	if (ref_inc != 0) {
@@ -1064,13 +1072,15 @@ fail:
 	}
 	m_free(m);
 	m_freem(top);
-	return (NULL);
+	*mres = NULL;
+	return (ENOMEM);
 }
 
-struct mbuf *
-mb_unmapped_to_ext(struct mbuf *top)
+int
+mb_unmapped_to_ext(struct mbuf *top, struct mbuf **mres)
 {
-	struct mbuf *m, *next, *prev = NULL;
+	struct mbuf *m, *m1, *next, *prev = NULL;
+	int error;
 
 	prev = NULL;
 	for (m = top; m != NULL; m = next) {
@@ -1086,12 +1096,15 @@ mb_unmapped_to_ext(struct mbuf *top)
 				 */
 				prev->m_next = NULL;
 			}
-			m = _mb_unmapped_to_ext(m);
-			if (m == NULL) {
-				m_freem(top);
+			error = _mb_unmapped_to_ext(m, &m1);
+			if (error != 0) {
+				if (top != m)
+					m_freem(top);
 				m_freem(next);
-				return (NULL);
+				*mres = NULL;
+				return (error);
 			}
+			m = m1;
 			if (prev == NULL) {
 				top = m;
 			} else {
@@ -1110,7 +1123,8 @@ mb_unmapped_to_ext(struct mbuf *top)
 			prev = m;
 		}
 	}
-	return (top);
+	*mres = top;
+	return (0);
 }
 
 /*
@@ -1119,7 +1133,7 @@ mb_unmapped_to_ext(struct mbuf *top)
  * freed.
  */
 struct mbuf *
-mb_alloc_ext_pgs(int how, m_ext_free_t ext_free)
+mb_alloc_ext_pgs(int how, m_ext_free_t ext_free, int flags)
 {
 	struct mbuf *m;
 
@@ -1137,7 +1151,7 @@ mb_alloc_ext_pgs(int how, m_ext_free_t ext_free)
 	m->m_epg_tls = NULL;
 	m->m_epg_so = NULL;
 	m->m_data = NULL;
-	m->m_flags |= (M_EXT | M_RDONLY | M_EXTPG);
+	m->m_flags |= M_EXT | M_EXTPG | flags;
 	m->m_ext.ext_flags = EXT_FLAG_EMBREF;
 	m->m_ext.ext_count = 1;
 	m->m_ext.ext_size = 0;
@@ -1212,6 +1226,7 @@ mb_free_ext(struct mbuf *m)
 			break;
 		case EXT_SFBUF:
 		case EXT_NET_DRV:
+		case EXT_CTL:
 		case EXT_MOD_TYPE:
 		case EXT_DISPOSABLE:
 			KASSERT(mref->m_ext.ext_free != NULL,
@@ -1446,34 +1461,36 @@ m_getjcl(int how, short type, int flags, int size)
 }
 
 /*
- * Allocate a given length worth of mbufs and/or clusters (whatever fits
- * best) and return a pointer to the top of the allocated chain.  If an
- * existing mbuf chain is provided, then we will append the new chain
- * to the existing one and return a pointer to the provided mbuf.
+ * Allocate mchain of a given length of mbufs and/or clusters (whatever fits
+ * best).  May fail due to ENOMEM.  In case of failure state of mchain is
+ * inconsistent.
  */
-struct mbuf *
-m_getm2(struct mbuf *m, int len, int how, short type, int flags)
+int
+mc_get(struct mchain *mc, u_int length, int how, short type, int flags)
 {
-	struct mbuf *mb, *nm = NULL, *mtail = NULL;
+	struct mbuf *mb;
+	u_int progress;
 
-	KASSERT(len >= 0, ("%s: len is < 0", __func__));
+	MPASS(length >= 0);
 
-	/* Validate flags. */
+	*mc = MCHAIN_INITIALIZER(mc);
 	flags &= (M_PKTHDR | M_EOR);
-
-	/* Packet header mbuf must be first in chain. */
-	if ((flags & M_PKTHDR) && m != NULL)
-		flags &= ~M_PKTHDR;
+	progress = 0;
 
 	/* Loop and append maximum sized mbufs to the chain tail. */
-	while (len > 0) {
-		mb = NULL;
-		if (len > MCLBYTES) {
+	do {
+		if (length - progress > MCLBYTES) {
+			/*
+			 * M_NOWAIT here is intentional, it avoids blocking if
+			 * the jumbop zone is exhausted. See 796d4eb89e2c and
+			 * D26150 for more detail.
+			 */
 			mb = m_getjcl(M_NOWAIT, type, (flags & M_PKTHDR),
 			    MJUMPAGESIZE);
-		}
+		} else
+			mb = NULL;
 		if (mb == NULL) {
-			if (len >= MINCLSIZE)
+			if (length - progress >= MINCLSIZE)
 				mb = m_getcl(how, type, (flags & M_PKTHDR));
 			else if (flags & M_PKTHDR)
 				mb = m_gethdr(how, type);
@@ -1485,31 +1502,50 @@ m_getm2(struct mbuf *m, int len, int how, short type, int flags)
 			 * allocated.
 			 */
 			if (mb == NULL) {
-				m_freem(nm);
-				return (NULL);
+				m_freem(mc_first(mc));
+				return (ENOMEM);
 			}
 		}
 
-		/* Book keeping. */
-		len -= M_SIZE(mb);
-		if (mtail != NULL)
-			mtail->m_next = mb;
-		else
-			nm = mb;
-		mtail = mb;
-		flags &= ~M_PKTHDR;	/* Only valid on the first mbuf. */
-	}
+		progress += M_SIZE(mb);
+		mc_append(mc, mb);
+		/* Only valid on the first mbuf. */
+		flags &= ~M_PKTHDR;
+	} while (progress < length);
 	if (flags & M_EOR)
-		mtail->m_flags |= M_EOR;  /* Only valid on the last mbuf. */
+		/* Only valid on the last mbuf. */
+		mc_last(mc)->m_flags |= M_EOR;
+
+	return (0);
+}
+
+/*
+ * Allocate a given length worth of mbufs and/or clusters (whatever fits
+ * best) and return a pointer to the top of the allocated chain.  If an
+ * existing mbuf chain is provided, then we will append the new chain
+ * to the existing one and return a pointer to the provided mbuf.
+ */
+struct mbuf *
+m_getm2(struct mbuf *m, int len, int how, short type, int flags)
+{
+	struct mchain mc;
+
+	/* Packet header mbuf must be first in chain. */
+	if (m != NULL && (flags & M_PKTHDR))
+		flags &= ~M_PKTHDR;
+
+	if (__predict_false(mc_get(&mc, len, how, type, flags) != 0))
+		return (NULL);
 
 	/* If mbuf was supplied, append new chain to the end of it. */
 	if (m != NULL) {
-		for (mtail = m; mtail->m_next != NULL; mtail = mtail->m_next)
-			;
-		mtail->m_next = nm;
+		struct mbuf *mtail;
+
+		mtail = m_last(m);
+		mtail->m_next = mc_first(&mc);
 		mtail->m_flags &= ~M_EOR;
 	} else
-		m = nm;
+		m = mc_first(&mc);
 
 	return (m);
 }
@@ -1567,6 +1603,25 @@ m_freem(struct mbuf *mb)
 	MBUF_PROBE1(m__freem, mb);
 	while (mb != NULL)
 		mb = m_free(mb);
+}
+
+/*
+ * Free an entire chain of mbufs and associated external buffers, following
+ * both m_next and m_nextpkt linkage.
+ * Note: doesn't support NULL argument.
+ */
+void
+m_freemp(struct mbuf *m)
+{
+	struct mbuf *n;
+
+	MBUF_PROBE1(m__freemp, m);
+	do {
+		n = m->m_nextpkt;
+		while (m != NULL)
+			m = m_free(m);
+		m = n;
+	} while (m != NULL);
 }
 
 /*
@@ -1668,7 +1723,7 @@ mb_alloc_ext_plus_pages(int len, int how)
 	vm_page_t pg;
 	int i, npgs;
 
-	m = mb_alloc_ext_pgs(how, mb_free_mext_pgs);
+	m = mb_alloc_ext_pgs(how, mb_free_mext_pgs, 0);
 	if (m == NULL)
 		return (NULL);
 	m->m_epg_flags |= EPG_FLAG_ANON;

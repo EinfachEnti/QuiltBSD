@@ -31,8 +31,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)clock.c	7.2 (Berkeley) 5/12/91
  */
 
 #include <sys/cdefs.h>
@@ -637,9 +635,6 @@ static device_method_t attimer_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		attimer_probe),
 	DEVMETHOD(device_attach,	attimer_attach),
-	DEVMETHOD(device_detach,	bus_generic_detach),
-	DEVMETHOD(device_shutdown,	bus_generic_shutdown),
-	DEVMETHOD(device_suspend,	bus_generic_suspend),
 	DEVMETHOD(device_resume,	attimer_resume),
 	{ 0, 0 }
 };

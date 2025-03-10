@@ -41,6 +41,7 @@ struct ns8250_softc {
 	uint8_t		ier_mask;
 	uint8_t		ier_rxbits;
 	uint8_t		busy_detect;
+	int		noise_count;
 };
 
 extern struct uart_ops uart_ns8250_ops;
@@ -57,6 +58,7 @@ int ns8250_bus_receive(struct uart_softc *);
 int ns8250_bus_setsig(struct uart_softc *, int);
 int ns8250_bus_transmit(struct uart_softc *);
 void ns8250_bus_grab(struct uart_softc *);
+bool ns8250_bus_txbusy(struct uart_softc *);
 void ns8250_bus_ungrab(struct uart_softc *);
 
 #endif /* _DEV_UART_DEV_NS8250_H_ */

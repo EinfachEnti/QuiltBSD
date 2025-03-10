@@ -51,7 +51,7 @@ exhaust_body()
 	jexec nat sysctl net.inet.ip.forwarding=1
 
 	jexec echo ifconfig ${epair_echo}b 198.51.100.2/24 up
-	jexec echo /usr/sbin/inetd -p inetd-echo.pid $(atf_get_srcdir)/echo_inetd.conf
+	jexec echo /usr/sbin/inetd -p ${PWD}/inetd-echo.pid $(atf_get_srcdir)/echo_inetd.conf
 
 	# Enable pf!
 	jexec nat pfctl -e
@@ -79,7 +79,6 @@ exhaust_body()
 
 exhaust_cleanup()
 {
-	rm -f inetd-echo.pid
 	pft_cleanup
 }
 
@@ -113,7 +112,328 @@ nested_anchor_body()
 
 }
 
+atf_test_case "endpoint_independent" "cleanup"
+endpoint_independent_head()
+{
+	atf_set descr 'Test that a client behind NAT gets the same external IP:port for different servers'
+	atf_set require.user root
+}
+
+endpoint_independent_body()
+{
+	pft_init
+	filter="udp and dst port 1234"	# only capture udp pings
+
+	epair_client=$(vnet_mkepair)
+	epair_nat=$(vnet_mkepair)
+	epair_server1=$(vnet_mkepair)
+	epair_server2=$(vnet_mkepair)
+	bridge=$(vnet_mkbridge)
+
+	vnet_mkjail nat ${epair_client}b ${epair_nat}a
+	vnet_mkjail client ${epair_client}a
+	vnet_mkjail server1 ${epair_server1}a
+	vnet_mkjail server2 ${epair_server2}a
+
+	ifconfig ${epair_server1}b up
+	ifconfig ${epair_server2}b up
+	ifconfig ${epair_nat}b up
+	ifconfig ${bridge} \
+		addm ${epair_server1}b \
+		addm ${epair_server2}b \
+		addm ${epair_nat}b \
+		up
+
+	jexec nat ifconfig ${epair_client}b 192.0.2.1/24 up
+	jexec nat ifconfig ${epair_nat}a 198.51.100.42/24 up
+	jexec nat sysctl net.inet.ip.forwarding=1
+
+	jexec client ifconfig ${epair_client}a 192.0.2.2/24 up
+	jexec client route add default 192.0.2.1
+
+	jexec server1 ifconfig ${epair_server1}a 198.51.100.32/24 up
+	jexec server2 ifconfig ${epair_server2}a 198.51.100.22/24 up
+
+	# Enable pf!
+	jexec nat pfctl -e
+
+	# validate non-endpoint independent nat rule behaviour
+	pft_set_rules nat \
+		"nat on ${epair_nat}a inet from ! (${epair_nat}a) to any -> (${epair_nat}a)"
+
+	jexec server1 tcpdump -i ${epair_server1}a -w ${PWD}/server1.pcap \
+		--immediate-mode $filter &
+	server1tcppid="$!"
+	jexec server2 tcpdump -i ${epair_server2}a -w ${PWD}/server2.pcap \
+		--immediate-mode $filter &
+	server2tcppid="$!"
+
+	# send out multiple packets
+	for i in $(seq 1 10); do
+		echo "ping" | jexec client nc -u 198.51.100.32 1234 -p 4242 -w 0
+		echo "ping" | jexec client nc -u 198.51.100.22 1234 -p 4242 -w 0
+	done
+
+	kill $server1tcppid
+	kill $server2tcppid
+
+	tuple_server1=$(tcpdump -r ${PWD}/server1.pcap | awk '{addr=$3} END {print addr}')
+	tuple_server2=$(tcpdump -r ${PWD}/server2.pcap | awk '{addr=$3} END {print addr}')
+
+	if [ -z $tuple_server1 ]
+	then
+		atf_fail "server1 did not receive connection from client (default)"
+	fi
+
+	if [ -z $tuple_server2 ]
+	then
+		atf_fail "server2 did not receive connection from client (default)"
+	fi
+
+	if [ "$tuple_server1" = "$tuple_server2" ]
+	then
+		echo "server1 tcpdump: $tuple_server1"
+		echo "server2 tcpdump: $tuple_server2"
+		atf_fail "Received same IP:port on server1 and server2 (default)"
+	fi
+
+	# validate endpoint independent nat rule behaviour
+	pft_set_rules nat \
+		"nat on ${epair_nat}a inet from ! (${epair_nat}a) to any -> (${epair_nat}a) endpoint-independent"
+
+	jexec server1 tcpdump -i ${epair_server1}a -w ${PWD}/server1.pcap \
+		--immediate-mode $filter &
+	server1tcppid="$!"
+	jexec server2 tcpdump -i ${epair_server2}a -w ${PWD}/server2.pcap \
+		--immediate-mode $filter &
+	server2tcppid="$!"
+
+	# send out multiple packets,  sometimes one fails to go through
+	for i in $(seq 1 10); do
+		echo "ping" | jexec client nc -u 198.51.100.32 1234 -p 4242 -w 0
+		echo "ping" | jexec client nc -u 198.51.100.22 1234 -p 4242 -w 0
+	done
+
+	kill $server1tcppid
+	kill $server2tcppid
+
+	tuple_server1=$(tcpdump -r ${PWD}/server1.pcap | awk '{addr=$3} END {print addr}')
+	tuple_server2=$(tcpdump -r ${PWD}/server2.pcap | awk '{addr=$3} END {print addr}')
+
+	if [ -z $tuple_server1 ]
+	then
+		atf_fail "server1 did not receive connection from client (endpoint-independent)"
+	fi
+
+	if [ -z $tuple_server2 ]
+	then
+		atf_fail "server2 did not receive connection from client (endpoint-independent)"
+	fi
+
+	if [ ! "$tuple_server1" = "$tuple_server2" ]
+	then
+		echo "server1 tcpdump: $tuple_server1"
+		echo "server2 tcpdump: $tuple_server2"
+		atf_fail "Received different IP:port on server1 than server2 (endpoint-independent)"
+	fi
+}
+
+endpoint_independent_cleanup()
+{
+	pft_cleanup
+	rm -f server1.out
+	rm -f server2.out
+}
+
 nested_anchor_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "nat6_nolinklocal" "cleanup"
+nat6_nolinklocal_head()
+{
+	atf_set descr 'Ensure we do not use link-local addresses'
+	atf_set require.user root
+}
+
+nat6_nolinklocal_body()
+{
+	pft_init
+
+	epair_nat=$(vnet_mkepair)
+	epair_echo=$(vnet_mkepair)
+
+	vnet_mkjail nat ${epair_nat}b ${epair_echo}a
+	vnet_mkjail echo ${epair_echo}b
+
+	ifconfig ${epair_nat}a inet6 2001:db8::2/64 no_dad up
+	route add -6 -net 2001:db8:1::/64 2001:db8::1
+
+	jexec nat ifconfig ${epair_nat}b inet6 2001:db8::1/64 no_dad up
+	jexec nat ifconfig ${epair_echo}a inet6 2001:db8:1::1/64 no_dad up
+	jexec nat sysctl net.inet6.ip6.forwarding=1
+
+	jexec echo ifconfig ${epair_echo}b inet6 2001:db8:1::2/64 no_dad up
+	# Ensure we can't reply to link-local pings
+	jexec echo pfctl -e
+	pft_set_rules echo \
+	    "pass" \
+	    "block in inet6 proto icmp6 from fe80::/10 to any icmp6-type echoreq"
+
+	jexec nat pfctl -e
+	pft_set_rules nat \
+	    "nat pass on ${epair_echo}a inet6 from 2001:db8::/64 to any -> (${epair_echo}a)" \
+	    "pass"
+
+	# Sanity check
+	atf_check -s exit:0 -o ignore \
+	    ping -6 -c 1 2001:db8::1
+	for i in `seq 0 10`
+	do
+		atf_check -s exit:0 -o ignore \
+		    ping -6 -c 1 2001:db8:1::2
+	done
+}
+
+nat6_nolinklocal_cleanup()
+{
+	pft_cleanup
+}
+
+empty_table_common()
+{
+	option=$1
+
+	pft_init
+
+	epair_wan=$(vnet_mkepair)
+	epair_lan=$(vnet_mkepair)
+
+	vnet_mkjail srv ${epair_wan}a
+	jexec srv ifconfig ${epair_wan}a 192.0.2.2/24 up
+
+	vnet_mkjail rtr ${epair_wan}b ${epair_lan}a
+	jexec rtr ifconfig ${epair_wan}b 192.0.2.1/24 up
+	jexec rtr ifconfig ${epair_lan}a 198.51.100.1/24 up
+	jexec rtr sysctl net.inet.ip.forwarding=1
+
+	ifconfig ${epair_lan}b 198.51.100.2/24 up
+	route add default 198.51.100.1
+
+	jexec rtr pfctl -e
+	pft_set_rules rtr \
+	    "table <empty>" \
+	    "nat on ${epair_wan}b inet from 198.51.100.0/24 -> <empty> ${option}" \
+	    "pass"
+
+	# Sanity checks
+	atf_check -s exit:0 -o ignore \
+	    jexec rtr ping -c 1 192.0.2.2
+	atf_check -s exit:0 -o ignore \
+	    ping -c 1 198.51.100.1
+	atf_check -s exit:0 -o ignore \
+	    ping -c 1 192.0.2.1
+
+	# Provoke divide by zero
+	ping -c 1 192.0.2.2
+	true
+}
+
+atf_test_case "empty_table_source_hash" "cleanup"
+empty_table_source_hash_head()
+{
+	atf_set descr 'Test source-hash on an emtpy table'
+	atf_set require.user root
+}
+
+empty_table_source_hash_body()
+{
+	empty_table_common "source-hash"
+}
+
+empty_table_source_hash_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "empty_table_random" "cleanup"
+empty_table_random_head()
+{
+	atf_set descr 'Test random on an emtpy table'
+	atf_set require.user root
+}
+
+empty_table_random_body()
+{
+	empty_table_common "random"
+}
+
+empty_table_random_cleanup()
+{
+	pft_cleanup
+}
+
+no_addrs_common()
+{
+	option=$1
+
+	pft_init
+
+	epair_wan=$(vnet_mkepair)
+	epair_lan=$(vnet_mkepair)
+
+	vnet_mkjail srv ${epair_wan}a
+	jexec srv ifconfig ${epair_wan}a 192.0.2.2/24 up
+
+	vnet_mkjail rtr ${epair_wan}b ${epair_lan}a
+	jexec rtr route add -net 192.0.2.0/24 -iface ${epair_wan}b
+	jexec rtr ifconfig ${epair_lan}a 198.51.100.1/24 up
+	jexec rtr sysctl net.inet.ip.forwarding=1
+
+	ifconfig ${epair_lan}b 198.51.100.2/24 up
+	route add default 198.51.100.1
+
+	jexec rtr pfctl -e
+	pft_set_rules rtr \
+	    "nat on ${epair_wan}b inet from 198.51.100.0/24 -> (${epair_wan}b) ${option}" \
+	    "pass"
+
+	# Provoke divide by zero
+	ping -c 1 192.0.2.2
+	true
+}
+
+atf_test_case "no_addrs_source_hash" "cleanup"
+no_addrs_source_hash_head()
+{
+	atf_set descr 'Test source-hash on an interface with no addresses'
+	atf_set require.user root
+}
+
+no_addrs_source_hash_body()
+{
+	no_addrs_common "source-hash"
+}
+
+no_addrs_source_hash_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "no_addrs_random" "cleanup"
+no_addrs_random_head()
+{
+	atf_set descr 'Test random on an interface with no addresses'
+	atf_set require.user root
+}
+
+no_addrs_random_body()
+{
+	no_addrs_common "random"
+}
+
+no_addrs_random_cleanup()
 {
 	pft_cleanup
 }
@@ -122,4 +442,10 @@ atf_init_test_cases()
 {
 	atf_add_test_case "exhaust"
 	atf_add_test_case "nested_anchor"
+	atf_add_test_case "endpoint_independent"
+	atf_add_test_case "nat6_nolinklocal"
+	atf_add_test_case "empty_table_source_hash"
+	atf_add_test_case "no_addrs_source_hash"
+	atf_add_test_case "empty_table_random"
+	atf_add_test_case "no_addrs_random"
 }

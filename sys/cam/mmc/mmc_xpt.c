@@ -26,7 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/endian.h>
@@ -61,7 +60,6 @@
 
 #include <machine/stdarg.h>	/* for xpt_print below */
 #include <machine/_inttypes.h>  /* for PRIu64 */
-#include "opt_cam.h"
 
 FEATURE(mmccam, "CAM-based MMC/SD/SDIO stack");
 
@@ -285,8 +283,8 @@ mmc_scan_lun(struct cam_periph *periph, struct cam_path *path,
 					  path, NULL, 0,
 					  request_ccb);
                 if (status != CAM_REQ_CMP) {
-			xpt_print(path, "xpt_scan_lun: cam_alloc_periph "
-                                  "returned an error, can't continue probe\n");
+			xpt_print(path,
+	"xpt_scan_lun: cam_alloc_periph returned an error, can't continue probe\n");
 		}
 		request_ccb->ccb_h.status = status;
 		xpt_done(request_ccb);
@@ -430,9 +428,9 @@ mmc_print_ident(struct mmc_params *ident_data, struct sbuf *sb)
 	bool space = false;
 
 	sbuf_printf(sb, "Relative addr: %08x\n", ident_data->card_rca);
-	sbuf_printf(sb, "Card features: <");
+	sbuf_cat(sb, "Card features: <");
 	if (ident_data->card_features & CARD_FEATURE_MMC) {
-		sbuf_printf(sb, "MMC");
+		sbuf_cat(sb, "MMC");
 		space = true;
 	}
 	if (ident_data->card_features & CARD_FEATURE_MEMORY) {
@@ -454,7 +452,7 @@ mmc_print_ident(struct mmc_params *ident_data, struct sbuf *sb)
 	if (ident_data->card_features & CARD_FEATURE_18V) {
 		sbuf_printf(sb, "%s1.8-Signaling", space ? " " : "");
 	}
-	sbuf_printf(sb, ">\n");
+	sbuf_cat(sb, ">\n");
 
 	if (ident_data->card_features & CARD_FEATURE_MEMORY)
 		sbuf_printf(sb, "Card memory OCR: %08x\n",
@@ -518,16 +516,16 @@ mmcprobe_register(struct cam_periph *periph, void *arg)
 
 	request_ccb = (union ccb *)arg;
 	if (request_ccb == NULL) {
-		printf("mmcprobe_register: no probe CCB, "
-		       "can't register device\n");
+		printf(
+		    "mmcprobe_register: no probe CCB, can't register device\n");
 		return(CAM_REQ_CMP_ERR);
 	}
 
 	softc = (mmcprobe_softc *)malloc(sizeof(*softc), M_CAMXPT, M_NOWAIT);
 
 	if (softc == NULL) {
-		printf("proberegister: Unable to probe new device. "
-		       "Unable to allocate softc\n");
+		printf(
+	"proberegister: Unable to probe new device. Unable to allocate softc\n");
 		return(CAM_REQ_CMP_ERR);
 	}
 
@@ -541,8 +539,9 @@ mmcprobe_register(struct cam_periph *periph, void *arg)
 
         memset(&periph->path->device->mmc_ident_data, 0, sizeof(struct mmc_params));
 	if (status != 0) {
-		printf("proberegister: cam_periph_acquire failed (status=%d)\n",
-			status);
+		printf(
+		    "proberegister: cam_periph_acquire failed (status=%d)\n",
+		    status);
 		return (CAM_REQ_CMP_ERR);
 	}
 	CAM_DEBUG(periph->path, CAM_DEBUG_PROBE, ("Probe started\n"));

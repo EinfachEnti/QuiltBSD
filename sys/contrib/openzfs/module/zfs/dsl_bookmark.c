@@ -490,7 +490,7 @@ dsl_bookmark_create_sync_impl_snap(const char *bookmark, const char *snapshot,
 			dmu_buf_t *db;
 			VERIFY0(dmu_spill_hold_by_bonus(local_rl->rl_bonus,
 			    DB_RF_MUST_SUCCEED, FTAG, &db));
-			dmu_buf_will_fill(db, tx);
+			dmu_buf_will_fill(db, tx, B_FALSE);
 			VERIFY0(dbuf_spill_set_blksz(db, P2ROUNDUP(bonuslen,
 			    SPA_MINBLOCKSIZE), tx));
 			local_rl->rl_phys = db->db_data;
@@ -870,13 +870,14 @@ dsl_bookmark_init_ds(dsl_dataset_t *ds)
 
 	int err = 0;
 	zap_cursor_t zc;
-	zap_attribute_t attr;
+	zap_attribute_t *attr;
 
+	attr = zap_attribute_alloc();
 	for (zap_cursor_init(&zc, mos, ds->ds_bookmarks_obj);
-	    (err = zap_cursor_retrieve(&zc, &attr)) == 0;
+	    (err = zap_cursor_retrieve(&zc, attr)) == 0;
 	    zap_cursor_advance(&zc)) {
 		dsl_bookmark_node_t *dbn =
-		    dsl_bookmark_node_alloc(attr.za_name);
+		    dsl_bookmark_node_alloc(attr->za_name);
 
 		err = dsl_bookmark_lookup_impl(ds,
 		    dbn->dbn_name, &dbn->dbn_phys);
@@ -888,6 +889,7 @@ dsl_bookmark_init_ds(dsl_dataset_t *ds)
 		avl_add(&ds->ds_bookmarks, dbn);
 	}
 	zap_cursor_fini(&zc);
+	zap_attribute_free(attr);
 	if (err == ENOENT)
 		err = 0;
 	return (err);
@@ -1520,7 +1522,8 @@ dsl_bookmark_block_killed(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx)
 		 * If the block was live (referenced) at the time of this
 		 * bookmark, add its space to the bookmark's FBN.
 		 */
-		if (bp->blk_birth <= dbn->dbn_phys.zbm_creation_txg &&
+		if (BP_GET_LOGICAL_BIRTH(bp) <=
+		    dbn->dbn_phys.zbm_creation_txg &&
 		    (dbn->dbn_phys.zbm_flags & ZBM_FLAG_HAS_FBN)) {
 			mutex_enter(&dbn->dbn_lock);
 			dbn->dbn_phys.zbm_referenced_freed_before_next_snap +=

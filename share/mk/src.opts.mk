@@ -80,7 +80,6 @@ __DEFAULT_YES_OPTIONS = \
     CDDL \
     CLANG \
     CLANG_BOOTSTRAP \
-    CLEAN \
     CPP \
     CROSS_COMPILER \
     CRYPT \
@@ -102,7 +101,6 @@ __DEFAULT_YES_OPTIONS = \
     FREEBSD_UPDATE \
     FTP \
     GAMES \
-    GH_BC \
     GNU_DIFF \
     GOOGLETEST \
     GPIO \
@@ -117,6 +115,7 @@ __DEFAULT_YES_OPTIONS = \
     IPFW \
     ISCSI \
     JAIL \
+    JEMALLOC_LG_VADDR_WIDE \
     KDUMP \
     KVM \
     LDNS \
@@ -124,15 +123,17 @@ __DEFAULT_YES_OPTIONS = \
     LEGACY_CONSOLE \
     LLD \
     LLD_BOOTSTRAP \
-    LLD_IS_LD \
     LLVM_ASSERTIONS \
     LLVM_COV \
     LLVM_CXXFILT \
+    LOADER_BIOS_TEXTONLY \
     LOADER_GELI \
     LOADER_KBOOT \
     LOADER_LUA \
     LOADER_OFW \
+    LOADER_PXEBOOT \
     LOADER_UBOOT \
+    LOADER_IA32 \
     LOCALES \
     LOCATE \
     LPR \
@@ -149,7 +150,7 @@ __DEFAULT_YES_OPTIONS = \
     NLS_CATALOGS \
     NS_CACHING \
     NTP \
-    NVME \
+    NUAGEINIT \
     OFED \
     OPENSSL \
     PAM \
@@ -188,6 +189,7 @@ __DEFAULT_YES_OPTIONS = \
     WIRELESS \
     WPA_SUPPLICANT_EAPOL \
     ZFS \
+    ZFS_TESTS \
     LOADER_ZFS \
     ZONEINFO
 
@@ -196,6 +198,7 @@ __DEFAULT_NO_OPTIONS = \
     BHYVE_SNAPSHOT \
     CLANG_EXTRAS \
     CLANG_FORMAT \
+    CLEAN \
     DIALOG \
     DETECT_TZ_CHANGES \
     DISK_IMAGE_TOOLS_BOOTSTRAP \
@@ -206,6 +209,7 @@ __DEFAULT_NO_OPTIONS = \
     LOADER_VERBOSE \
     LOADER_VERIEXEC_PASS_MANIFEST \
     LLVM_BINUTILS \
+    LLVM_FULL_DEBUGINFO \
     MALLOC_PRODUCTION \
     OFED_EXTRA \
     OPENLDAP \
@@ -215,7 +219,6 @@ __DEFAULT_NO_OPTIONS = \
     ZONEINFO_LEAPSECONDS_SUPPORT \
 
 __REQUIRED_OPTIONS = \
-    CAPSICUM \
     CASPER
 
 # LEFT/RIGHT. Left options which default to "yes" unless their corresponding
@@ -303,7 +306,7 @@ __DEFAULT_YES_OPTIONS+=LLDB
 __DEFAULT_NO_OPTIONS+=LLDB
 .endif
 # LIB32 is not supported on all 64-bit architectures.
-.if (${__T} == "amd64" || ${__T:Maarch64*} != "" || ${__T} == "powerpc64")
+.if (${__T:Maarch64*} != "" && ((defined(X_COMPILER_TYPE) && ${X_COMPILER_TYPE} != "gcc") || (!defined(X_COMPILER_TYPE) && ${COMPILER_TYPE} != "gcc"))) || ${__T} == "amd64" || ${__T} == "powerpc64"
 __DEFAULT_YES_OPTIONS+=LIB32
 .else
 BROKEN_OPTIONS+=LIB32
@@ -311,6 +314,10 @@ BROKEN_OPTIONS+=LIB32
 # EFI doesn't exist on powerpc (well, officially) and doesn't work on i386
 .if ${__T:Mpowerpc*} || ${__T} == "i386"
 BROKEN_OPTIONS+=EFI
+.endif
+# Bad coupling for libsecure stuff with bearssl and efi, so broken on EFI
+.if ${__T:Mpowerpc*}
+BROKEN_OPTIONS+=BEARSSL		# bearssl brings in secure efi stuff xxx
 .endif
 # OFW is only for powerpc, exclude others
 .if ${__T:Mpowerpc*} == ""
@@ -323,6 +330,10 @@ BROKEN_OPTIONS+=LOADER_KBOOT
 # UBOOT is only for arm, and big-endian powerpc
 .if (${__T:Marm*} == "" && ${__T:Mpowerpc*} == "") || ${__T} == "powerpc64le"
 BROKEN_OPTIONS+=LOADER_UBOOT
+.endif
+# The 32-bit UEFI loader is only for amd64
+.if ${__T} != "amd64"
+BROKEN_OPTIONS+=LOADER_IA32
 .endif
 # GELI and Lua in loader currently cause boot failures on powerpc.
 # Further debugging is required -- probably they are just broken on big
@@ -347,12 +358,6 @@ BROKEN_OPTIONS+=MLX5TOOL
 
 .if ${__T} != "amd64" && ${__T} != "i386" && ${__T} != "aarch64"
 BROKEN_OPTIONS+=HYPERV
-.endif
-
-# NVME is only aarch64, x86 and powerpc64*
-.if ${__T} != "aarch64" && ${__T} != "amd64" && ${__T} != "i386" && \
-    ${__T:Mpowerpc64*} == ""
-BROKEN_OPTIONS+=NVME
 .endif
 
 .if ${__T} == "aarch64" || ${__T} == "amd64" || ${__T} == "i386" || \
@@ -381,10 +386,6 @@ BROKEN_OPTIONS+= TESTS
 # Force some options off if their dependencies are off.
 # Order is somewhat important.
 #
-.if ${MK_CAPSICUM} == "no"
-MK_CASPER:=	no
-.endif
-
 .if ${MK_SOURCELESS} == "no"
 MK_SOURCELESS_HOST:=	no
 MK_SOURCELESS_UCODE:= no
@@ -449,6 +450,11 @@ MK_OFED_EXTRA:=	no
 
 .if ${MK_TESTS} == "no"
 MK_DTRACE_TESTS:= no
+MK_ZFS_TESTS:= no
+.endif
+
+.if ${MK_ZFS} == "no"
+MK_ZFS_TESTS:=	no
 .endif
 
 .if ${MK_TESTS_SUPPORT} == "no"

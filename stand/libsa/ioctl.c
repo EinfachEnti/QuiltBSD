@@ -31,8 +31,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)ioctl.c	8.1 (Berkeley) 6/11/93
- *
  *
  * Copyright (c) 1989, 1990, 1991 Carnegie Mellon University
  * All Rights Reserved.
@@ -60,7 +58,6 @@
  * rights to redistribute these changes.
  */
 
-#include <sys/cdefs.h>
 #include "stand.h"
 
 int
@@ -73,12 +70,12 @@ ioctl(int fd, u_long cmd, void *arg)
 		errno = EBADF;
 		return (-1);
 	}
-	if (f->f_flags & F_RAW) {
+	if (f->f_dev == NULL)
+		errno = EIO;
+	else
 		errno = (f->f_dev->dv_ioctl)(f, cmd, arg);
-		if (errno)
-			return (-1);
-		return (0);
-	}
-	errno = EIO;
-	return (-1);
+
+	if (errno != 0)
+		return (-1);
+	return (0);
 }

@@ -30,18 +30,6 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1983, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)pac.c	8.1 (Berkeley) 6/6/93";
-#endif /* not lint */
-#endif
-
 #include "lp.cdefs.h"		/* A cross-platform version of <sys/cdefs.h> */
 /*
  * Do Printer accounting summary.
@@ -260,7 +248,7 @@ dumpit(void)
 
 	hp = hashtab[0];
 	hno = 1;
-	base = (struct hent **) calloc(sizeof hp, hcount);
+	base = (struct hent **) calloc(hcount, sizeof(hp));
 	for (ap = base, c = hcount; c--; ap++) {
 		while (hp == NULL)
 			hp = hashtab[hno++];
@@ -338,9 +326,8 @@ enter(const char name[])
 		return(hp);
 	h = hash(name);
 	hcount++;
-	hp = (struct hent *) calloc(sizeof *hp, (size_t)1);
-	hp->h_name = (char *) calloc(sizeof(char), strlen(name)+1);
-	strcpy(hp->h_name, name);
+	hp = (struct hent *) calloc(1, sizeof(*hp));
+	hp->h_name = strdup(name);
 	hp->h_feetpages = 0.0;
 	hp->h_count = 0;
 	hp->h_link = hashtab[h];
@@ -441,10 +428,8 @@ chkprinter(const char *ptrname)
 		errx(3, "accounting not enabled for printer %s", ptrname);
 	if (!pflag && pp->price100)
 		price = pp->price100/10000.0;
-	sumfile = (char *) calloc(sizeof(char), strlen(acctfile)+5);
+	asprintf(&sumfile, "%s_sum", acctfile);
 	if (sumfile == NULL)
-		errx(1, "calloc failed");
-	strcpy(sumfile, acctfile);
-	strcat(sumfile, "_sum");
+		errx(1, "asprintf failed");
 	return(1);
 }

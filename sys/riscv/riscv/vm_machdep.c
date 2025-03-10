@@ -32,7 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/limits.h>
@@ -58,6 +57,26 @@
 #define	TP_OFFSET	16	/* sizeof(struct tcb) */
 #endif
 
+static void
+cpu_set_pcb_frame(struct thread *td)
+{
+	td->td_pcb = (struct pcb *)((char *)td->td_kstack +
+	    td->td_kstack_pages * PAGE_SIZE) - 1;
+
+	/*
+	 * td->td_frame + TF_SIZE will be the saved kernel stack pointer whilst
+	 * in userspace, so keep it aligned so it's also aligned when we
+	 * subtract TF_SIZE in the trap handler (and here for the initial stack
+	 * pointer). This also keeps the struct kernframe just afterwards
+	 * aligned no matter what's in it or struct pcb.
+	 *
+	 * NB: TF_SIZE not sizeof(struct trapframe) as we need the rounded
+	 * value to match the trap handler.
+	 */
+	td->td_frame = (struct trapframe *)(STACKALIGN(
+	    (char *)td->td_pcb - sizeof(struct kernframe)) - TF_SIZE);
+}
+
 /*
  * Finish a fork operation, with process p2 nearly set up.
  * Copy and update the pcb, set up the stack so that the child
@@ -74,13 +93,12 @@ cpu_fork(struct thread *td1, struct proc *p2, struct thread *td2, int flags)
 
 	/* RISCVTODO: save the FPU state here */
 
-	pcb2 = (struct pcb *)(td2->td_kstack +
-	    td2->td_kstack_pages * PAGE_SIZE) - 1;
+	cpu_set_pcb_frame(td2);
 
-	td2->td_pcb = pcb2;
+	pcb2 = td2->td_pcb;
 	bcopy(td1->td_pcb, pcb2, sizeof(*pcb2));
 
-	tf = (struct trapframe *)STACKALIGN((struct trapframe *)pcb2 - 1);
+	tf = td2->td_frame;
 	bcopy(td1->td_frame, tf, sizeof(*tf));
 
 	/* Clear syscall error flag */
@@ -91,8 +109,6 @@ cpu_fork(struct thread *td1, struct proc *p2, struct thread *td2, int flags)
 	tf->tf_a[1] = 0;
 	tf->tf_sstatus |= (SSTATUS_SPIE); /* Enable interrupts. */
 	tf->tf_sstatus &= ~(SSTATUS_SPP); /* User mode. */
-
-	td2->td_frame = tf;
 
 	/* Set the return value registers for fork() */
 	td2->td_pcb->pcb_s[0] = (uintptr_t)fork_return;
@@ -112,16 +128,6 @@ cpu_reset(void)
 	sbi_system_reset(SBI_SRST_TYPE_COLD_REBOOT, SBI_SRST_REASON_NONE);
 
 	while(1);
-}
-
-void
-cpu_thread_swapin(struct thread *td)
-{
-}
-
-void
-cpu_thread_swapout(struct thread *td)
-{
 }
 
 void
@@ -179,7 +185,7 @@ cpu_copy_thread(struct thread *td, struct thread *td0)
  * Set that machine state for performing an upcall that starts
  * the entry function with the given argument.
  */
-void
+int
 cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 	stack_t *stack)
 {
@@ -190,6 +196,7 @@ cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 	tf->tf_sp = STACKALIGN((uintptr_t)stack->ss_sp + stack->ss_size);
 	tf->tf_sepc = (register_t)entry;
 	tf->tf_a[0] = (register_t)arg;
+	return (0);
 }
 
 int
@@ -216,11 +223,7 @@ cpu_thread_exit(struct thread *td)
 void
 cpu_thread_alloc(struct thread *td)
 {
-
-	td->td_pcb = (struct pcb *)(td->td_kstack +
-	    td->td_kstack_pages * PAGE_SIZE) - 1;
-	td->td_frame = (struct trapframe *)STACKALIGN(
-	    (caddr_t)td->td_pcb - 8 - sizeof(struct trapframe));
+	cpu_set_pcb_frame(td);
 }
 
 void
@@ -247,6 +250,11 @@ cpu_fork_kthread_handler(struct thread *td, void (*func)(void *), void *arg)
 	td->td_pcb->pcb_s[1] = (uintptr_t)arg;
 	td->td_pcb->pcb_ra = (uintptr_t)fork_trampoline;
 	td->td_pcb->pcb_sp = (uintptr_t)td->td_frame;
+}
+
+void
+cpu_update_pcb(struct thread *td)
+{
 }
 
 void

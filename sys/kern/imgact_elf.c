@@ -31,7 +31,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_capsicum.h"
 
 #include <sys/param.h>
@@ -89,8 +88,9 @@ static Elf_Brandinfo *__elfN(get_brandinfo)(struct image_params *imgp,
     const char *interp, int32_t *osrel, uint32_t *fctl0);
 static int __elfN(load_file)(struct proc *p, const char *file, u_long *addr,
     u_long *entry);
-static int __elfN(load_section)(struct image_params *imgp, vm_ooffset_t offset,
-    caddr_t vmaddr, size_t memsz, size_t filsz, vm_prot_t prot);
+static int __elfN(load_section)(const struct image_params *imgp,
+    vm_ooffset_t offset, caddr_t vmaddr, size_t memsz, size_t filsz,
+    vm_prot_t prot);
 static int __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp);
 static bool __elfN(freebsd_trans_osrel)(const Elf_Note *note,
     int32_t *osrel);
@@ -119,7 +119,7 @@ SYSCTL_INT(_debug, OID_AUTO, __elfN(legacy_coredump), CTLFLAG_RW,
 
 int __elfN(nxstack) =
 #if defined(__amd64__) || defined(__powerpc64__) /* both 64 and 32 bit */ || \
-    (defined(__arm__) && __ARM_ARCH >= 7) || defined(__aarch64__) || \
+    defined(__arm__) || defined(__aarch64__) || \
     defined(__riscv)
 	1;
 #else
@@ -127,7 +127,7 @@ int __elfN(nxstack) =
 #endif
 SYSCTL_INT(__CONCAT(_kern_elf, __ELF_WORD_SIZE), OID_AUTO,
     nxstack, CTLFLAG_RW, &__elfN(nxstack), 0,
-    __XSTRING(__CONCAT(ELF, __ELF_WORD_SIZE)) ": enable non-executable stack");
+    __XSTRING(__CONCAT(ELF, __ELF_WORD_SIZE)) ": support PT_GNU_STACK for non-executable stack control");
 
 #if defined(__amd64__)
 static int __elfN(vdso) = 1;
@@ -200,7 +200,7 @@ SYSCTL_INT(ASLR_NODE_OID, OID_AUTO, honor_sbrk, CTLFLAG_RW,
     &__elfN(aslr_honor_sbrk), 0,
     __XSTRING(__CONCAT(ELF, __ELF_WORD_SIZE)) ": assume sbrk is used");
 
-static int __elfN(aslr_stack) = 1;
+static int __elfN(aslr_stack) = __ELF_WORD_SIZE == 64;
 SYSCTL_INT(ASLR_NODE_OID, OID_AUTO, stack, CTLFLAG_RWTUN,
     &__elfN(aslr_stack), 0,
     __XSTRING(__CONCAT(ELF, __ELF_WORD_SIZE))
@@ -247,7 +247,6 @@ __elfN(freebsd_trans_osrel)(const Elf_Note *note, int32_t *osrel)
 	return (true);
 }
 
-static const char GNU_ABI_VENDOR[] = "GNU";
 static int GNU_KFREEBSD_ABI_DESC = 3;
 
 Elf_Brandnote __elfN(kfreebsd_brandnote) = {
@@ -547,9 +546,9 @@ __elfN(map_partial)(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 }
 
 static int
-__elfN(map_insert)(struct image_params *imgp, vm_map_t map, vm_object_t object,
-    vm_ooffset_t offset, vm_offset_t start, vm_offset_t end, vm_prot_t prot,
-    int cow)
+__elfN(map_insert)(const struct image_params *imgp, vm_map_t map,
+    vm_object_t object, vm_ooffset_t offset, vm_offset_t start, vm_offset_t end,
+    vm_prot_t prot, int cow)
 {
 	struct sf_buf *sf;
 	vm_offset_t off;
@@ -619,7 +618,7 @@ __elfN(map_insert)(struct image_params *imgp, vm_map_t map, vm_object_t object,
 }
 
 static int
-__elfN(load_section)(struct image_params *imgp, vm_ooffset_t offset,
+__elfN(load_section)(const struct image_params *imgp, vm_ooffset_t offset,
     caddr_t vmaddr, size_t memsz, size_t filsz, vm_prot_t prot)
 {
 	struct sf_buf *sf;
@@ -723,7 +722,7 @@ __elfN(load_section)(struct image_params *imgp, vm_ooffset_t offset,
 }
 
 static int
-__elfN(load_sections)(struct image_params *imgp, const Elf_Ehdr *hdr,
+__elfN(load_sections)(const struct image_params *imgp, const Elf_Ehdr *hdr,
     const Elf_Phdr *phdr, u_long rbase, u_long *base_addrp)
 {
 	vm_prot_t prot;
@@ -862,6 +861,9 @@ __elfN(load_file)(struct proc *p, const char *file, u_long *addr,
 	error = __elfN(load_sections)(imgp, hdr, phdr, rbase, &base_addr);
 	if (error != 0)
 		goto fail;
+
+	if (p->p_sysent->sv_protect != NULL)
+		p->p_sysent->sv_protect(imgp, SVP_INTERP);
 
 	*addr = base_addr;
 	*entry = (unsigned long)hdr->e_entry + rbase;
@@ -1156,8 +1158,10 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	maxalign = PAGE_SIZE;
 	maxsalign = PAGE_SIZE * 1024;
 	for (i = MAXPAGESIZES - 1; i > 0; i--) {
-		if (pagesizes[i] > maxsalign)
+		if (pagesizes[i] > maxsalign) {
 			maxsalign = pagesizes[i];
+			break;
+		}
 	}
 
 	mapsz = 0;
@@ -1358,8 +1362,12 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	if ((map->flags & MAP_ASLR) != 0) {
 		maxv1 = maxv / 2 + addr / 2;
 		error = __CONCAT(rnd_, __elfN(base))(map, addr, maxv1,
-		    (MAXPAGESIZES > 1 && pagesizes[1] != 0) ?
-		    pagesizes[1] : pagesizes[0], &anon_loc);
+#if VM_NRESERVLEVEL > 0
+		    pagesizes[VM_NRESERVLEVEL] != 0 ?
+		    /* Align anon_loc to the largest superpage size. */
+		    pagesizes[VM_NRESERVLEVEL] :
+#endif
+		    pagesizes[0], &anon_loc);
 		if (error != 0)
 			goto ret;
 		map->anon_loc = anon_loc;
@@ -1369,6 +1377,9 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 
 	entry = (u_long)hdr->e_entry + imgp->et_dyn_addr;
 	imgp->entry_addr = entry;
+
+	if (sv->sv_protect != NULL)
+		sv->sv_protect(imgp, SVP_IMAGE);
 
 	if (interp != NULL) {
 		VOP_UNLOCK(imgp->vp);
@@ -1434,7 +1445,8 @@ __elfN(freebsd_copyout_auxargs)(struct image_params *imgp, uintptr_t base)
 	Elf_Auxinfo *argarray, *pos;
 	struct vmspace *vmspace;
 	rlim_t stacksz;
-	int error, bsdflags, oc;
+	int error, oc;
+	uint32_t bsdflags;
 
 	argarray = pos = malloc(AT_COUNT * sizeof(*pos), M_TEMP,
 	    M_WAITOK | M_ZERO);
@@ -2409,6 +2421,9 @@ __elfN(prepare_register_notes)(struct thread *td, struct note_info_list *list,
 
 	size = 0;
 
+	if (target_td == td)
+		cpu_update_pcb(target_td);
+
 	/* NT_PRSTATUS must be the first register set note. */
 	size += __elfN(register_regset_note)(td, list, &__elfN(regset_prstatus),
 	    target_td);
@@ -2704,8 +2719,9 @@ __elfN(note_procstat_auxv)(void *arg, struct sbuf *sb, size_t *sizep)
 	}
 }
 
-static bool
-__elfN(parse_notes)(struct image_params *imgp, Elf_Note *checknote,
+#define	MAX_NOTES_LOOP	4096
+bool
+__elfN(parse_notes)(const struct image_params *imgp, const Elf_Note *checknote,
     const char *note_vendor, const Elf_Phdr *pnote,
     bool (*cb)(const Elf_Note *, void *, bool *), void *cb_arg)
 {
@@ -2743,9 +2759,15 @@ __elfN(parse_notes)(struct image_params *imgp, Elf_Note *checknote,
 		    pnote->p_offset + pnote->p_filesz);
 		buf = NULL;
 	}
-	for (i = 0; i < 100 && note >= note0 && note < note_end; i++) {
-		if (!aligned(note, Elf32_Addr) || (const char *)note_end -
-		    (const char *)note < sizeof(Elf_Note)) {
+	for (i = 0; i < MAX_NOTES_LOOP && note >= note0 && note < note_end;
+	    i++) {
+		if (!aligned(note, Elf32_Addr)) {
+			uprintf("Unaligned ELF note\n");
+			goto retf;
+		}
+		if ((const char *)note_end - (const char *)note <
+		    sizeof(Elf_Note)) {
+			uprintf("ELF note to short\n");
 			goto retf;
 		}
 		if (note->n_namesz != checknote->n_namesz ||
@@ -2765,6 +2787,8 @@ nextnote:
 		    roundup2(note->n_namesz, ELF_NOTE_ROUNDSIZE) +
 		    roundup2(note->n_descsz, ELF_NOTE_ROUNDSIZE));
 	}
+	if (i >= MAX_NOTES_LOOP)
+		uprintf("ELF note parser reached %d notes\n", i);
 retf:
 	res = false;
 ret:

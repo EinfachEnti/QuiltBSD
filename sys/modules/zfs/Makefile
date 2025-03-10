@@ -1,4 +1,3 @@
-
 SRCDIR=${SRCTOP}/sys/contrib/openzfs/module
 INCDIR=${SRCTOP}/sys/contrib/openzfs/include
 
@@ -186,7 +185,6 @@ SRCS+=	abd_os.c \
 	kmod_core.c \
 	spa_os.c \
 	sysctl_os.c \
-	vdev_file.c \
 	vdev_geom.c \
 	vdev_label_os.c \
 	zfs_acl.c \
@@ -198,13 +196,12 @@ SRCS+=	abd_os.c \
 	zfs_racct.c \
 	zfs_vfsops.c \
 	zfs_vnops_os.c \
-	zfs_znode.c \
+	zfs_znode_os.c \
 	zio_crypt.c \
 	zvol_os.c
 
 #unicode
-SRCS+=	uconv.c \
-	u8_textprep.c
+SRCS+=	u8_textprep.c
 
 #zcommon
 SRCS+=	zfeature_common.c \
@@ -218,6 +215,7 @@ SRCS+=	zfeature_common.c \
 	zfs_fletcher_superscalar4.c \
 	zfs_namecheck.c \
 	zfs_prop.c \
+	zfs_valstr.c \
 	zpool_prop.c \
 	zprop_common.c
 
@@ -238,8 +236,11 @@ SRCS+=	abd.c \
 	bqueue.c \
 	dataset_kstats.c \
 	ddt.c \
+	ddt_log.c \
+	ddt_stats.c \
 	ddt_zap.c \
 	dmu.c \
+	dmu_direct.c \
 	dmu_diff.c \
 	dmu_object.c \
 	dmu_objset.c \
@@ -296,6 +297,7 @@ SRCS+=	abd.c \
 	vdev.c \
 	vdev_draid.c \
 	vdev_draid_rand.c \
+	vdev_file.c \
 	vdev_indirect.c \
 	vdev_indirect_births.c \
 	vdev_indirect_mapping.c \
@@ -341,6 +343,7 @@ SRCS+=	abd.c \
 	zfs_rlock.c \
 	zfs_sa.c \
 	zfs_vnops.c \
+	zfs_znode.c \
 	zil.c \
 	zio.c \
 	zio_checksum.c \
@@ -389,6 +392,8 @@ CFLAGS.gcc+= -Wno-pointer-to-int-cast
 
 CFLAGS.abd.c= -Wno-cast-qual
 CFLAGS.ddt.c= -Wno-cast-qual
+CFLAGS.ddt_log.c= -Wno-cast-qual -Wno-pointer-arith
+CFLAGS.ddt_zap.c= -Wno-cast-qual
 CFLAGS.dmu.c= -Wno-cast-qual
 CFLAGS.dmu_traverse.c= -Wno-cast-qual
 CFLAGS.dnode.c= ${NO_WUNUSED_BUT_SET_VARIABLE}

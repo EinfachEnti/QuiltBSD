@@ -145,10 +145,10 @@ struct sysentvec elf64_freebsd_sysvec_v2 = {
 	.sv_regset_end  = SET_LIMIT(__elfN(regset)),
 };
 
-static bool ppc64_elfv1_header_match(struct image_params *params,
-    int32_t *, uint32_t *);
-static bool ppc64_elfv2_header_match(struct image_params *params,
-    int32_t *, uint32_t *);
+static bool ppc64_elfv1_header_match(const struct image_params *params,
+    const int32_t *, const uint32_t *);
+static bool ppc64_elfv2_header_match(const struct image_params *params,
+    const int32_t *, const uint32_t *);
 
 static Elf64_Brandinfo freebsd_brand_info_elfv1 = {
 	.brand		= ELFOSABI_FREEBSD,
@@ -221,8 +221,8 @@ ppc64_init_sysvecs(void *arg)
 SYSINIT(elf64_sysvec, SI_SUB_EXEC, SI_ORDER_ANY, ppc64_init_sysvecs, NULL);
 
 static bool
-ppc64_elfv1_header_match(struct image_params *params, int32_t *osrel __unused,
-    uint32_t *fctl0 __unused)
+ppc64_elfv1_header_match(const struct image_params *params,
+    const int32_t *osrel __unused, const uint32_t *fctl0 __unused)
 {
 	const Elf64_Ehdr *hdr = (const Elf64_Ehdr *)params->image_header;
 	int abi = (hdr->e_flags & 3);
@@ -231,8 +231,8 @@ ppc64_elfv1_header_match(struct image_params *params, int32_t *osrel __unused,
 }
 
 static bool
-ppc64_elfv2_header_match(struct image_params *params, int32_t *osrel __unused,
-    uint32_t *fctl0 __unused)
+ppc64_elfv2_header_match(const struct image_params *params,
+    const int32_t *osrel __unused, const uint32_t *fctl0 __unused)
 {
 	const Elf64_Ehdr *hdr = (const Elf64_Ehdr *)params->image_header;
 	int abi = (hdr->e_flags & 3);
@@ -279,7 +279,6 @@ elf64_dump_thread(struct thread *td, void *dst, size_t *off)
 	pcb = td->td_pcb;
 
 	if (pcb->pcb_flags & PCB_VEC) {
-		save_vec_nodrop(td);
 		if (dst != NULL) {
 			len += elf64_populate_note(NT_PPC_VMX,
 			    &pcb->pcb_vec, (char *)dst + len,
@@ -290,7 +289,6 @@ elf64_dump_thread(struct thread *td, void *dst, size_t *off)
 	}
 
 	if (pcb->pcb_flags & PCB_VSX) {
-		save_fpu_nodrop(td);
 		if (dst != NULL) {
 			/*
 			 * Doubleword 0 of VSR0-VSR31 overlap with FPR0-FPR31 and

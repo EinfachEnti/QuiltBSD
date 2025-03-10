@@ -82,12 +82,14 @@
  * from VGA colors to console colors, while we are reading RGB data.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <stand.h>
 #include <teken.h>
 #include <gfx_fb.h>
 #include <sys/font.h>
+#include <sys/splash.h>
+#include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/stdint.h>
 #include <sys/endian.h>
 #include <pnglite.h>
@@ -99,6 +101,8 @@
 #else
 #include <vbe.h>
 #endif
+
+#include "modinfo.h"
 
 /* VGA text mode does use bold font. */
 #if !defined(VGA_8X16_FONT)
@@ -157,6 +161,14 @@ static const int vga_to_cons_colors[NCOLORS] = {
 	8,  9, 10, 11,  12, 13, 14, 15
 };
 
+/*
+ * It is reported very slow console draw in some systems.
+ * in order to exclude buggy gop->Blt(), we want option
+ * to use direct draw to framebuffer and avoid gop->Blt.
+ * Can be toggled with "gop" command.
+ */
+bool ignore_gop_blt = false;
+
 struct text_pixel *screen_buffer;
 #if defined(EFI)
 static EFI_GRAPHICS_OUTPUT_BLT_PIXEL *GlyphBuffer;
@@ -180,6 +192,7 @@ gfx_framework_init(void)
 	 * Setup font list to have builtin font.
 	 */
 	(void) insert_font(NULL, FONT_BUILTIN);
+	gfx_interp_ref();	/* Draw in the gfx interpreter for this thing */
 }
 
 static uint8_t *
@@ -790,7 +803,7 @@ gfxfb_blt(void *BltBuffer, GFXFB_BLT_OPERATION BltOperation,
 	 * done as they are provided by protocols that disappear when exit
 	 * boot services.
 	 */
-	if (gop != NULL && boot_services_active) {
+	if (!ignore_gop_blt && gop != NULL && boot_services_active) {
 		tpl = BS->RaiseTPL(TPL_NOTIFY);
 		switch (BltOperation) {
 		case GfxFbBltVideoFill:
@@ -2917,4 +2930,134 @@ gfx_get_edid_resolution(struct vesa_edid_info *edid, edid_res_list_t *res)
 		}
 	}
 	return (!TAILQ_EMPTY(res));
+}
+
+vm_offset_t
+build_font_module(vm_offset_t addr)
+{
+	vt_font_bitmap_data_t *bd;
+	struct vt_font *fd;
+	struct preloaded_file *fp;
+	size_t size;
+	uint32_t checksum;
+	int i;
+	struct font_info fi;
+	struct fontlist *fl;
+	uint64_t fontp;
+
+	if (STAILQ_EMPTY(&fonts))
+		return (addr);
+
+	/* We can't load first */
+	if ((file_findfile(NULL, NULL)) == NULL) {
+		printf("Can not load font module: %s\n",
+		    "the kernel is not loaded");
+		return (addr);
+	}
+
+	/* helper pointers */
+	bd = NULL;
+	STAILQ_FOREACH(fl, &fonts, font_next) {
+		if (gfx_state.tg_font.vf_width == fl->font_data->vfbd_width &&
+		    gfx_state.tg_font.vf_height == fl->font_data->vfbd_height) {
+			/*
+			 * Kernel does have better built in font.
+			 */
+			if (fl->font_flags == FONT_BUILTIN)
+				return (addr);
+
+			bd = fl->font_data;
+			break;
+		}
+	}
+	if (bd == NULL)
+		return (addr);
+	fd = bd->vfbd_font;
+
+	fi.fi_width = fd->vf_width;
+	checksum = fi.fi_width;
+	fi.fi_height = fd->vf_height;
+	checksum += fi.fi_height;
+	fi.fi_bitmap_size = bd->vfbd_uncompressed_size;
+	checksum += fi.fi_bitmap_size;
+
+	size = roundup2(sizeof (struct font_info), 8);
+	for (i = 0; i < VFNT_MAPS; i++) {
+		fi.fi_map_count[i] = fd->vf_map_count[i];
+		checksum += fi.fi_map_count[i];
+		size += fd->vf_map_count[i] * sizeof (struct vfnt_map);
+		size += roundup2(size, 8);
+	}
+	size += bd->vfbd_uncompressed_size;
+
+	fi.fi_checksum = -checksum;
+
+	fp = file_findfile(NULL, md_kerntype);
+	if (fp == NULL)
+		panic("can't find kernel file");
+
+	fontp = addr;
+	addr += archsw.arch_copyin(&fi, addr, sizeof (struct font_info));
+	addr = roundup2(addr, 8);
+
+	/* Copy maps. */
+	for (i = 0; i < VFNT_MAPS; i++) {
+		if (fd->vf_map_count[i] != 0) {
+			addr += archsw.arch_copyin(fd->vf_map[i], addr,
+			    fd->vf_map_count[i] * sizeof (struct vfnt_map));
+			addr = roundup2(addr, 8);
+		}
+	}
+
+	/* Copy the bitmap. */
+	addr += archsw.arch_copyin(fd->vf_bytes, addr, fi.fi_bitmap_size);
+
+	/* Looks OK so far; populate control structure */
+	file_addmetadata(fp, MODINFOMD_FONT, sizeof(fontp), &fontp);
+	return (addr);
+}
+
+vm_offset_t
+build_splash_module(vm_offset_t addr)
+{
+	struct preloaded_file *fp;
+	struct splash_info si;
+	const char *splash;
+	png_t png;
+	uint64_t splashp;
+	int error;
+
+	/* We can't load first */
+	if ((file_findfile(NULL, NULL)) == NULL) {
+		printf("Can not load splash module: %s\n",
+		    "the kernel is not loaded");
+		return (addr);
+	}
+
+	fp = file_findfile(NULL, md_kerntype);
+	if (fp == NULL)
+		panic("can't find kernel file");
+
+	splash = getenv("splash");
+	if (splash == NULL)
+		return (addr);
+
+	/* Parse png */
+	if ((error = png_open(&png, splash)) != PNG_NO_ERROR) {
+		return (addr);
+	}
+
+	si.si_width = png.width;
+	si.si_height = png.height;
+	si.si_depth = png.bpp;
+	splashp = addr;
+	addr += archsw.arch_copyin(&si, addr, sizeof (struct splash_info));
+	addr = roundup2(addr, 8);
+
+	/* Copy the bitmap. */
+	addr += archsw.arch_copyin(png.image, addr, png.png_datalen);
+
+	printf("Loading splash ok\n");
+	file_addmetadata(fp, MODINFOMD_SPLASH, sizeof(splashp), &splashp);
+	return (addr);
 }

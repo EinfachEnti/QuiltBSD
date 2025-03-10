@@ -26,9 +26,9 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -63,13 +63,13 @@ ATF_TC_BODY(getentropy_sizes, tc)
 	char buf[512];
 
 	ATF_REQUIRE_EQ(getentropy(buf, sizeof(buf)), -1);
-	ATF_REQUIRE_EQ(errno, EIO);
-	ATF_REQUIRE_EQ(getentropy(buf, 257), -1);
-	ATF_REQUIRE_EQ(errno, EIO);
+	ATF_REQUIRE_EQ(errno, EINVAL);
+	ATF_REQUIRE_EQ(getentropy(buf, GETENTROPY_MAX + 1), -1);
+	ATF_REQUIRE_EQ(errno, EINVAL);
 
 	/* Smaller sizes always succeed: */
-	ATF_REQUIRE_EQ(getentropy(buf, 256), 0);
-	ATF_REQUIRE_EQ(getentropy(buf, 128), 0);
+	ATF_REQUIRE_EQ(getentropy(buf, GETENTROPY_MAX), 0);
+	ATF_REQUIRE_EQ(getentropy(buf, GETENTROPY_MAX / 2), 0);
 	ATF_REQUIRE_EQ(getentropy(buf, 0), 0);
 }
 

@@ -63,7 +63,8 @@ CODE {
 	    int unit)
 	{
 
-		panic("bus_add_child is not implemented");
+		panic("%s: bus_add_child is not implemented, name '%s', "
+		    "unit %d", device_get_nameunit(bus), name, unit);
 	}
 
 	static int
@@ -76,6 +77,18 @@ CODE {
 	null_reset_prepare(device_t bus, device_t dev)
 	{
 		return (0);
+	}
+
+	static struct rman *
+	null_get_rman(device_t bus, int type, u_int flags)
+	{
+		return (NULL);
+	}
+
+	static struct resource_list *
+	null_get_resource_list(device_t bus, device_t dev)
+	{
+		return (NULL);
 	}
 };
 
@@ -304,15 +317,11 @@ METHOD struct resource * alloc_resource {
  *
  * @param _dev		the parent device of @p _child
  * @param _child	the device which allocated the resource
- * @param _type		the type of resource
- * @param _rid		the resource identifier
  * @param _r		the resource to activate
  */
 METHOD int activate_resource {
 	device_t	_dev;
 	device_t	_child;
-	int		_type;
-	int		_rid;
 	struct resource *_r;
 };
 
@@ -326,7 +335,6 @@ METHOD int activate_resource {
  *
  * @param _dev		the parent device of @p _child
  * @param _child	the device which allocated the resource
- * @param _type		the type of resource
  * @param _r		the resource to map
  * @param _args		optional attributes of the mapping
  * @param _map		the mapping
@@ -334,7 +342,6 @@ METHOD int activate_resource {
 METHOD int map_resource {
 	device_t	_dev;
 	device_t	_child;
-	int		_type;
 	struct resource *_r;
 	struct resource_map_request *_args;
 	struct resource_map *_map;
@@ -350,14 +357,12 @@ METHOD int map_resource {
  *
  * @param _dev		the parent device of @p _child
  * @param _child	the device which allocated the resource
- * @param _type		the type of resource
  * @param _r		the resource
  * @param _map		the mapping to release
  */
 METHOD int unmap_resource {
 	device_t	_dev;
 	device_t	_child;
-	int		_type;
 	struct resource *_r;
 	struct resource_map *_map;
 } DEFAULT bus_generic_unmap_resource;
@@ -371,15 +376,11 @@ METHOD int unmap_resource {
  *
  * @param _dev		the parent device of @p _child
  * @param _child	the device which allocated the resource
- * @param _type		the type of resource
- * @param _rid		the resource identifier
  * @param _r		the resource to deactivate
  */
 METHOD int deactivate_resource {
 	device_t	_dev;
 	device_t	_child;
-	int		_type;
-	int		_rid;
 	struct resource *_r;
 };
 
@@ -393,7 +394,6 @@ METHOD int deactivate_resource {
  *
  * @param _dev		the parent device of @p _child
  * @param _child	the device which allocated the resource
- * @param _type		the type of resource
  * @param _res		the resource to adjust
  * @param _start	the new starting address of the resource range
  * @param _end		the new ending address of the resource range
@@ -401,7 +401,6 @@ METHOD int deactivate_resource {
 METHOD int adjust_resource {
 	device_t	_dev;
 	device_t	_child;
-	int		_type;
 	struct resource *_res;
 	rman_res_t	_start;
 	rman_res_t	_end;
@@ -435,15 +434,11 @@ METHOD int translate_resource {
  *
  * @param _dev		the parent device of @p _child
  * @param _child	the device which allocated the resource
- * @param _type		the type of resource
- * @param _rid		the resource identifier
  * @param _r		the resource to release
  */
 METHOD int release_resource {
 	device_t	_dev;
 	device_t	_child;
-	int		_type;
-	int		_rid;
 	struct resource *_res;
 };
 
@@ -620,7 +615,25 @@ METHOD void delete_resource {
 METHOD struct resource_list * get_resource_list {
 	device_t	_dev;
 	device_t	_child;
-} DEFAULT bus_generic_get_resource_list;
+} DEFAULT null_get_resource_list;
+
+/**
+ * @brief Return a struct rman.
+ *
+ * Used by drivers which use bus_generic_rman_alloc_resource() etc. to
+ * implement their resource handling. It should return the resource
+ * manager used for the given resource type.
+ *
+ * @param _dev		the bus device
+ * @param _type		the resource type
+ * @param _flags	resource flags (@c RF_XXX flags in
+ *			<sys/rman.h>)
+ */
+METHOD struct rman * get_rman {
+	device_t	_dev;
+	int		_type;
+	u_int		_flags;
+} DEFAULT null_get_rman;
 
 /**
  * @brief Is the hardware described by @p _child still attached to the

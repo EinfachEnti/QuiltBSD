@@ -27,7 +27,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <machine/vmm.h>
 #include <machine/vmm_snapshot.h>
@@ -70,7 +69,7 @@ static struct pci_devinst *lpc_bridge;
 
 #define	LPC_UART_NUM	4
 static struct lpc_uart_softc {
-	struct uart_softc *uart_softc;
+	struct uart_ns16550_softc *uart_softc;
 	int	iobase;
 	int	irq;
 	int	enabled;
@@ -105,7 +104,7 @@ lpc_device_parse(const char *opts)
 			if (romfile == NULL) {
 				errx(4, "invalid bootrom option \"%s\"", opts);
 			}
-			set_config_value("lpc.bootrom", romfile);
+			set_config_value("bootrom", romfile);
 
 			varfile = strsep(&str, ",");
 			if (varfile == NULL) {
@@ -113,7 +112,7 @@ lpc_device_parse(const char *opts)
 				goto done;
 			}
 			if (strchr(varfile, '=') == NULL) {
-				set_config_value("lpc.bootvars", varfile);
+				set_config_value("bootvars", varfile);
 			} else {
 				/* varfile doesn't exist, it's another config
 				 * option */
@@ -184,13 +183,6 @@ lpc_print_supported_devices(void)
 }
 
 const char *
-lpc_bootrom(void)
-{
-
-	return (get_config_value("lpc.bootrom"));
-}
-
-const char *
 lpc_fwcfg(void)
 {
 	return (get_config_value("lpc.fwcfg"));
@@ -227,17 +219,19 @@ lpc_uart_io_handler(struct vmctx *ctx __unused, int in,
 	switch (bytes) {
 	case 1:
 		if (in)
-			*eax = uart_read(sc->uart_softc, offset);
+			*eax = uart_ns16550_read(sc->uart_softc, offset);
 		else
-			uart_write(sc->uart_softc, offset, *eax);
+			uart_ns16550_write(sc->uart_softc, offset, *eax);
 		break;
 	case 2:
 		if (in) {
-			*eax = uart_read(sc->uart_softc, offset);
-			*eax |= uart_read(sc->uart_softc, offset + 1) << 8;
+			*eax = uart_ns16550_read(sc->uart_softc, offset);
+			*eax |=
+			    uart_ns16550_read(sc->uart_softc, offset + 1) << 8;
 		} else {
-			uart_write(sc->uart_softc, offset, *eax);
-			uart_write(sc->uart_softc, offset + 1, *eax >> 8);
+			uart_ns16550_write(sc->uart_softc, offset, *eax);
+			uart_ns16550_write(sc->uart_softc, offset + 1,
+			    *eax >> 8);
 		}
 		break;
 	default:
@@ -255,14 +249,6 @@ lpc_init(struct vmctx *ctx)
 	const char *backend, *name;
 	char *node_name;
 	int unit, error;
-	const nvlist_t *nvl;
-
-	nvl = find_config_node("lpc");
-	if (nvl != NULL && nvlist_exists(nvl, "bootrom")) {
-		error = bootrom_loadrom(ctx, nvl);
-		if (error)
-			return (error);
-	}
 
 	/* COM1 and COM2 */
 	for (unit = 0; unit < LPC_UART_NUM; unit++) {
@@ -276,13 +262,14 @@ lpc_init(struct vmctx *ctx)
 		}
 		pci_irq_reserve(sc->irq);
 
-		sc->uart_softc = uart_init(lpc_uart_intr_assert,
-				    lpc_uart_intr_deassert, sc);
+		sc->uart_softc = uart_ns16550_init(lpc_uart_intr_assert,
+		    lpc_uart_intr_deassert, sc);
 
 		asprintf(&node_name, "lpc.%s.path", name);
 		backend = get_config_value(node_name);
 		free(node_name);
-		if (uart_set_backend(sc->uart_softc, backend) != 0) {
+		if (backend != NULL &&
+		    uart_ns16550_tty_open(sc->uart_softc, backend) != 0) {
 			EPRINTLN("Unable to initialize backend '%s' "
 			    "for LPC device %s", backend, name);
 			return (-1);
@@ -291,7 +278,7 @@ lpc_init(struct vmctx *ctx)
 		bzero(&iop, sizeof(struct inout_port));
 		iop.name = name;
 		iop.port = sc->iobase;
-		iop.size = UART_IO_BAR_SIZE;
+		iop.size = UART_NS16550_IO_BAR_SIZE;
 		iop.flags = IOPORT_F_INOUT;
 		iop.handler = lpc_uart_io_handler;
 		iop.arg = sc;
@@ -424,7 +411,7 @@ pci_lpc_uart_dsdt(void)
 		dsdt_line("  Name (_CRS, ResourceTemplate ()");
 		dsdt_line("  {");
 		dsdt_indent(2);
-		dsdt_fixed_ioport(sc->iobase, UART_IO_BAR_SIZE);
+		dsdt_fixed_ioport(sc->iobase, UART_NS16550_IO_BAR_SIZE);
 		dsdt_fixed_irq(sc->irq);
 		dsdt_unindent(2);
 		dsdt_line("  })");
@@ -589,12 +576,12 @@ static int
 pci_lpc_snapshot(struct vm_snapshot_meta *meta)
 {
 	int unit, ret;
-	struct uart_softc *sc;
+	struct uart_ns16550_softc *sc;
 
 	for (unit = 0; unit < LPC_UART_NUM; unit++) {
 		sc = lpc_uart_softc[unit].uart_softc;
 
-		ret = uart_snapshot(sc, meta);
+		ret = uart_ns16550_snapshot(sc, meta);
 		if (ret != 0)
 			goto done;
 	}

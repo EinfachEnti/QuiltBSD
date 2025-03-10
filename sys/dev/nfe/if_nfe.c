@@ -567,11 +567,6 @@ nfe_attach(device_t dev)
 		goto fail;
 
 	ifp = sc->nfe_ifp = if_gethandle(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(dev, "can not if_gethandle()\n");
-		error = ENOSPC;
-		goto fail;
-	}
 
 	/*
 	 * Allocate Tx and Rx rings.
@@ -716,8 +711,6 @@ nfe_detach(device_t dev)
 		nfe_set_macaddr(sc, eaddr);
 		if_free(ifp);
 	}
-	if (sc->nfe_miibus)
-		device_delete_child(dev, sc->nfe_miibus);
 	bus_generic_detach(dev);
 	if (sc->nfe_tq != NULL) {
 		taskqueue_drain(sc->nfe_tq, &sc->nfe_int_task);

@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: (BSD-2-Clause OR GPL-2.0)
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/errno.h>
@@ -1444,6 +1443,10 @@ finish_ccb:
 
 		cts->proto_specific.scsi.flags = CTS_SCSI_FLAGS_TAG_ENB;
 		cts->proto_specific.scsi.valid = CTS_SCSI_VALID_TQ;
+
+		/* Prefer connection speed over sas port speed */
+		cts->xport_specific.sas.valid &= ~CTS_SAS_VALID_SPEED;
+		cts->xport_specific.sas.bitrate = 0;
 
 		ccb_h->status = CAM_REQ_CMP;
 		xpt_done(ccb);

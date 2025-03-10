@@ -82,12 +82,16 @@ struct dentry *debugfs_create_dir(const char *name, struct dentry *parent);
 struct dentry *debugfs_create_symlink(const char *name, struct dentry *parent,
     const char *dest);
 
+struct dentry *debugfs_lookup(const char *name, struct dentry *parent);
+
 void debugfs_remove(struct dentry *dentry);
 
 void debugfs_remove_recursive(struct dentry *dentry);
 
 #define DEFINE_DEBUGFS_ATTRIBUTE(__fops, __get, __set, __fmt) \
 	DEFINE_SIMPLE_ATTRIBUTE(__fops, __get, __set, __fmt)
+#define DEFINE_DEBUGFS_ATTRIBUTE_SIGNED(__fops, __get, __set, __fmt) \
+	DEFINE_SIMPLE_ATTRIBUTE_SIGNED(__fops, __get, __set, __fmt)
 
 void debugfs_create_bool(const char *name, umode_t mode, struct dentry *parent,
     bool *value);

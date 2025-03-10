@@ -25,7 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 
 #include <stand.h>
@@ -35,9 +34,6 @@
 #include <efilib.h>
 
 #include "loader_efi.h"
-
-#define	M(x)	((x) * 1024 * 1024)
-#define	G(x)	(1UL * (x) * 1024 * 1024 * 1024)
 
 #if defined(__amd64__)
 #include <machine/cpufunc.h>
@@ -182,14 +178,9 @@ out:
 #define	EFI_STAGING_SIZE	DEFAULT_EFI_STAGING_SIZE
 #endif
 
-#if defined(__aarch64__) || defined(__amd64__) || defined(__arm__) || \
-    defined(__riscv)
 #define	EFI_STAGING_2M_ALIGN	1
-#else
-#define	EFI_STAGING_2M_ALIGN	0
-#endif
 
-#if defined(__amd64__)
+#if defined(__amd64__) || defined(__i386__)
 #define	EFI_STAGING_SLOP	M(8)
 #else
 #define	EFI_STAGING_SLOP	0
@@ -210,7 +201,7 @@ efi_copy_free(void)
 	stage_offset = 0;
 }
 
-#ifdef __amd64__
+#if defined(__amd64__) || defined(__i386__)
 int copy_staging = COPY_STAGING_AUTO;
 
 static int
@@ -221,11 +212,10 @@ command_copy_staging(int argc, char *argv[])
 		[COPY_STAGING_DISABLE] = "disable",
 		[COPY_STAGING_AUTO] = "auto",
 	};
-	int prev, res;
+	int prev;
 
-	res = CMD_OK;
 	if (argc > 2) {
-		res = CMD_ERROR;
+		goto usage;
 	} else if (argc == 2) {
 		prev = copy_staging;
 		if (strcmp(argv[1], "enable") == 0)
@@ -234,11 +224,9 @@ command_copy_staging(int argc, char *argv[])
 			copy_staging = COPY_STAGING_DISABLE;
 		else if (strcmp(argv[1], "auto") == 0)
 			copy_staging = COPY_STAGING_AUTO;
-		else {
-			printf("usage: copy_staging enable|disable|auto\n");
-			res = CMD_ERROR;
-		}
-		if (res == CMD_OK && prev != copy_staging) {
+		else
+			goto usage;
+		if (prev != copy_staging) {
 			printf("changed copy_staging, unloading kernel\n");
 			unload();
 			efi_copy_free();
@@ -247,7 +235,11 @@ command_copy_staging(int argc, char *argv[])
 	} else {
 		printf("copy staging: %s\n", mode[copy_staging]);
 	}
-	return (res);
+	return (CMD_OK);
+
+usage:
+	command_errmsg = "usage: copy_staging enable|disable|auto";
+	return (CMD_ERROR);
 }
 COMMAND_SET(copy_staging, "copy_staging", "copy staging", command_copy_staging);
 #endif
@@ -257,19 +249,17 @@ command_staging_slop(int argc, char *argv[])
 {
 	char *endp;
 	u_long new, prev;
-	int res;
 
-	res = CMD_OK;
 	if (argc > 2) {
-		res = CMD_ERROR;
+		goto err;
 	} else if (argc == 2) {
 		new = strtoul(argv[1], &endp, 0);
-		if (*endp != '\0') {
-			printf("invalid slop value\n");
-			res = CMD_ERROR;
-		}
-		if (res == CMD_OK && staging_slop != new) {
+		if (*endp != '\0')
+			goto err;
+		if (staging_slop != new) {
+			staging_slop = new;
 			printf("changed slop, unloading kernel\n");
+
 			unload();
 			efi_copy_free();
 			efi_copy_init();
@@ -277,12 +267,16 @@ command_staging_slop(int argc, char *argv[])
 	} else {
 		printf("staging slop %#lx\n", staging_slop);
 	}
-	return (res);
+	return (CMD_OK);
+
+err:
+	command_errmsg = "invalid slop value";
+	return (CMD_ERROR);
 }
 COMMAND_SET(staging_slop, "staging_slop", "set staging slop",
     command_staging_slop);
 
-#if defined(__amd64__)
+#if defined(__amd64__) || defined(__i386__)
 /*
  * The staging area must reside in the first 1GB or 4GB physical
  * memory: see elf64_exec() in
@@ -296,6 +290,17 @@ get_staging_max(void)
 	res = copy_staging == COPY_STAGING_ENABLE ? G(1) : G(4);
 	return (res);
 }
+#define	EFI_ALLOC_MAX_ADDR
+#elif defined(__aarch64__)
+/*
+ * Older kernels only support a 48-bit physical address space, and locore.S
+ * only supports a 50-bit space. Limit to 48 bits so older kernels can boot
+ * even if FEAT_LPA2 is supported by the hardware.
+ */
+#define	get_staging_max()	(1ul << 48)
+#define	EFI_ALLOC_MAX_ADDR
+#endif
+#ifdef EFI_ALLOC_MAX_ADDR
 #define	EFI_ALLOC_METHOD	AllocateMaxAddress
 #else
 #define	EFI_ALLOC_METHOD	AllocateAnyPages
@@ -321,7 +326,8 @@ efi_copy_init(void)
 	 */
 	if (running_on_hyperv())
 		efi_verify_staging_size(&nr_pages);
-
+#endif
+#ifdef EFI_ALLOC_MAX_ADDR
 	staging = get_staging_max();
 #endif
 	status = BS->AllocatePages(EFI_ALLOC_METHOD, EfiLoaderCode,
@@ -381,9 +387,10 @@ efi_check_space(vm_offset_t end)
 	end += staging_slop;
 
 	nr_pages = EFI_SIZE_TO_PAGES(end - staging_end);
-#if defined(__amd64__)
+#if defined(__amd64__) || defined(__i386__)
 	/*
-	 * amd64 needs all memory to be allocated under the 1G or 4G boundary.
+	 * The amd64 kernel needs all memory to be allocated under the 1G or
+	 * 4G boundary.
 	 */
 	if (end > get_staging_max())
 		goto before_staging;
@@ -428,7 +435,7 @@ expand:
 #if EFI_STAGING_2M_ALIGN
 	nr_pages += M(2) / EFI_PAGE_SIZE;
 #endif
-#if defined(__amd64__)
+#ifdef EFI_ALLOC_MAX_ADDR
 	new_base = get_staging_max();
 #endif
 	status = BS->AllocatePages(EFI_ALLOC_METHOD, EfiLoaderCode,

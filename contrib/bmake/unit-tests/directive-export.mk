@@ -1,4 +1,4 @@
-# $NetBSD: directive-export.mk,v 1.9 2023/08/20 20:48:32 rillig Exp $
+# $NetBSD: directive-export.mk,v 1.12 2024/06/01 10:06:23 rillig Exp $
 #
 # Tests for the .export directive.
 #
@@ -28,14 +28,24 @@ VAR=		value $$ ${INDIRECT}
 .  error
 .endif
 
-# No syntactical argument means to export all variables.
+# Before var.c 1.1117 from 2024-06-01, a plain ".export" without a syntactical
+# argument exported all global variables.  This case could be triggered
+# unintentionally by writing a line of the form ".export ${VARNAMES}" to a
+# makefile, when VARNAMES was an empty list.
+# expect+1: warning: .export requires an argument.
 .export
 
 # An empty argument means no additional variables to export.
 .export ${:U}
 
 
-# Trigger the "This isn't going to end well" in ExportVarEnv.
+# Before a child process is started, whether for the '!=' assignment operator
+# or for the ':sh' modifier, all variables that were marked for being exported
+# are expanded and then exported.  If expanding such a variable requires
+# running a child command, the marked-as-exported variables would need to be
+# exported first, ending in an endless loop.  To avoid this endless loop,
+# don't export the variables while preparing a child process, see
+# ExportVarEnv.
 EMPTY_SHELL=	${:sh}
 .export EMPTY_SHELL	# only marked for export at this point
 _!=		:;:	# Force the variable to be actually exported.

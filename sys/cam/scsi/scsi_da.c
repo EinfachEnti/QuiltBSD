@@ -28,7 +28,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 
 #ifdef _KERNEL
@@ -138,7 +137,7 @@ typedef enum {
 	"\013CAN_RC16"		\
 	"\014PROBED"		\
 	"\015DIRTY"		\
-	"\016ANNOUCNED"		\
+	"\016ANNOUNCED"		\
 	"\017CAN_ATA_DMA"	\
 	"\020CAN_ATA_LOG"	\
 	"\021CAN_ATA_IDLOG"	\
@@ -883,6 +882,11 @@ static struct da_quirk_entry da_quirk_table[] =
 		 "*"}, /*quirks*/ DA_Q_NO_RC16
 	},
 	{
+		/* ADATA USB sticks lie on RC16. */
+		{T_DIRECT, SIP_MEDIA_REMOVABLE, "ADATA", "USB Flash Drive*",
+		 "*"}, /*quirks*/ DA_Q_NO_RC16
+	},
+	{
 		/*
 		 * I-O Data USB Flash Disk
 		 * PR: usb/211716
@@ -1398,6 +1402,22 @@ static struct da_quirk_entry da_quirk_table[] =
 	},
 	{
 		/*
+		 * Samsung 860 SSDs
+		 * 4k optimised & trim only works in 4k requests + 4k aligned
+		 */
+		{ T_DIRECT, SIP_MEDIA_FIXED, "ATA", "Samsung SSD 860*", "*" },
+		/*quirks*/DA_Q_4K
+	},
+	{
+		/*
+		 * Samsung 870 SSDs
+		 * 4k optimised & trim only works in 4k requests + 4k aligned
+		 */
+		{ T_DIRECT, SIP_MEDIA_FIXED, "ATA", "Samsung SSD 870*", "*" },
+		/*quirks*/DA_Q_4K
+	},
+	{
+		/*
 		 * Samsung 843T Series SSDs (MZ7WD*)
 		 * Samsung PM851 Series SSDs (MZ7TE*)
 		 * Samsung PM853T Series SSDs (MZ7GE*)
@@ -1783,10 +1803,20 @@ daopen(struct disk *dp)
 	    (softc->quirks & DA_Q_NO_PREVENT) == 0)
 		daprevent(periph, PR_PREVENT);
 
-	if (error == 0) {
+	/*
+	 * Only 'validate' the pack if the media size is non-zero and the
+	 * underlying peripheral isn't invalid (the only error != 0 path).  Once
+	 * the periph is marked invalid, we only get here on lost races with its
+	 * teardown, so keeping the pack invalid also keeps more I/O from
+	 * starting.
+	 */
+	if (error == 0 && softc->params.sectors != 0)
 		softc->flags &= ~DA_FLAG_PACK_INVALID;
+	else
+		softc->flags |= DA_FLAG_PACK_INVALID;
+
+	if (error == 0)
 		softc->flags |= DA_FLAG_OPEN;
-	}
 
 	da_periph_unhold(periph, DA_REF_OPEN_HOLD);
 	cam_periph_unlock(periph);
@@ -1879,7 +1909,15 @@ dastrategy(struct bio *bp)
 	cam_periph_lock(periph);
 
 	/*
-	 * If the device has been made invalid, error out
+	 * If the pack has been invalidated, fail all I/O. The medium is not
+	 * suitable for normal I/O, because one or more is ture:
+	 *	- the medium is missing
+	 *	- its size is unknown
+	 *	- it differs from the medium present at daopen
+	 *	- we're tearing the cam periph device down
+	 * Since we have the cam periph lock, we don't need to check it for
+	 * the last condition since PACK_INVALID is set when we invalidate
+	 * the device.
 	 */
 	if ((softc->flags & DA_FLAG_PACK_INVALID)) {
 		cam_periph_unlock(periph);
@@ -1926,6 +1964,10 @@ dadump(void *arg, void *virtual, off_t offset, size_t length)
 	softc = (struct da_softc *)periph->softc;
 	secsize = softc->params.secsize;
 
+	/*
+	 * Can't dump to a disk that's not there or changed, for whatever
+	 * reason.
+	 */
 	if ((softc->flags & DA_FLAG_PACK_INVALID) != 0)
 		return (ENXIO);
 
@@ -2166,23 +2208,27 @@ daasync(void *callback_arg, uint32_t code,
 		ccb = (union ccb *)arg;
 
 		/*
-		 * Handle all UNIT ATTENTIONs except our own, as they will be
+		 * Unit attentions are broadcast to all the LUNs of the device
+		 * so handle all UNIT ATTENTIONs except our own, as they will be
 		 * handled by daerror().
 		 */
 		if (xpt_path_periph(ccb->ccb_h.path) != periph &&
 		    scsi_extract_sense_ccb(ccb,
 		     &error_code, &sense_key, &asc, &ascq)) {
 			if (asc == 0x2A && ascq == 0x09) {
+				/* 2a/9: CAPACITY DATA HAS CHANGED */
 				xpt_print(ccb->ccb_h.path,
 				    "Capacity data has changed\n");
 				cam_periph_assert(periph, MA_OWNED);
 				softc->flags &= ~DA_FLAG_PROBED;
 				dareprobe(periph);
 			} else if (asc == 0x28 && ascq == 0x00) {
+				/* 28/0: NOT READY TO READY CHANGE, MEDIUM MAY HAVE CHANGED */
 				cam_periph_assert(periph, MA_OWNED);
 				softc->flags &= ~DA_FLAG_PROBED;
 				disk_media_changed(softc->disk, M_NOWAIT);
 			} else if (asc == 0x3F && ascq == 0x03) {
+				/* 3f/3: INQUIRY DATA HAS CHANGED */
 				xpt_print(ccb->ccb_h.path,
 				    "INQUIRY data has changed\n");
 				cam_periph_assert(periph, MA_OWNED);
@@ -2665,7 +2711,7 @@ daflagssysctl(SYSCTL_HANDLER_ARGS)
 	if (softc->flags != 0)
 		sbuf_printf(&sbuf, "0x%b", (unsigned)softc->flags, DA_FLAG_STRING);
 	else
-		sbuf_printf(&sbuf, "0");
+		sbuf_putc(&sbuf, '0');
 	error = sbuf_finish(&sbuf);
 	sbuf_delete(&sbuf);
 
@@ -2735,7 +2781,6 @@ dazonemodesysctl(SYSCTL_HANDLER_ARGS)
 static int
 dazonesupsysctl(SYSCTL_HANDLER_ARGS)
 {
-	char tmpbuf[180];
 	struct da_softc *softc;
 	struct sbuf sb;
 	int error, first;
@@ -2743,15 +2788,14 @@ dazonesupsysctl(SYSCTL_HANDLER_ARGS)
 
 	softc = (struct da_softc *)arg1;
 
-	error = 0;
 	first = 1;
-	sbuf_new(&sb, tmpbuf, sizeof(tmpbuf), 0);
+	sbuf_new_for_sysctl(&sb, NULL, 0, req);
 
 	for (i = 0; i < sizeof(da_zone_desc_table) /
 	     sizeof(da_zone_desc_table[0]); i++) {
 		if (softc->zone_flags & da_zone_desc_table[i].value) {
 			if (first == 0)
-				sbuf_printf(&sb, ", ");
+				sbuf_cat(&sb, ", ");
 			else
 				first = 0;
 			sbuf_cat(&sb, da_zone_desc_table[i].desc);
@@ -2759,12 +2803,10 @@ dazonesupsysctl(SYSCTL_HANDLER_ARGS)
 	}
 
 	if (first == 1)
-		sbuf_printf(&sb, "None");
+		sbuf_cat(&sb, "None");
 
-	sbuf_finish(&sb);
-
-	error = sysctl_handle_string(oidp, sbuf_data(&sb), sbuf_len(&sb), req);
-
+	error = sbuf_finish(&sb);
+	sbuf_delete(&sb);
 	return (error);
 }
 
@@ -2790,13 +2832,6 @@ daregister(struct cam_periph *periph, void *arg)
 	if (softc == NULL) {
 		printf("daregister: Unable to probe new device. "
 		       "Unable to allocate softc\n");
-		return(CAM_REQ_CMP_ERR);
-	}
-
-	if (cam_iosched_init(&softc->cam_iosched, periph) != 0) {
-		printf("daregister: Unable to probe new device. "
-		       "Unable to allocate iosched memory\n");
-		free(softc, M_DEVBUF);
 		return(CAM_REQ_CMP_ERR);
 	}
 
@@ -2968,7 +3003,14 @@ daregister(struct cam_periph *periph, void *arg)
 	softc->disk->d_hba_subdevice = cpi.hba_subdevice;
 	snprintf(softc->disk->d_attachment, sizeof(softc->disk->d_attachment),
 	    "%s%d", cpi.dev_name, cpi.unit_number);
-	cam_periph_lock(periph);
+
+	if (cam_iosched_init(&softc->cam_iosched, periph, softc->disk,
+	    daschedule) != 0) {
+		printf("daregister: Unable to probe new device. "
+		       "Unable to allocate iosched memory\n");
+		free(softc, M_DEVBUF);
+		return(CAM_REQ_CMP_ERR);
+	}
 
 	/*
 	 * Add async callbacks for events of interest.
@@ -2977,6 +3019,7 @@ daregister(struct cam_periph *periph, void *arg)
 	 * fine without them and the only alternative
 	 * would be to not attach the device on failure.
 	 */
+	cam_periph_lock(periph);
 	xpt_register_async(AC_SENT_BDR | AC_BUS_RESET | AC_LOST_DEVICE |
 	    AC_ADVINFO_CHANGED | AC_SCSI_AEN | AC_UNIT_ATTENTION |
 	    AC_INQ_CHANGED, daasync, periph, periph->path);
@@ -3444,10 +3487,19 @@ more:
 
 			queue_ccb = 0;
 
-			error = da_zone_cmd(periph, start_ccb, bp,&queue_ccb);
+			error = da_zone_cmd(periph, start_ccb, bp, &queue_ccb);
 			if ((error != 0)
 			 || (queue_ccb == 0)) {
+				/*
+				 * g_io_deliver will recurisvely call start
+				 * routine for ENOMEM, so drop the periph
+				 * lock to allow that recursion.
+				 */
+				if (error == ENOMEM)
+					cam_periph_unlock(periph);
 				biofinish(bp, NULL, error);
+				if (error == ENOMEM)
+					cam_periph_lock(periph);
 				xpt_release_ccb(start_ccb);
 				return;
 			}
@@ -4197,6 +4249,9 @@ da_delete_trim(struct cam_periph *periph, union ccb *ccb, struct bio *bp)
 		      da_default_timeout * 1000);
 	ccb->ccb_h.ccb_state = DA_CCB_DELETE;
 	ccb->ccb_h.flags |= CAM_UNLOCKED;
+	softc->trim_count++;
+	softc->trim_ranges += ranges;
+	softc->trim_lbas += block_count;
 	cam_iosched_submit_trim(softc->cam_iosched);
 }
 
@@ -4257,6 +4312,9 @@ da_delete_ws(struct cam_periph *periph, union ccb *ccb, struct bio *bp)
 			da_default_timeout * 1000);
 	ccb->ccb_h.ccb_state = DA_CCB_DELETE;
 	ccb->ccb_h.flags |= CAM_UNLOCKED;
+	softc->trim_count++;
+	softc->trim_ranges++;
+	softc->trim_lbas += count;
 	cam_iosched_submit_trim(softc->cam_iosched);
 }
 
@@ -4546,35 +4604,53 @@ dadone(struct cam_periph *periph, union ccb *done_ccb)
 			cam_periph_unlock(periph);
 			return;
 		}
+		/*
+		 * refresh bp, since cmd6workaround may set it to NULL when
+		 * there's no delete methos available since it pushes the bp
+		 * back onto the work queue to reschedule it (since different
+		 * delete methods have different size limitations).
+		 */
 		bp = (struct bio *)done_ccb->ccb_h.ccb_bp;
 		if (error != 0) {
-			int queued_error;
+			bool pack_invalid =
+			    (softc->flags & DA_FLAG_PACK_INVALID) != 0;
 
-			/*
-			 * return all queued I/O with EIO, so that
-			 * the client can retry these I/Os in the
-			 * proper order should it attempt to recover.
-			 */
-			queued_error = EIO;
-
-			if (error == ENXIO
-			 && (softc->flags & DA_FLAG_PACK_INVALID)== 0) {
+			if (error == ENXIO && !pack_invalid) {
 				/*
-				 * Catastrophic error.  Mark our pack as
-				 * invalid.
+				 * ENXIO flags ASC/ASCQ codes for either media
+				 * missing, or the drive being extremely
+				 * unhealthy.  Invalidate peripheral on this
+				 * catestrophic error when the pack is valid
+				 * since we set the pack invalid bit only for
+				 * the few ASC/ASCQ codes indicating missing
+				 * media.  The invalidation will flush any
+				 * queued I/O and short-circuit retries for
+				 * other I/O. We only invalidate the da device
+				 * so the passX device remains for recovery and
+				 * diagnostics.
 				 *
-				 * XXX See if this is really a media
-				 * XXX change first?
+				 * While we do also set the pack invalid bit
+				 * after invalidating the peripheral, the
+				 * pending I/O will have been flushed then with
+				 * no new I/O starting, so this 'edge' case
+				 * doesn't matter.
 				 */
 				xpt_print(periph->path, "Invalidating pack\n");
-				softc->flags |= DA_FLAG_PACK_INVALID;
-#ifdef CAM_IO_STATS
-				softc->invalidations++;
-#endif
-				queued_error = ENXIO;
+				cam_periph_invalidate(periph);
+			} else {
+				/*
+				 * Return all queued I/O with EIO, so that the
+				 * client can retry these I/Os in the proper
+				 * order should it attempt to recover. When the
+				 * pack is invalid, fail all I/O with ENXIO
+				 * since we can't assume when the media returns
+				 * it's the same media and we force a trip
+				 * through daclose / daopen and the client won't
+				 * retry.
+				 */
+				cam_iosched_flush(softc->cam_iosched, NULL,
+				    pack_invalid ? ENXIO : EIO);
 			}
-			cam_iosched_flush(softc->cam_iosched, NULL,
-			   queued_error);
 			if (bp != NULL) {
 				bp->bio_error = error;
 				bp->bio_resid = bp->bio_bcount;
@@ -4924,15 +5000,18 @@ dadone_proberc(struct cam_periph *periph, union ccb *done_ccb)
 			}
 
 			/*
-			 * Attach to anything that claims to be a
-			 * direct access or optical disk device,
-			 * as long as it doesn't return a "Logical
-			 * unit not supported" (0x25) error.
-			 * "Internal Target Failure" (0x44) is also
-			 * special and typically means that the
-			 * device is a SATA drive behind a SATL
-			 * translation that's fallen into a
+			 * Attach to anything that claims to be a direct access
+			 * or optical disk device, as long as it doesn't return
+			 * a "Logical unit not supported" (25/0) error.
+			 * "Internal Target Failure" (44/0) is also special and
+			 * typically means that the device is a SATA drive
+			 * behind a SATL translation that's fallen into a
 			 * terminally fatal state.
+			 *
+			 * 25/0: LOGICAL UNIT NOT SUPPORTED
+			 * 44/0: INTERNAL TARGET FAILURE
+			 * 44/1: PERSISTENT RESERVATION INFORMATION LOST
+			 * 44/71: ATA DEVICE FAILED SET FEATURES
 			 */
 			if ((have_sense)
 			 && (asc != 0x25) && (asc != 0x44)
@@ -5968,22 +6047,40 @@ daerror(union ccb *ccb, uint32_t cam_flags, uint32_t sense_flags)
 		 */
 		else if (sense_key == SSD_KEY_UNIT_ATTENTION &&
 		    asc == 0x2A && ascq == 0x09) {
+			/* 2a/9: CAPACITY DATA HAS CHANGED */
 			xpt_print(periph->path, "Capacity data has changed\n");
 			softc->flags &= ~DA_FLAG_PROBED;
 			dareprobe(periph);
 			sense_flags |= SF_NO_PRINT;
 		} else if (sense_key == SSD_KEY_UNIT_ATTENTION &&
 		    asc == 0x28 && ascq == 0x00) {
+			/* 28/0: NOT READY TO READY CHANGE, MEDIUM MAY HAVE CHANGED */
 			softc->flags &= ~DA_FLAG_PROBED;
 			disk_media_changed(softc->disk, M_NOWAIT);
+			/*
+			 * In an ideal world, we'd make sure that we have the
+			 * same medium mounted (if we'd seen one already) but
+			 * instead we don't invalidate the pack here and flag
+			 * below to retry the UAs. If we exhaust retries, then
+			 * we'll invalidate it in dadone for ENXIO errors (which
+			 * 28/0 will fail with eventually). Usually, retrying
+			 * just works and/or we get this before we've opened the
+			 * device (which clears the invalid flag).
+			 */
 		} else if (sense_key == SSD_KEY_UNIT_ATTENTION &&
 		    asc == 0x3F && ascq == 0x03) {
+			/* 3f/3: INQUIRY DATA HAS CHANGED */
 			xpt_print(periph->path, "INQUIRY data has changed\n");
 			softc->flags &= ~DA_FLAG_PROBED;
 			dareprobe(periph);
 			sense_flags |= SF_NO_PRINT;
 		} else if (sense_key == SSD_KEY_NOT_READY &&
 		    asc == 0x3a && (softc->flags & DA_FLAG_PACK_INVALID) == 0) {
+			/* 3a/0: MEDIUM NOT PRESENT */
+			/* 3a/1: MEDIUM NOT PRESENT - TRAY CLOSED */
+			/* 3a/2: MEDIUM NOT PRESENT - TRAY OPEN */
+			/* 3a/3: MEDIUM NOT PRESENT - LOADABLE */
+			/* 3a/4: MEDIUM NOT PRESENT - MEDIUM AUXILIARY MEMORY ACCESSIBLE */
 			softc->flags |= DA_FLAG_PACK_INVALID;
 			disk_media_gone(softc->disk, M_NOWAIT);
 		}

@@ -401,7 +401,7 @@ wtap_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 
 	/* TODO this is a hack to force it to choose the rate we want */
 	ni = ieee80211_ref_node(vap->iv_bss);
-	ni->ni_txrate = 130;
+	ieee80211_node_set_txrate_ht_mcsrate(ni, 2);
 	ieee80211_free_node(ni);
 	return vap;
 }
@@ -493,7 +493,6 @@ wtap_inject(struct wtap_softc *sc, struct mbuf *m)
 static void
 wtap_rx_proc(void *arg, int npending)
 {
-	struct epoch_tracker et;
 	struct wtap_softc *sc = (struct wtap_softc *)arg;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct mbuf *m;
@@ -540,7 +539,6 @@ wtap_rx_proc(void *arg, int npending)
 		ni = ieee80211_find_rxnode_withkey(ic,
 		    mtod(m, const struct ieee80211_frame_min *),
 		    IEEE80211_KEYIX_NONE);
-		NET_EPOCH_ENTER(et);
 		if (ni != NULL) {
 			/*
 			 * Sending station is known, dispatch directly.
@@ -550,8 +548,7 @@ wtap_rx_proc(void *arg, int npending)
 		} else {
 			ieee80211_input_all(ic, m, 1<<7, 10);
 		}
-		NET_EPOCH_EXIT(et);
-
+		
 		/* The mbufs are freed by the Net80211 stack */
 		free(bf, M_WTAP_RXBUF);
 	}
@@ -598,7 +595,7 @@ wtap_transmit(struct ieee80211com *ic, struct mbuf *m)
 	struct wtap_vap *avp = WTAP_VAP(vap);
 
 	if(ni == NULL){
-		printf("m->m_pkthdr.rcvif is NULL we cant radiotap_tx\n");
+		printf("m->m_pkthdr.rcvif is NULL we can't radiotap_tx\n");
 	}else{
 		if (ieee80211_radiotap_active_vap(vap))
 			ieee80211_radiotap_tx(vap, m);
@@ -620,8 +617,7 @@ wtap_node_alloc(struct ieee80211vap *vap, const uint8_t mac[IEEE80211_ADDR_LEN])
 	    M_NOWAIT|M_ZERO);
 	if (ni == NULL)
 		return (NULL);
-
-	ni->ni_txrate = 130;
+	ieee80211_node_set_txrate_ht_mcsrate(ni, 2);
 	return ni;
 }
 

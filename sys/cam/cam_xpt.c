@@ -31,7 +31,6 @@
 
 #include "opt_printf.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bio.h>
 #include <sys/bus.h>
@@ -70,8 +69,6 @@
 #include <cam/scsi/scsi_pass.h>
 
 #include <machine/stdarg.h>	/* for xpt_print below */
-
-#include "opt_cam.h"
 
 /* Wild guess based on not wanting to grow the stack too much */
 #define XPT_PRINT_MAXLEN	512
@@ -566,11 +563,9 @@ xptdoioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag, struct thread *
 			/*
 			 * Map the buffers back into user space.
 			 */
-			cam_periph_unmapmem(inccb, &mapinfo);
+			error = cam_periph_unmapmem(inccb, &mapinfo);
 
 			inccb->ccb_h.path = old_path;
-
-			error = 0;
 			break;
 		}
 		default:
@@ -728,10 +723,9 @@ xptdoioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag, struct thread *
 			 * kernel.
 			 */
 			if (base_periph_found) {
-				printf("xptioctl: pass driver is not in the "
-				       "kernel\n");
-				printf("xptioctl: put \"device pass\" in "
-				       "your kernel config file\n");
+				printf(
+		"xptioctl: pass driver is not in the kernel\n"
+		"xptioctl: put \"device pass\" in your kernel config file\n");
 			}
 		}
 		xpt_unlock_buses();
@@ -913,6 +907,8 @@ xpt_init(void *dummy)
 	 * perform other XPT functions.
 	 */
 	devq = cam_simq_alloc(16);
+	if (devq == NULL)
+		return (ENOMEM);
 	xpt_sim = cam_sim_alloc(xptaction,
 				xptpoll,
 				"xpt",
@@ -926,8 +922,9 @@ xpt_init(void *dummy)
 		return (ENOMEM);
 
 	if ((error = xpt_bus_register(xpt_sim, NULL, 0)) != CAM_SUCCESS) {
-		printf("xpt_init: xpt_bus_register failed with errno %d,"
-		       " failing attach\n", error);
+		printf(
+		    "xpt_init: xpt_bus_register failed with errno %d, failing attach\n",
+		    error);
 		return (EINVAL);
 	}
 
@@ -939,8 +936,9 @@ xpt_init(void *dummy)
 	if ((status = xpt_create_path(&path, NULL, CAM_XPT_PATH_ID,
 				      CAM_TARGET_WILDCARD,
 				      CAM_LUN_WILDCARD)) != CAM_REQ_CMP) {
-		printf("xpt_init: xpt_create_path failed with status %#x,"
-		       " failing attach\n", status);
+		printf(
+	"xpt_init: xpt_create_path failed with status %#x, failing attach\n",
+		    status);
 		return (EINVAL);
 	}
 	xpt_path_lock(path);
@@ -965,8 +963,7 @@ xpt_init(void *dummy)
 		}
 	}
 	if (cam_num_doneqs < 1) {
-		printf("xpt_init: Cannot init completion queues "
-		       "- failing attach\n");
+		printf("xpt_init: Cannot init completion queues - failing attach\n");
 		return (ENOMEM);
 	}
 
@@ -974,8 +971,7 @@ xpt_init(void *dummy)
 	STAILQ_INIT(&cam_async.cam_doneq);
 	if (kproc_kthread_add(xpt_async_td, &cam_async,
 		&cam_proc, NULL, 0, 0, "cam", "async") != 0) {
-		printf("xpt_init: Cannot init async thread "
-		       "- failing attach\n");
+		printf("xpt_init: Cannot init async thread - failing attach\n");
 		return (ENOMEM);
 	}
 
@@ -1153,7 +1149,7 @@ xpt_denounce_periph_sbuf(struct cam_periph *periph, struct sbuf *sb)
 		    path->device->protocol);
 	if (path->device->serial_num_len > 0)
 		sbuf_printf(sb, " s/n %.60s", path->device->serial_num);
-	sbuf_printf(sb, " detached\n");
+	sbuf_cat(sb, " detached\n");
 }
 
 int
@@ -3712,18 +3708,18 @@ xpt_print_path(struct cam_path *path)
 	sbuf_delete(&sb);
 }
 
-void
-xpt_print_device(struct cam_ed *device)
+static void
+xpt_device_sbuf(struct cam_ed *device, struct sbuf *sb)
 {
-
 	if (device == NULL)
-		printf("(nopath): ");
+		sbuf_cat(sb, "(nopath): ");
 	else {
-		printf("(noperiph:%s%d:%d:%d:%jx): ", device->sim->sim_name,
-		       device->sim->unit_number,
-		       device->sim->bus_id,
-		       device->target->target_id,
-		       (uintmax_t)device->lun_id);
+		sbuf_printf(sb, "(noperiph:%s%d:%d:%d:%jx): ",
+		    device->sim->sim_name,
+		    device->sim->unit_number,
+		    device->sim->bus_id,
+		    device->target->target_id,
+		    (uintmax_t)device->lun_id);
 	}
 }
 
@@ -3746,51 +3742,48 @@ xpt_print(struct cam_path *path, const char *fmt, ...)
 	sbuf_delete(&sb);
 }
 
-int
+char *
 xpt_path_string(struct cam_path *path, char *str, size_t str_len)
 {
 	struct sbuf sb;
-	int len;
 
 	sbuf_new(&sb, str, str_len, 0);
-	len = xpt_path_sbuf(path, &sb);
+	xpt_path_sbuf(path, &sb);
 	sbuf_finish(&sb);
-	return (len);
+	return (str);
 }
 
-int
+void
 xpt_path_sbuf(struct cam_path *path, struct sbuf *sb)
 {
 
 	if (path == NULL)
-		sbuf_printf(sb, "(nopath): ");
+		sbuf_cat(sb, "(nopath): ");
 	else {
 		if (path->periph != NULL)
 			sbuf_printf(sb, "(%s%d:", path->periph->periph_name,
 				    path->periph->unit_number);
 		else
-			sbuf_printf(sb, "(noperiph:");
+			sbuf_cat(sb, "(noperiph:");
 
 		if (path->bus != NULL)
 			sbuf_printf(sb, "%s%d:%d:", path->bus->sim->sim_name,
 				    path->bus->sim->unit_number,
 				    path->bus->sim->bus_id);
 		else
-			sbuf_printf(sb, "nobus:");
+			sbuf_cat(sb, "nobus:");
 
 		if (path->target != NULL)
 			sbuf_printf(sb, "%d:", path->target->target_id);
 		else
-			sbuf_printf(sb, "X:");
+			sbuf_cat(sb, "X:");
 
 		if (path->device != NULL)
 			sbuf_printf(sb, "%jx): ",
 			    (uintmax_t)path->device->lun_id);
 		else
-			sbuf_printf(sb, "X): ");
+			sbuf_cat(sb, "X): ");
 	}
-
-	return(sbuf_len(sb));
 }
 
 path_id_t
@@ -4066,12 +4059,11 @@ xptpathid(const char *sim_name, int sim_unit, int sim_bus)
 			pathid = dunit;
 			break;
 		} else {
-			printf("Ambiguous scbus configuration for %s%d "
-			       "bus %d, cannot wire down.  The kernel "
-			       "config entry for scbus%d should "
-			       "specify a controller bus.\n"
-			       "Scbus will be assigned dynamically.\n",
-			       sim_name, sim_unit, sim_bus, dunit);
+			printf(
+"Ambiguous scbus configuration for %s%d bus %d, cannot wire down.  The kernel\n"
+"config entry for scbus%d should specify a controller bus.\n"
+"Scbus will be assigned dynamically.\n",
+			    sim_name, sim_unit, sim_bus, dunit);
 			break;
 		}
 	}
@@ -5042,9 +5034,9 @@ xpt_config(void *arg)
 		if (xpt_create_path(&cam_dpath, NULL,
 				    CAM_DEBUG_BUS, CAM_DEBUG_TARGET,
 				    CAM_DEBUG_LUN) != CAM_REQ_CMP) {
-			printf("xpt_config: xpt_create_path() failed for debug"
-			       " target %d:%d:%d, debugging disabled\n",
-			       CAM_DEBUG_BUS, CAM_DEBUG_TARGET, CAM_DEBUG_LUN);
+			printf(
+"xpt_config: xpt_create_path() failed for debug target %d:%d:%d, debugging disabled\n",
+			    CAM_DEBUG_BUS, CAM_DEBUG_TARGET, CAM_DEBUG_LUN);
 			cam_dflags = CAM_DEBUG_NONE;
 		}
 	} else
@@ -5542,4 +5534,61 @@ xpt_action_name(uint32_t action)
 
 	snprintf(buffer, sizeof(buffer), "%#x", action);
 	return (buffer);
+}
+
+void
+xpt_cam_path_debug(struct cam_path *path, const char *fmt, ...)
+{
+	struct sbuf sbuf;
+	char buf[XPT_PRINT_LEN]; /* balance to not eat too much stack */
+	struct sbuf *sb = sbuf_new(&sbuf, buf, sizeof(buf), SBUF_FIXEDLEN);
+	va_list ap;
+
+	sbuf_set_drain(sb, sbuf_printf_drain, NULL);
+	xpt_path_sbuf(path, sb);
+	va_start(ap, fmt);
+	sbuf_vprintf(sb, fmt, ap);
+	va_end(ap);
+	sbuf_finish(sb);
+	sbuf_delete(sb);
+	if (cam_debug_delay != 0)
+		DELAY(cam_debug_delay);
+}
+
+void
+xpt_cam_dev_debug(struct cam_ed *dev, const char *fmt, ...)
+{
+	struct sbuf sbuf;
+	char buf[XPT_PRINT_LEN]; /* balance to not eat too much stack */
+	struct sbuf *sb = sbuf_new(&sbuf, buf, sizeof(buf), SBUF_FIXEDLEN);
+	va_list ap;
+
+	sbuf_set_drain(sb, sbuf_printf_drain, NULL);
+	xpt_device_sbuf(dev, sb);
+	va_start(ap, fmt);
+	sbuf_vprintf(sb, fmt, ap);
+	va_end(ap);
+	sbuf_finish(sb);
+	sbuf_delete(sb);
+	if (cam_debug_delay != 0)
+		DELAY(cam_debug_delay);
+}
+
+void
+xpt_cam_debug(const char *fmt, ...)
+{
+	struct sbuf sbuf;
+	char buf[XPT_PRINT_LEN]; /* balance to not eat too much stack */
+	struct sbuf *sb = sbuf_new(&sbuf, buf, sizeof(buf), SBUF_FIXEDLEN);
+	va_list ap;
+
+	sbuf_set_drain(sb, sbuf_printf_drain, NULL);
+	sbuf_cat(sb, "cam_debug: ");
+	va_start(ap, fmt);
+	sbuf_vprintf(sb, fmt, ap);
+	va_end(ap);
+	sbuf_finish(sb);
+	sbuf_delete(sb);
+	if (cam_debug_delay != 0)
+		DELAY(cam_debug_delay);
 }

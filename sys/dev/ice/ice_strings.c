@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/*  Copyright (c) 2023, Intel Corporation
+/*  Copyright (c) 2024, Intel Corporation
  *  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
@@ -179,13 +179,13 @@ _ice_aq_str(enum ice_aq_err aq_err)
  * Otherwise, use the scratch space to format the status code into a number.
  */
 struct ice_str_buf
-_ice_status_str(enum ice_status status)
+_ice_status_str(int status)
 {
 	struct ice_str_buf buf = { .str = "" };
 	const char *str = NULL;
 
 	switch (status) {
-	case ICE_SUCCESS:
+	case 0:
 		str = "OK";
 		break;
 	case ICE_ERR_PARAM:
@@ -1018,6 +1018,8 @@ ice_state_to_str(enum ice_state state)
 		return "RESET_PFR_REQ";
 	case ICE_STATE_PREPARED_FOR_RESET:
 		return "PREPARED_FOR_RESET";
+	case ICE_STATE_SUBIF_NEEDS_REINIT:
+		return "SUBIF_NEEDS_REINIT";
 	case ICE_STATE_RESET_FAILED:
 		return "RESET_FAILED";
 	case ICE_STATE_DRIVER_INITIALIZED:
@@ -1046,6 +1048,12 @@ ice_state_to_str(enum ice_state state)
 		return "LINK_ACTIVE_ON_DOWN";
 	case ICE_STATE_FIRST_INIT_LINK:
 		return "FIRST_INIT_LINK";
+	case ICE_STATE_DO_CREATE_MIRR_INTFC:
+		return "DO_CREATE_MIRR_INTFC";
+	case ICE_STATE_DO_DESTROY_MIRR_INTFC:
+		return "DO_DESTROY_MIRR_INTFC";
+	case ICE_STATE_PHY_FW_INIT_PENDING:
+		return "PHY_FW_INIT_PENDING";
 	case ICE_STATE_LAST:
 		return NULL;
 	}

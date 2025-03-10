@@ -26,7 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -316,7 +315,7 @@ puc_bfe_attach(device_t dev)
 			goto fail;
 		port->p_rclk = res;
 
-		port->p_dev = device_add_child(dev, NULL, -1);
+		port->p_dev = device_add_child(dev, NULL, DEVICE_UNIT_ANY);
 		if (port->p_dev != NULL)
 			device_set_ivars(port->p_dev, (void *)port);
 	}
@@ -374,10 +373,9 @@ puc_bfe_attach(device_t dev)
 	return (0);
 
 fail:
+	device_delete_children(dev);
 	for (idx = 0; idx < sc->sc_nports; idx++) {
 		port = &sc->sc_port[idx];
-		if (port->p_dev != NULL)
-			device_delete_child(dev, port->p_dev);
 		if (port->p_rres != NULL)
 			rman_release_resource(port->p_rres);
 		if (port->p_ires != NULL)
@@ -410,21 +408,19 @@ puc_bfe_detach(device_t dev)
 	sc = device_get_softc(dev);
 
 	/* Detach our children. */
-	error = 0;
+	error = bus_generic_detach(dev);
+	if (error != 0)
+		return (error);
+
 	for (idx = 0; idx < sc->sc_nports; idx++) {
 		port = &sc->sc_port[idx];
 		if (port->p_dev == NULL)
 			continue;
-		if (device_delete_child(dev, port->p_dev) == 0) {
-			if (port->p_rres != NULL)
-				rman_release_resource(port->p_rres);
-			if (port->p_ires != NULL)
-				rman_release_resource(port->p_ires);
-		} else
-			error = ENXIO;
+		if (port->p_rres != NULL)
+			rman_release_resource(port->p_rres);
+		if (port->p_ires != NULL)
+			rman_release_resource(port->p_ires);
 	}
-	if (error)
-		return (error);
 
 	if (sc->sc_serdevs != 0UL)
 		bus_teardown_intr(dev, sc->sc_ires, sc->sc_icookie);
@@ -527,8 +523,7 @@ puc_bus_alloc_resource(device_t dev, device_t child, int type, int *rid,
 }
 
 int
-puc_bus_release_resource(device_t dev, device_t child, int type, int rid,
-    struct resource *res)
+puc_bus_release_resource(device_t dev, device_t child, struct resource *res)
 {
 	struct puc_port *port;
 	device_t originator;
@@ -543,18 +538,13 @@ puc_bus_release_resource(device_t dev, device_t child, int type, int rid,
 	port = device_get_ivars(child);
 	KASSERT(port != NULL, ("%s %d", __func__, __LINE__));
 
-	if (rid != 0 || res == NULL)
+	if (res == NULL)
 		return (EINVAL);
 
-	if (type == port->p_bar->b_type) {
-		if (res != port->p_rres)
-			return (EINVAL);
-	} else if (type == SYS_RES_IRQ) {
-		if (res != port->p_ires)
-			return (EINVAL);
+	if (res == port->p_ires) {
 		if (port->p_hasintr)
 			return (EBUSY);
-	} else
+	} else if (res != port->p_rres)
 		return (EINVAL);
 
 	if (rman_get_device(res) != originator)

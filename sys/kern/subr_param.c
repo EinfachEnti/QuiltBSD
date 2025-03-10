@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)param.c	8.3 (Berkeley) 8/20/94
  */
 
 #include <sys/cdefs.h>
@@ -43,6 +41,7 @@
 #include "opt_maxusers.h"
 
 #include <sys/param.h>
+#include <sys/_maxphys.h>
 #include <sys/systm.h>
 #include <sys/buf.h>
 #include <sys/kernel.h>
@@ -158,9 +157,10 @@ static const char *const vm_guest_sysctl_names[] = {
 	[VM_GUEST_BHYVE] = "bhyve",
 	[VM_GUEST_VBOX] = "vbox",
 	[VM_GUEST_PARALLELS] = "parallels",
-	[VM_LAST] = NULL
+	[VM_GUEST_NVMM] = "nvmm",
 };
-CTASSERT(nitems(vm_guest_sysctl_names) - 1 == VM_LAST);
+_Static_assert(nitems(vm_guest_sysctl_names) == VM_GUEST_LAST,
+    "new vm guest type not added to vm_guest_sysctl_names");
 
 /*
  * Boot time overrides that are not scaled against main memory
@@ -197,7 +197,7 @@ init_param1(void)
 	 * Arrange for ticks to wrap 10 minutes after boot to help catch
 	 * sign problems sooner.
 	 */
-	ticks = INT_MAX - (hz * 10 * 60);
+	ticksl = INT_MAX - (hz * 10 * 60);
 
 	vn_lock_pair_pause_max = hz / 100;
 	if (vn_lock_pair_pause_max == 0)
@@ -228,14 +228,32 @@ init_param1(void)
 	TUNABLE_ULONG_FETCH("kern.sgrowsiz", &sgrowsiz);
 
 	/*
-	 * Let the administrator set {NGROUPS_MAX}, but disallow values
-	 * less than NGROUPS_MAX which would violate POSIX.1-2008 or
-	 * greater than INT_MAX-1 which would result in overflow.
+	 * Let the administrator set {NGROUPS_MAX}.
+	 *
+	 * Values less than NGROUPS_MAX would violate POSIX/SuS (see the
+	 * specification for <limits.h>, paragraph "Runtime Increasable
+	 * Values").
+	 *
+	 * On the other hand, INT_MAX would result in an overflow for the common
+	 * 'ngroups_max + 1' computation (to obtain the size of the internal
+	 * groups array, its first element being reserved for the effective
+	 * GID).  Also, the number of allocated bytes for the group array must
+	 * not overflow on 32-bit machines.  For all these reasons, we limit the
+	 * number of supplementary groups to some very high number that we
+	 * expect will never be reached in all practical uses and ensures we
+	 * avoid the problems just exposed, even if 'gid_t' was to be enlarged
+	 * by a magnitude.
 	 */
 	ngroups_max = NGROUPS_MAX;
 	TUNABLE_INT_FETCH("kern.ngroups", &ngroups_max);
 	if (ngroups_max < NGROUPS_MAX)
 		ngroups_max = NGROUPS_MAX;
+	else {
+		const int ngroups_max_max = (1 << 24) - 1;
+
+		if (ngroups_max > ngroups_max_max)
+			ngroups_max = ngroups_max_max;
+	}
 
 	/*
 	 * Only allow to lower the maximal pid.

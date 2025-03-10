@@ -33,7 +33,6 @@
  * Chapter 14, Altera Cyclone V Device Handbook (CV-5V2 2014.07.22)
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
@@ -61,7 +60,7 @@
 #include <machine/cpu.h>
 #include <machine/intr.h>
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #include <dev/mmc/host/dwmmc_reg.h>
 #include <dev/mmc/host/dwmmc_var.h>
@@ -463,10 +462,10 @@ dwmmc_handle_card_present(struct dwmmc_softc *sc, bool is_present)
 	was_present = sc->child != NULL;
 
 	if (!was_present && is_present) {
-		taskqueue_enqueue_timeout(taskqueue_swi_giant,
+		taskqueue_enqueue_timeout(taskqueue_bus,
 		  &sc->card_delayed_task, -(hz / 2));
 	} else if (was_present && !is_present) {
-		taskqueue_enqueue(taskqueue_swi_giant, &sc->card_task);
+		taskqueue_enqueue(taskqueue_bus, &sc->card_task);
 	}
 }
 
@@ -478,34 +477,30 @@ dwmmc_card_task(void *arg, int pending __unused)
 #ifdef MMCCAM
 	mmc_cam_sim_discover(&sc->mmc_sim);
 #else
-	DWMMC_LOCK(sc);
-
+	bus_topo_lock();
 	if (READ4(sc, SDMMC_CDETECT) == 0 ||
 	    (sc->mmc_helper.props & MMC_PROP_BROKEN_CD)) {
 		if (sc->child == NULL) {
 			if (bootverbose)
 				device_printf(sc->dev, "Card inserted\n");
 
-			sc->child = device_add_child(sc->dev, "mmc", -1);
-			DWMMC_UNLOCK(sc);
+			sc->child = device_add_child(sc->dev, "mmc", DEVICE_UNIT_ANY);
 			if (sc->child) {
 				device_set_ivars(sc->child, sc);
 				(void)device_probe_and_attach(sc->child);
 			}
-		} else
-			DWMMC_UNLOCK(sc);
+		}
 	} else {
 		/* Card isn't present, detach if necessary */
 		if (sc->child != NULL) {
 			if (bootverbose)
 				device_printf(sc->dev, "Card removed\n");
 
-			DWMMC_UNLOCK(sc);
 			device_delete_child(sc->dev, sc->child);
 			sc->child = NULL;
-		} else
-			DWMMC_UNLOCK(sc);
+		}
 	}
+	bus_topo_unlock();
 #endif /* MMCCAM */
 }
 
@@ -752,7 +747,7 @@ dwmmc_attach(device_t dev)
 	WRITE4(sc, SDMMC_CTRL, SDMMC_CTRL_INT_ENABLE);
 
 	TASK_INIT(&sc->card_task, 0, dwmmc_card_task, sc);
-	TIMEOUT_TASK_INIT(taskqueue_swi_giant, &sc->card_delayed_task, 0,
+	TIMEOUT_TASK_INIT(taskqueue_bus, &sc->card_delayed_task, 0,
 		dwmmc_card_task, sc);
 
 #ifdef MMCCAM
@@ -779,12 +774,12 @@ dwmmc_detach(device_t dev)
 
 	sc = device_get_softc(dev);
 
-	ret = device_delete_children(dev);
+	ret = bus_generic_detach(dev);
 	if (ret != 0)
 		return (ret);
 
-	taskqueue_drain(taskqueue_swi_giant, &sc->card_task);
-	taskqueue_drain_timeout(taskqueue_swi_giant, &sc->card_delayed_task);
+	taskqueue_drain(taskqueue_bus, &sc->card_task);
+	taskqueue_drain_timeout(taskqueue_bus, &sc->card_delayed_task);
 
 	if (sc->intr_cookie != NULL) {
 		ret = bus_teardown_intr(dev, sc->res[1], sc->intr_cookie);
@@ -879,7 +874,7 @@ dwmmc_update_ios(device_t brdev, device_t reqdev)
 	sc = device_get_softc(brdev);
 	ios = &sc->host.ios;
 
-	dprintf("Setting up clk %u bus_width %d, timming: %d\n",
+	dprintf("Setting up clk %u bus_width %d, timing: %d\n",
 		ios->clock, ios->bus_width, ios->timing);
 
 	switch (ios->power_mode) {

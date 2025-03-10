@@ -28,7 +28,6 @@
 
 /* Rockchip PCIe controller driver */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -45,10 +44,10 @@
 #include <machine/intr.h>
 #include <machine/resource.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
-#include <dev/extres/phy/phy.h>
-#include <dev/extres/regulator/regulator.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
+#include <dev/phy/phy.h>
+#include <dev/regulator/regulator.h>
 #include <dev/gpio/gpiobusvar.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -1354,8 +1353,9 @@ rk_pcie_attach(device_t dev)
 	APB_WR4(sc, PCIE_RC_CONFIG_LCS, val);
 
 	DELAY(250000);
-	device_add_child(dev, "pci", -1);
-	return (bus_generic_attach(dev));
+	device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+	bus_attach_children(dev);
+	return (0);
 
 out_full:
 	bus_teardown_intr(dev, sc->sys_irq_res, sc->sys_irq_cookie);

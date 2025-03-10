@@ -42,6 +42,7 @@
 #include "iicbus_if.h"
 
 enum ig4_vers {
+	IG4_EMAG,
 	IG4_HASWELL,
 	IG4_ATOM,
 	IG4_SKYLAKE,
@@ -92,7 +93,6 @@ struct ig4iic_softc {
 	bool		platform_attached : 1;
 	bool		use_10bit : 1;
 	bool		slave_valid : 1;
-	bool		poll: 1;
 
 	/*
 	 * Locking semantics:

@@ -30,10 +30,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char *sccsid2 = "@(#)auth_none.c 1.19 87/08/11 Copyr 1984 Sun Micro";
-static char *sccsid = "@(#)auth_none.c	2.1 88/07/29 4.0 RPCSRC";
-#endif
 #include <sys/cdefs.h>
 /*
  * auth_none.c
@@ -119,9 +115,7 @@ authnone_marshal(AUTH *client, uint32_t xid, XDR *xdrs, struct mbuf *args)
 	if (!XDR_PUTBYTES(xdrs, ap->mclient, ap->mcnt))
 		return (FALSE);
 
-	xdrmbuf_append(xdrs, args);
-
-	return (TRUE);
+	return (xdr_putmbuf(xdrs, args));
 }
 
 /* All these unused parameters are required to keep ANSI-C from grumbling */

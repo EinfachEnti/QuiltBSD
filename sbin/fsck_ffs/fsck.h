@@ -57,8 +57,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)fsck.h	8.4 (Berkeley) 5/9/95
  */
 
 #ifndef _FSCK_H_
@@ -67,6 +65,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <libufs.h>
 
 #include <sys/queue.h>
 
@@ -76,10 +75,6 @@
 #define	INOBUFSIZE	64*1024	/* size of buffer to read inodes in pass1 */
 #define	ZEROBUFSIZE	(dev_bsize * 128) /* size of zero buffer used by -Z */
 
-union dinode {
-	struct ufs1_dinode dp1;
-	struct ufs2_dinode dp2;
-};
 #define	DIP(dp, field) \
 	((sblock.fs_magic == FS_UFS1_MAGIC) ? \
 	(dp)->dp1.field : (dp)->dp2.field)
@@ -376,7 +371,6 @@ extern long secsize;		/* actual disk sector size */
 extern char skipclean;		/* skip clean file systems if preening */
 extern int snapcnt;		/* number of active snapshots */
 extern struct inode snaplist[FSMAXSNAP + 1]; /* list of active snapshots */
-extern char snapname[BUFSIZ];	/* when doing snapshots, the name of the file */
 extern int sujrecovery;		/* 1 => doing check using the journal */
 extern int surrender;		/* Give up if reads fail */
 extern char usedsoftdep;	/* just fix soft dependency inconsistencies */
@@ -421,6 +415,20 @@ Malloc(size_t size)
 	void *retval;
 
 	while ((retval = malloc(size)) == NULL)
+		if (flushentry() == 0)
+			break;
+	return (retval);
+}
+/*
+ * Allocate a block of memory to be used as an I/O buffer.
+ * Ensure that the buffer is aligned to the I/O subsystem requirements.
+ */
+static inline void*
+Balloc(size_t size)
+{
+	void *retval;
+
+	while ((retval = aligned_alloc(LIBUFS_BUFALIGN, size)) == NULL)
 		if (flushentry() == 0)
 			break;
 	return (retval);

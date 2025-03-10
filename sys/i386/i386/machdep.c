@@ -39,8 +39,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)machdep.c	7.4 (Berkeley) 6/3/91
  */
 
 #include <sys/cdefs.h>
@@ -905,7 +903,6 @@ getmemsize(int first)
 	struct vm86context vmc;
 	vm_paddr_t pa;
 	struct bios_smap *smap, *smapbase;
-	caddr_t kmdp;
 
 	has_smap = 0;
 	bzero(&vmf, sizeof(vmf));
@@ -926,10 +923,7 @@ getmemsize(int first)
 	 * use that and do not make any VM86 calls.
 	 */
 	physmap_idx = 0;
-	kmdp = preload_search_by_type("elf kernel");
-	if (kmdp == NULL)
-		kmdp = preload_search_by_type("elf32 kernel");
-	smapbase = (struct bios_smap *)preload_search_info(kmdp,
+	smapbase = (struct bios_smap *)preload_search_info(preload_kmdp,
 	    MODINFO_METADATA | MODINFOMD_SMAP);
 	if (smapbase != NULL) {
 		add_smap_entries(smapbase, physmap, &physmap_idx);
@@ -1132,10 +1126,11 @@ physmap_done:
 		if (physmap[i + 1] < end)
 			end = trunc_page(physmap[i + 1]);
 		for (pa = round_page(physmap[i]); pa < end; pa += PAGE_SIZE) {
-			int tmp, page_bad, full;
 			int *ptr;
+			int tmp;
+			bool full, page_bad;
 
-			full = FALSE;
+			full = false;
 			/*
 			 * block out kernel memory as not available.
 			 */
@@ -1150,7 +1145,7 @@ physmap_done:
 			    && pa < dcons_addr + dcons_size)
 				goto do_dump_avail;
 
-			page_bad = FALSE;
+			page_bad = false;
 			if (memtest == 0)
 				goto skip_memtest;
 
@@ -1165,25 +1160,25 @@ physmap_done:
 			 */
 			*(volatile int *)ptr = 0xaaaaaaaa;
 			if (*(volatile int *)ptr != 0xaaaaaaaa)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for alternating 0's and 1's
 			 */
 			*(volatile int *)ptr = 0x55555555;
 			if (*(volatile int *)ptr != 0x55555555)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 1's
 			 */
 			*(volatile int *)ptr = 0xffffffff;
 			if (*(volatile int *)ptr != 0xffffffff)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 0's
 			 */
 			*(volatile int *)ptr = 0x0;
 			if (*(volatile int *)ptr != 0x0)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Restore original value.
 			 */
@@ -1193,7 +1188,7 @@ skip_memtest:
 			/*
 			 * Adjust array of valid/good pages.
 			 */
-			if (page_bad == TRUE)
+			if (page_bad == true)
 				continue;
 			/*
 			 * If this good page is a continuation of the
@@ -1214,7 +1209,7 @@ skip_memtest:
 					printf(
 		"Too many holes in the physical address space, giving up\n");
 					pa_indx--;
-					full = TRUE;
+					full = true;
 					goto do_dump_avail;
 				}
 				phys_avail[pa_indx++] = pa;	/* start */
@@ -1389,7 +1384,6 @@ init386(int first)
 	int gsel_tss, metadata_missing, x, pa;
 	struct pcpu *pc;
 	struct xstate_hdr *xhdr;
-	caddr_t kmdp;
 	vm_offset_t addend;
 	size_t ucode_len;
 
@@ -1548,8 +1542,9 @@ init386(int first)
 		TUNABLE_INT_FETCH("hw.use_xsave", &use_xsave);
 	}
 
-	kmdp = preload_search_by_type("elf kernel");
-	link_elf_ireloc(kmdp);
+	/* Initialize preload_kmdp */
+	preload_initkmdp(!metadata_missing);
+	link_elf_ireloc();
 
 	vm86_initialize();
 	getmemsize(first);
@@ -1735,19 +1730,15 @@ smap_sysctl_handler(SYSCTL_HANDLER_ARGS)
 {
 	struct bios_smap *smapbase;
 	struct bios_smap_xattr smap;
-	caddr_t kmdp;
 	uint32_t *smapattr;
 	int count, error, i;
 
 	/* Retrieve the system memory map from the loader. */
-	kmdp = preload_search_by_type("elf kernel");
-	if (kmdp == NULL)
-		kmdp = preload_search_by_type("elf32 kernel");
-	smapbase = (struct bios_smap *)preload_search_info(kmdp,
+	smapbase = (struct bios_smap *)preload_search_info(preload_kmdp,
 	    MODINFO_METADATA | MODINFOMD_SMAP);
 	if (smapbase == NULL)
 		return (0);
-	smapattr = (uint32_t *)preload_search_info(kmdp,
+	smapattr = (uint32_t *)preload_search_info(preload_kmdp,
 	    MODINFO_METADATA | MODINFOMD_SMAP_XATTR);
 	count = *((u_int32_t *)smapbase - 1) / sizeof(*smapbase);
 	error = 0;

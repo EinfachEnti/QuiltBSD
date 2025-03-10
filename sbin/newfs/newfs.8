@@ -25,9 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"     @(#)newfs.8	8.6 (Berkeley) 5/3/95
-.\"
-.Dd October 21, 2022
+.Dd January 23, 2025
 .Dt NEWFS 8
 .Os
 .Sh NAME
@@ -100,6 +98,10 @@ The default format is UFS2.
 For backward compatibility.
 .It Fl U
 Enable soft updates on the new file system.
+Soft updates are enabled by default for UFS2 format file systems.
+Use
+.Xr tunefs 8
+to disable soft updates if they are not wanted.
 .It Fl a Ar maxcontig
 Specify the maximum number of contiguous blocks that will be
 laid out before forcing a rotational delay.
@@ -348,18 +350,18 @@ than the historical defaults
 This large fragment size may lead to much wasted space
 on file systems that contain many small files.
 .Sh SEE ALSO
-.Xr fdformat 8 ,
+.Xr ffs 4 ,
 .Xr geom 4 ,
 .Xr disktab 5 ,
 .Xr fs 5 ,
 .Xr camcontrol 8 ,
 .Xr dump 8 ,
 .Xr dumpfs 8 ,
+.Xr fdformat 8 ,
 .Xr fsck 8 ,
 .Xr gjournal 8 ,
 .Xr gpart 8 ,
 .Xr growfs 8 ,
-.Xr gvinum 8 ,
 .Xr makefs 8 ,
 .Xr mount 8 ,
 .Xr newfs_msdos 8 ,

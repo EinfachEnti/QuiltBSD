@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ufs_vnops.c	8.27 (Berkeley) 5/27/95
  */
 
 #include <sys/cdefs.h>
@@ -551,6 +549,7 @@ ufs_stat(struct vop_stat_args *ap)
 		sb->st_birthtim.tv_sec = -1;
 		sb->st_birthtim.tv_nsec = 0;
 		sb->st_blocks = dbtob((uint64_t)ip->i_din1->di_blocks) / S_BLKSIZE;
+		sb->st_filerev = ip->i_din1->di_modrev;
 	} else {
 		sb->st_rdev = ip->i_din2->di_rdev;
 		sb->st_size = ip->i_din2->di_size;
@@ -561,6 +560,7 @@ ufs_stat(struct vop_stat_args *ap)
 		sb->st_birthtim.tv_sec = ip->i_din2->di_birthtime;
 		sb->st_birthtim.tv_nsec = ip->i_din2->di_birthnsec;
 		sb->st_blocks = dbtob((uint64_t)ip->i_din2->di_blocks) / S_BLKSIZE;
+		sb->st_filerev = ip->i_din2->di_modrev;
 	}
 
 	sb->st_blksize = max(PAGE_SIZE, vp->v_mount->mnt_stat.f_iosize);
@@ -1133,7 +1133,7 @@ ufs_link(
 
 	ip->i_effnlink++;
 	ip->i_nlink++;
-	DIP_SET(ip, i_nlink, ip->i_nlink);
+	DIP_SET_NLINK(ip, ip->i_nlink);
 	UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 	if (DOINGSOFTDEP(vp))
 		softdep_setup_link(VTOI(tdvp), ip);
@@ -1146,7 +1146,7 @@ ufs_link(
 	if (error) {
 		ip->i_effnlink--;
 		ip->i_nlink--;
-		DIP_SET(ip, i_nlink, ip->i_nlink);
+		DIP_SET_NLINK(ip, ip->i_nlink);
 		UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 		if (DOINGSOFTDEP(vp))
 			softdep_revert_link(VTOI(tdvp), ip);
@@ -1528,7 +1528,7 @@ relock:
 	 */
 	fip->i_effnlink++;
 	fip->i_nlink++;
-	DIP_SET(fip, i_nlink, fip->i_nlink);
+	DIP_SET_NLINK(fip, fip->i_nlink);
 	UFS_INODE_SET_FLAG(fip, IN_CHANGE);
 	if (DOINGSOFTDEP(fvp))
 		softdep_setup_link(tdp, fip);
@@ -1557,7 +1557,7 @@ relock:
 			if (tdp->i_nlink >= UFS_LINK_MAX) {
 				fip->i_effnlink--;
 				fip->i_nlink--;
-				DIP_SET(fip, i_nlink, fip->i_nlink);
+				DIP_SET_NLINK(fip, fip->i_nlink);
 				UFS_INODE_SET_FLAG(fip, IN_CHANGE);
 				if (DOINGSOFTDEP(fvp))
 					softdep_revert_link(tdp, fip);
@@ -1627,7 +1627,8 @@ relock:
 		 */
 		if ((tip->i_mode & IFMT) == IFDIR) {
 			if ((tip->i_effnlink > 2) ||
-			    !ufs_dirempty(tip, tdp->i_number, tcnp->cn_cred)) {
+			    !ufs_dirempty(tip, tdp->i_number, tcnp->cn_cred,
+			    (tcnp->cn_flags & IGNOREWHITEOUT) != 0)) {
 				error = ENOTEMPTY;
 				goto bad;
 			}
@@ -1680,11 +1681,11 @@ relock:
 			 */
 			if (!newparent) {
 				tdp->i_nlink--;
-				DIP_SET(tdp, i_nlink, tdp->i_nlink);
+				DIP_SET_NLINK(tdp, tdp->i_nlink);
 				UFS_INODE_SET_FLAG(tdp, IN_CHANGE);
 			}
 			tip->i_nlink--;
-			DIP_SET(tip, i_nlink, tip->i_nlink);
+			DIP_SET_NLINK(tip, tip->i_nlink);
 			UFS_INODE_SET_FLAG(tip, IN_CHANGE);
 		}
 	}
@@ -1719,7 +1720,7 @@ relock:
 		if (tip == NULL) {
 			tdp->i_effnlink++;
 			tdp->i_nlink++;
-			DIP_SET(tdp, i_nlink, tdp->i_nlink);
+			DIP_SET_NLINK(tdp, tdp->i_nlink);
 			UFS_INODE_SET_FLAG(tdp, IN_CHANGE);
 			if (DOINGSOFTDEP(tdvp))
 				softdep_setup_dotdot_link(tdp, fip);
@@ -1782,7 +1783,7 @@ unlockout:
 bad:
 	fip->i_effnlink--;
 	fip->i_nlink--;
-	DIP_SET(fip, i_nlink, fip->i_nlink);
+	DIP_SET_NLINK(fip, fip->i_nlink);
 	UFS_INODE_SET_FLAG(fip, IN_CHANGE);
 	if (DOINGSOFTDEP(fvp))
 		softdep_revert_link(tdp, fip);
@@ -2122,7 +2123,7 @@ ufs_mkdir(
 	tvp->v_type = VDIR;	/* Rest init'd in getnewvnode(). */
 	ip->i_effnlink = 2;
 	ip->i_nlink = 2;
-	DIP_SET(ip, i_nlink, 2);
+	DIP_SET_NLINK(ip, 2);
 	DIP_SET(ip, i_dirdepth, DIP(dp,i_dirdepth) + 1);
 
 	if (cnp->cn_flags & ISWHITEOUT) {
@@ -2137,7 +2138,7 @@ ufs_mkdir(
 	 */
 	dp->i_effnlink++;
 	dp->i_nlink++;
-	DIP_SET(dp, i_nlink, dp->i_nlink);
+	DIP_SET_NLINK(dp, dp->i_nlink);
 	UFS_INODE_SET_FLAG(dp, IN_CHANGE);
 	if (DOINGSOFTDEP(dvp))
 		softdep_setup_mkdir(dp, ip);
@@ -2228,7 +2229,7 @@ bad:
 	} else {
 		dp->i_effnlink--;
 		dp->i_nlink--;
-		DIP_SET(dp, i_nlink, dp->i_nlink);
+		DIP_SET_NLINK(dp, dp->i_nlink);
 		UFS_INODE_SET_FLAG(dp, IN_CHANGE);
 		/*
 		 * No need to do an explicit VOP_TRUNCATE here, vrele will
@@ -2236,7 +2237,7 @@ bad:
 		 */
 		ip->i_effnlink = 0;
 		ip->i_nlink = 0;
-		DIP_SET(ip, i_nlink, 0);
+		DIP_SET_NLINK(ip, 0);
 		UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 		if (DOINGSOFTDEP(tvp))
 			softdep_revert_mkdir(dp, ip);
@@ -2283,7 +2284,8 @@ ufs_rmdir(
 		error = EINVAL;
 		goto out;
 	}
-	if (!ufs_dirempty(ip, dp->i_number, cnp->cn_cred)) {
+	if (!ufs_dirempty(ip, dp->i_number, cnp->cn_cred,
+	    (cnp->cn_flags & IGNOREWHITEOUT) != 0)) {
 		error = ENOTEMPTY;
 		goto out;
 	}
@@ -2333,11 +2335,11 @@ ufs_rmdir(
 	 */
 	if (!DOINGSOFTDEP(vp)) {
 		dp->i_nlink--;
-		DIP_SET(dp, i_nlink, dp->i_nlink);
+		DIP_SET_NLINK(dp, dp->i_nlink);
 		UFS_INODE_SET_FLAG(dp, IN_CHANGE);
 		error = UFS_UPDATE(dvp, 0);
 		ip->i_nlink--;
-		DIP_SET(ip, i_nlink, ip->i_nlink);
+		DIP_SET_NLINK(ip, ip->i_nlink);
 		UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 	}
 	cache_vop_rmdir(dvp, vp);
@@ -2419,8 +2421,10 @@ ufs_readdir(
 	if (uio->uio_offset < 0)
 		return (EINVAL);
 	ip = VTOI(vp);
-	if (ip->i_effnlink == 0)
+	if (ip->i_effnlink == 0) {
+		*ap->a_eofflag = 1;
 		return (0);
+	}
 	if (ap->a_ncookies != NULL) {
 		if (uio->uio_resid < 0)
 			ncookies = 0;
@@ -2874,7 +2878,7 @@ ufs_makeinode(int mode, struct vnode *dvp, struct vnode **vpp,
 	tvp->v_type = IFTOVT(mode);	/* Rest init'd in getnewvnode(). */
 	ip->i_effnlink = 1;
 	ip->i_nlink = 1;
-	DIP_SET(ip, i_nlink, 1);
+	DIP_SET_NLINK(ip, 1);
 	if (DOINGSOFTDEP(tvp))
 		softdep_setup_create(VTOI(dvp), ip);
 	if ((ip->i_mode & ISGID) && !groupmember(ip->i_gid, cnp->cn_cred) &&
@@ -2930,7 +2934,7 @@ bad:
 	 */
 	ip->i_effnlink = 0;
 	ip->i_nlink = 0;
-	DIP_SET(ip, i_nlink, 0);
+	DIP_SET_NLINK(ip, 0);
 	UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 	if (DOINGSOFTDEP(tvp))
 		softdep_revert_create(VTOI(dvp), ip);

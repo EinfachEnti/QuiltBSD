@@ -32,18 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-static char const copyright[] =
-"@(#) Copyright (c) 1991, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-#if 0
-static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/28/95";
-#endif
-#endif /* not lint */
-#include <sys/cdefs.h>
 #include <stdio.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -107,6 +95,7 @@ main(int argc, char *argv[])
 	static struct stackmark smark, smark2;
 	volatile int state;
 	char *shinit;
+	int login;
 
 	(void) setlocale(LC_ALL, "");
 	initcharset();
@@ -140,13 +129,13 @@ main(int argc, char *argv[])
 	initvar();
 	setstackmark(&smark);
 	setstackmark(&smark2);
-	procargs(argc, argv);
+	login = procargs(argc, argv);
 	trap_init();
 	pwd_init(iflag);
 	INTON;
 	if (iflag)
 		chkmail(1);
-	if (argv[0] && argv[0][0] == '-') {
+	if (login) {
 		state = 1;
 		read_profile("/etc/profile");
 state1:

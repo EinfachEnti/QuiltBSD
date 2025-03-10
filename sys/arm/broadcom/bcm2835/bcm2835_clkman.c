@@ -26,7 +26,6 @@
  *
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -113,7 +112,8 @@ bcm2835_clkman_attach(device_t dev)
 	sc->sc_m_bst = rman_get_bustag(sc->sc_m_res);
 	sc->sc_m_bsh = rman_get_bushandle(sc->sc_m_res);
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 uint32_t

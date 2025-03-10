@@ -25,7 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -221,11 +220,6 @@ ue_attach_post_task(struct usb_proc_msg *_task)
 	error = 0;
 	CURVNET_SET_QUIET(vnet0);
 	ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(ue->ue_dev, "could not allocate ifnet\n");
-		goto fail;
-	}
-
 	if_setsoftc(ifp, ue);
 	if_initname(ifp, "ue", ue->ue_unit);
 	if (ue->ue_methods->ue_attach_post_sub != NULL) {
@@ -321,11 +315,9 @@ uether_ifdetach(struct usb_ether *ue)
 		ether_ifdetach(ifp);
 
 		/* detach miibus */
-		if (ue->ue_miibus != NULL) {
-			bus_topo_lock();
-			device_delete_child(ue->ue_dev, ue->ue_miibus);
-			bus_topo_unlock();
-		}
+		bus_topo_lock();
+		bus_generic_detach(ue->ue_dev);
+		bus_topo_unlock();
 
 		/* free interface instance */
 		if_free(ifp);

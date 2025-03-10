@@ -25,7 +25,7 @@
  */
 
 #include "opt_platform.h"
-#include <sys/cdefs.h>
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -72,7 +72,8 @@ qman_portals_attach(device_t dev)
 	/* Set portal properties for XX_VirtToPhys() */
 	XX_PortalSetInfo(dev);
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 int

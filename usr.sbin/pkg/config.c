@@ -1,9 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2014 Baptiste Daroussin <bapt@FreeBSD.org>
+ * Copyright (c) 2014-2025 Baptiste Daroussin <bapt@FreeBSD.org>
  * Copyright (c) 2013 Bryan Drewery <bdrewery@FreeBSD.org>
- * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/utsname.h>
@@ -59,6 +57,8 @@ struct config_entry {
 	bool envset;
 	bool main_only;				/* Only set in pkg.conf. */
 };
+
+static struct repositories repositories = STAILQ_HEAD_INITIALIZER(repositories);
 
 static struct config_entry c[] = {
 	[PACKAGESITE] = {
@@ -144,32 +144,35 @@ static struct config_entry c[] = {
 	}
 };
 
-static int
-pkg_get_myabi(char *dest, size_t sz)
+static char *
+pkg_get_myabi(void)
 {
 	struct utsname uts;
 	char machine_arch[255];
+	char *abi;
 	size_t len;
 	int error;
 
 	error = uname(&uts);
 	if (error)
-		return (errno);
+		return (NULL);
 
 	len = sizeof(machine_arch);
 	error = sysctlbyname("hw.machine_arch", machine_arch, &len, NULL, 0);
 	if (error)
-		return (errno);
+		return (NULL);
 	machine_arch[len] = '\0';
 
 	/*
 	 * Use __FreeBSD_version rather than kernel version (uts.release) for
 	 * use in jails. This is equivalent to the value of uname -U.
 	 */
-	snprintf(dest, sz, "%s:%d:%s", uts.sysname, __FreeBSD_version/100000,
+	error = asprintf(&abi, "%s:%d:%s", uts.sysname, __FreeBSD_version/100000,
 	    machine_arch);
+	if (error < 0)
+		return (NULL);
 
-	return (error);
+	return (abi);
 }
 
 static void
@@ -209,7 +212,7 @@ boolstr_to_bool(const char *str)
 }
 
 static void
-config_parse(const ucl_object_t *obj, pkg_conf_file_t conftype)
+config_parse(const ucl_object_t *obj)
 {
 	FILE *buffp;
 	char *buf = NULL;
@@ -236,29 +239,9 @@ config_parse(const ucl_object_t *obj, pkg_conf_file_t conftype)
 			memset(buf, 0, bufsz);
 		rewind(buffp);
 
-		if (conftype == CONFFILE_PKG) {
 			for (j = 0; j < strlen(key); ++j)
 				fputc(toupper(key[j]), buffp);
 			fflush(buffp);
-		} else if (conftype == CONFFILE_REPO) {
-			if (strcasecmp(key, "url") == 0)
-				fputs("PACKAGESITE", buffp);
-			else if (strcasecmp(key, "mirror_type") == 0)
-				fputs("MIRROR_TYPE", buffp);
-			else if (strcasecmp(key, "signature_type") == 0)
-				fputs("SIGNATURE_TYPE", buffp);
-			else if (strcasecmp(key, "fingerprints") == 0)
-				fputs("FINGERPRINTS", buffp);
-			else if (strcasecmp(key, "pubkey") == 0)
-				fputs("PUBKEY", buffp);
-			else if (strcasecmp(key, "enabled") == 0) {
-				if ((cur->type != UCL_BOOLEAN) ||
-				    !ucl_object_toboolean(cur))
-					goto cleanup;
-			} else
-				continue;
-			fflush(buffp);
-		}
 
 		for (i = 0; i < CONFIG_SIZE; i++) {
 			if (strcmp(buf, c[i].key) == 0)
@@ -322,7 +305,7 @@ config_parse(const ucl_object_t *obj, pkg_conf_file_t conftype)
 		if (c[i].envset)
 			continue;
 		/* Prevent overriding ABI, ASSUME_ALWAYS_YES, etc. */
-		if (conftype != CONFFILE_PKG && c[i].main_only == true)
+		if (c[i].main_only == true)
 			continue;
 		switch (c[i].type) {
 		case PKG_CONFIG_LIST:
@@ -334,10 +317,127 @@ config_parse(const ucl_object_t *obj, pkg_conf_file_t conftype)
 		}
 	}
 
-cleanup:
 	free(temp_config);
 	fclose(buffp);
 	free(buf);
+}
+
+
+static void
+parse_mirror_type(struct repository *r, const char *mt)
+{
+	if (strcasecmp(mt, "srv") == 0)
+		r->mirror_type = MIRROR_SRV;
+	r->mirror_type = MIRROR_NONE;
+}
+
+static void
+repo_free(struct repository *r)
+{
+	free(r->name);
+	free(r->url);
+	free(r->fingerprints);
+	free(r->pubkey);
+	free(r);
+}
+
+static bool
+parse_signature_type(struct repository *repo, const char *st)
+{
+	if (strcasecmp(st, "FINGERPRINTS") == 0)
+		repo->signature_type = SIGNATURE_FINGERPRINT;
+	else if (strcasecmp(st, "PUBKEY") == 0)
+		repo->signature_type = SIGNATURE_PUBKEY;
+	else if (strcasecmp(st, "NONE") == 0)
+		repo->signature_type = SIGNATURE_NONE;
+	else {
+		warnx("Signature type %s is not supported for bootstrapping,"
+		    " ignoring repository %s", st, repo->name);
+		return (false);
+	}
+	return (true);
+}
+
+static struct repository *
+find_repository(const char *name)
+{
+	struct repository *repo;
+	STAILQ_FOREACH(repo, &repositories, next) {
+		if (strcmp(repo->name, name) == 0)
+			return (repo);
+	}
+	return (NULL);
+}
+
+static void
+parse_repo(const ucl_object_t *o)
+{
+	const ucl_object_t *cur;
+	const char *key, *reponame;
+	ucl_object_iter_t it = NULL;
+	bool newrepo = false;
+	struct repository *repo;
+
+	reponame = ucl_object_key(o);
+	repo = find_repository(reponame);
+	if (repo == NULL) {
+		repo = calloc(1, sizeof(struct repository));
+		if (repo == NULL)
+			err(EXIT_FAILURE, "calloc");
+
+		repo->name = strdup(reponame);
+		if (repo->name == NULL)
+			err(EXIT_FAILURE, "strdup");
+		newrepo = true;
+	}
+	while ((cur = ucl_iterate_object(o, &it, true))) {
+		key = ucl_object_key(cur);
+		if (key == NULL)
+			continue;
+		if (strcasecmp(key, "url") == 0) {
+			free(repo->url);
+			repo->url = strdup(ucl_object_tostring(cur));
+			if (repo->url == NULL)
+				err(EXIT_FAILURE, "strdup");
+		} else if (strcasecmp(key, "mirror_type") == 0) {
+			parse_mirror_type(repo, ucl_object_tostring(cur));
+		} else if (strcasecmp(key, "signature_type") == 0) {
+			if (!parse_signature_type(repo, ucl_object_tostring(cur))) {
+				if (newrepo)
+					repo_free(repo);
+				else
+					STAILQ_REMOVE(&repositories, repo, repository, next);
+				return;
+			}
+		} else if (strcasecmp(key, "fingerprints") == 0) {
+			free(repo->fingerprints);
+			repo->fingerprints = strdup(ucl_object_tostring(cur));
+			if (repo->fingerprints == NULL)
+				err(EXIT_FAILURE, "strdup");
+		} else if (strcasecmp(key, "pubkey") == 0) {
+			free(repo->pubkey);
+			repo->pubkey = strdup(ucl_object_tostring(cur));
+			if (repo->pubkey == NULL)
+				err(EXIT_FAILURE, "strdup");
+		} else if (strcasecmp(key, "enabled") == 0) {
+			if ((cur->type != UCL_BOOLEAN) ||
+			    !ucl_object_toboolean(cur)) {
+				if (newrepo)
+					repo_free(repo);
+				else
+					STAILQ_REMOVE(&repositories, repo, repository, next);
+				return;
+			}
+		}
+	}
+	/* At least we need an url */
+	if (repo->url == NULL) {
+		repo_free(repo);
+		return;
+	}
+	if (newrepo)
+		STAILQ_INSERT_TAIL(&repositories, repo, next);
+	return;
 }
 
 /*-
@@ -365,8 +465,7 @@ parse_repo_file(ucl_object_t *obj, const char *requested_repo)
 
 		if (requested_repo != NULL && strcmp(requested_repo, key) != 0)
 			continue;
-
-		config_parse(cur, CONFFILE_REPO);
+		parse_repo(cur);
 	}
 }
 
@@ -377,16 +476,35 @@ read_conf_file(const char *confpath, const char *requested_repo,
 {
 	struct ucl_parser *p;
 	ucl_object_t *obj = NULL;
+	char *abi = pkg_get_myabi(), *major, *minor;
+	struct utsname uts;
+	int ret;
+
+	if (uname(&uts))
+		err(EXIT_FAILURE, "uname");
+	if (abi == NULL)
+		errx(EXIT_FAILURE, "Failed to determine ABI");
 
 	p = ucl_parser_new(0);
+	asprintf(&major, "%d",  __FreeBSD_version/100000);
+	if (major == NULL)
+		err(EXIT_FAILURE, "asprintf");
+	asprintf(&minor, "%d",  (__FreeBSD_version / 1000) % 100);
+	if (minor == NULL)
+		err(EXIT_FAILURE, "asprintf");
+	ucl_parser_register_variable(p, "ABI", abi);
+	ucl_parser_register_variable(p, "OSNAME", uts.sysname);
+	ucl_parser_register_variable(p, "RELEASE", major);
+	ucl_parser_register_variable(p, "VERSION_MAJOR", major);
+	ucl_parser_register_variable(p, "VERSION_MINOR", minor);
 
 	if (!ucl_parser_add_file(p, confpath)) {
 		if (errno != ENOENT)
 			errx(EXIT_FAILURE, "Unable to parse configuration "
 			    "file %s: %s", confpath, ucl_parser_get_error(p));
-		ucl_parser_free(p);
 		/* no configuration present */
-		return (1);
+		ret = 1;
+		goto out;
 	}
 
 	obj = ucl_parser_get_object(p);
@@ -395,18 +513,23 @@ read_conf_file(const char *confpath, const char *requested_repo,
 		    "configuration file %s", confpath);
 	else {
 		if (conftype == CONFFILE_PKG)
-			config_parse(obj, conftype);
+			config_parse(obj);
 		else if (conftype == CONFFILE_REPO)
 			parse_repo_file(obj, requested_repo);
 	}
-
 	ucl_object_unref(obj);
-	ucl_parser_free(p);
 
-	return (0);
+	ret = 0;
+out:
+	ucl_parser_free(p);
+	free(abi);
+	free(major);
+	free(minor);
+
+	return (ret);
 }
 
-static int
+static void
 load_repositories(const char *repodir, const char *requested_repo)
 {
 	struct dirent *ent;
@@ -414,12 +537,9 @@ load_repositories(const char *repodir, const char *requested_repo)
 	char *p;
 	size_t n;
 	char path[MAXPATHLEN];
-	int ret;
-
-	ret = 0;
 
 	if ((d = opendir(repodir)) == NULL)
-		return (1);
+		return;
 
 	while ((ent = readdir(d))) {
 		/* Trim out 'repos'. */
@@ -435,7 +555,6 @@ load_repositories(const char *repodir, const char *requested_repo)
 				continue;
 			if (read_conf_file(path, requested_repo,
 			    CONFFILE_REPO)) {
-				ret = 1;
 				goto cleanup;
 			}
 		}
@@ -443,8 +562,6 @@ load_repositories(const char *repodir, const char *requested_repo)
 
 cleanup:
 	closedir(d);
-
-	return (ret);
 }
 
 int
@@ -453,10 +570,9 @@ config_init(const char *requested_repo)
 	char *val;
 	int i;
 	const char *localbase;
-	char *env_list_item;
+	char *abi, *env_list_item;
 	char confpath[MAXPATHLEN];
 	struct config_value *cv;
-	char abi[BUFSIZ];
 
 	for (i = 0; i < CONFIG_SIZE; i++) {
 		val = getenv(c[i].key);
@@ -507,18 +623,16 @@ config_init(const char *requested_repo)
 	}
 
 	STAILQ_FOREACH(cv, c[REPOS_DIR].list, next)
-		if (load_repositories(cv->value, requested_repo))
-			goto finalize;
+		load_repositories(cv->value, requested_repo);
 
 finalize:
 	if (c[ABI].val == NULL && c[ABI].value == NULL) {
-		if (pkg_get_myabi(abi, BUFSIZ) != 0)
+		abi = pkg_get_myabi();
+		if (abi == NULL)
 			errx(EXIT_FAILURE, "Failed to determine the system "
 			    "ABI");
 		c[ABI].val = abi;
 	}
-
-	subst_packagesite(c[ABI].value != NULL ? c[ABI].value : c[ABI].val);
 
 	return (0);
 }
@@ -556,6 +670,33 @@ config_bool(pkg_config_key k, bool *val)
 		*val = true;
 
 	return (0);
+}
+
+struct repositories *
+config_get_repositories(void)
+{
+	if (STAILQ_EMPTY(&repositories)) {
+		/* Fall back to PACKAGESITE - deprecated - */
+		struct repository *r = calloc(1, sizeof(*r));
+		if (r == NULL)
+			err(EXIT_FAILURE, "calloc");
+		r->name = strdup("fallback");
+		if (r->name == NULL)
+			err(EXIT_FAILURE, "strdup");
+		subst_packagesite(c[ABI].value != NULL ? c[ABI].value : c[ABI].val);
+		r->url = c[PACKAGESITE].value;
+		if (c[SIGNATURE_TYPE].value != NULL)
+			if (!parse_signature_type(r, c[SIGNATURE_TYPE].value))
+				exit(EXIT_FAILURE);
+		if (c[MIRROR_TYPE].value != NULL)
+			parse_mirror_type(r, c[MIRROR_TYPE].value);
+		if (c[PUBKEY].value != NULL)
+			r->pubkey = c[PUBKEY].value;
+		if (c[FINGERPRINTS].value != NULL)
+			r->fingerprints = c[FINGERPRINTS].value;
+		STAILQ_INSERT_TAIL(&repositories, r, next);
+	}
+	return (&repositories);
 }
 
 void

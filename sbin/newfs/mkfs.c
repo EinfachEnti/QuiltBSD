@@ -38,12 +38,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)mkfs.c	8.11 (Berkeley) 5/3/95";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
 #define _WANT_P_OSREL
 #include <sys/param.h>
 #include <sys/disklabel.h>
@@ -95,10 +89,6 @@ static struct	csum *fscs;
 #define	sblock	disk.d_fs
 #define	acg	disk.d_cg
 
-union dinode {
-	struct ufs1_dinode dp1;
-	struct ufs2_dinode dp2;
-};
 #define DIP(dp, field) \
 	((sblock.fs_magic == FS_UFS1_MAGIC) ? \
 	(dp)->dp1.field : (dp)->dp2.field)

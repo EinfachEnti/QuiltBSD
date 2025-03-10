@@ -53,7 +53,6 @@
  * information, know-how or other confidential information to any third party.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bio.h>
@@ -1564,5 +1563,5 @@ mmcsd_handler(module_t mod __unused, int what, void *arg __unused)
 }
 
 DRIVER_MODULE(mmcsd, mmc, mmcsd_driver, mmcsd_handler, NULL);
-MODULE_DEPEND(mmcsd, g_flashmap, 0, 0, 0);
+MODULE_DEPEND(mmcsd, geom_flashmap, 0, 0, 0);
 MMC_DEPEND(mmcsd);

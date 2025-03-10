@@ -28,7 +28,6 @@
 
 /* Driver for the modern VirtIO PCI interface. */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -245,7 +244,6 @@ DRIVER_MODULE(virtio_pci_modern, pci, vtpci_modern_driver, 0, 0);
 static int
 vtpci_modern_probe(device_t dev)
 {
-	char desc[64];
 	const char *name;
 	uint16_t devid;
 
@@ -270,8 +268,7 @@ vtpci_modern_probe(device_t dev)
 	if (name == NULL)
 		name = "Unknown";
 
-	snprintf(desc, sizeof(desc), "VirtIO PCI (modern) %s adapter", name);
-	device_set_desc_copy(dev, desc);
+	device_set_descf(dev, "VirtIO PCI (modern) %s adapter", name);
 
 	return (BUS_PROBE_DEFAULT);
 }

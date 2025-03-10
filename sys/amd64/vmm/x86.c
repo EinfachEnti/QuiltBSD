@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/pcpu.h>
 #include <sys/systm.h>
@@ -37,11 +36,11 @@
 #include <machine/md_var.h>
 #include <machine/segments.h>
 #include <machine/specialreg.h>
-
 #include <machine/vmm.h>
 
+#include <dev/vmm/vmm_ktr.h>
+
 #include "vmm_host.h"
-#include "vmm_ktr.h"
 #include "vmm_util.h"
 #include "x86.h"
 
@@ -62,14 +61,13 @@ SYSCTL_INT(_hw_vmm_topology, OID_AUTO, cpuid_leaf_b, CTLFLAG_RDTUN,
     &cpuid_leaf_b, 0, NULL);
 
 /*
- * Round up to the next power of two, if necessary, and then take log2.
- * Returns -1 if argument is zero.
+ * Compute ceil(log2(x)).  Returns -1 if x is zero.
  */
 static __inline int
 log2(u_int x)
 {
 
-	return (fls(x << (1 - powerof2(x))) - 1);
+	return (x == 0 ? -1 : order_base_2(x));
 }
 
 int
@@ -152,8 +150,6 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				 * pkg_id_shift and other OSes may rely on it.
 				 */
 				width = MIN(0xF, log2(threads * cores));
-				if (width < 0x4)
-					width = 0;
 				logical_cpus = MIN(0xFF, threads * cores - 1);
 				regs[2] = (width << AMDID_COREID_SIZE_SHIFT) | logical_cpus;
 			}
@@ -235,7 +231,7 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				goto default_leaf;
 
 			/*
-			 * Similar to Intel, generate a ficticious cache
+			 * Similar to Intel, generate a fictitious cache
 			 * topology for the guest with L3 shared by the
 			 * package, and L1 and L2 local to a core.
 			 */
@@ -258,7 +254,7 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				func = 3;	/* unified cache */
 				break;
 			default:
-				logical_cpus = 0;
+				logical_cpus = sockets * threads * cores;
 				level = 0;
 				func = 0;
 				break;
@@ -268,7 +264,14 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			regs[0] = (logical_cpus << 14) | (1 << 8) |
 			    (level << 5) | func;
 			regs[1] = (func > 0) ? (CACHE_LINE_SIZE - 1) : 0;
+
+			/*
+			 * ecx: Number of cache ways for non-fully
+			 * associative cache, minus 1.  Reported value
+			 * of zero means there is one way.
+			 */
 			regs[2] = 0;
+
 			regs[3] = 0;
 			break;
 

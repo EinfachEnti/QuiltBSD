@@ -49,7 +49,7 @@
 enum	{ PF_INOUT, PF_IN, PF_OUT };
 enum	{ PF_PASS, PF_DROP, PF_SCRUB, PF_NOSCRUB, PF_NAT, PF_NONAT,
 	  PF_BINAT, PF_NOBINAT, PF_RDR, PF_NORDR, PF_SYNPROXY_DROP, PF_DEFER,
-	  PF_MATCH };
+	  PF_MATCH, PF_AFRT, PF_RT };
 enum	{ PF_RULESET_SCRUB, PF_RULESET_FILTER, PF_RULESET_NAT,
 	  PF_RULESET_BINAT, PF_RULESET_RDR, PF_RULESET_MAX };
 enum	{ PF_OP_NONE, PF_OP_IRG, PF_OP_EQ, PF_OP_NE, PF_OP_LT,
@@ -66,14 +66,37 @@ enum	{ PF_PEER_SRC, PF_PEER_DST, PF_PEER_BOTH };
  * Note about PFTM_*: real indices into pf_rule.timeout[] come before
  * PFTM_MAX, special cases afterwards. See pf_state_expires().
  */
-enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
-	  PFTM_TCP_CLOSING, PFTM_TCP_FIN_WAIT, PFTM_TCP_CLOSED,
-	  PFTM_UDP_FIRST_PACKET, PFTM_UDP_SINGLE, PFTM_UDP_MULTIPLE,
-	  PFTM_ICMP_FIRST_PACKET, PFTM_ICMP_ERROR_REPLY,
-	  PFTM_OTHER_FIRST_PACKET, PFTM_OTHER_SINGLE,
-	  PFTM_OTHER_MULTIPLE, PFTM_FRAG, PFTM_INTERVAL,
-	  PFTM_ADAPTIVE_START, PFTM_ADAPTIVE_END, PFTM_SRC_NODE,
-	  PFTM_TS_DIFF, PFTM_MAX, PFTM_PURGE, PFTM_UNLINKED };
+enum	{
+	PFTM_TCP_FIRST_PACKET	= 0,
+	PFTM_TCP_OPENING	= 1,
+	PFTM_TCP_ESTABLISHED	= 2,
+	PFTM_TCP_CLOSING	= 3,
+	PFTM_TCP_FIN_WAIT	= 4,
+	PFTM_TCP_CLOSED		= 5,
+	PFTM_UDP_FIRST_PACKET	= 6,
+	PFTM_UDP_SINGLE		= 7,
+	PFTM_UDP_MULTIPLE	= 8,
+	PFTM_ICMP_FIRST_PACKET	= 9,
+	PFTM_ICMP_ERROR_REPLY	= 10,
+	PFTM_OTHER_FIRST_PACKET	= 11,
+	PFTM_OTHER_SINGLE	= 12,
+	PFTM_OTHER_MULTIPLE	= 13,
+	PFTM_FRAG		= 14,
+	PFTM_INTERVAL		= 15,
+	PFTM_ADAPTIVE_START	= 16,
+	PFTM_ADAPTIVE_END	= 17,
+	PFTM_SRC_NODE		= 18,
+	PFTM_TS_DIFF		= 19,
+	PFTM_OLD_MAX		= 20, /* Legacy limit, for binary compatibility with old kernels. */
+	PFTM_SCTP_FIRST_PACKET	= 20,
+	PFTM_SCTP_OPENING	= 21,
+	PFTM_SCTP_ESTABLISHED	= 22,
+	PFTM_SCTP_CLOSING	= 23,
+	PFTM_SCTP_CLOSED	= 24,
+	PFTM_MAX		= 25,
+	PFTM_PURGE		= 26,
+	PFTM_UNLINKED		= 27,
+};
 
 /* PFTM default values */
 #define PFTM_TCP_FIRST_PACKET_VAL	120	/* First TCP packet */
@@ -90,7 +113,7 @@ enum	{ PFTM_TCP_FIRST_PACKET, PFTM_TCP_OPENING, PFTM_TCP_ESTABLISHED,
 #define PFTM_OTHER_FIRST_PACKET_VAL	60	/* First packet */
 #define PFTM_OTHER_SINGLE_VAL		30	/* Unidirectional */
 #define PFTM_OTHER_MULTIPLE_VAL		60	/* Bidirectional */
-#define PFTM_FRAG_VAL			30	/* Fragment expire */
+#define PFTM_FRAG_VAL			60	/* Fragment expire */
 #define PFTM_INTERVAL_VAL		10	/* Expire interval */
 #define PFTM_SRC_NODE_VAL		0	/* Source tracking */
 #define PFTM_TS_DIFF_VAL		30	/* Allowed TS diff */
@@ -103,16 +126,23 @@ enum	{ PF_POOL_NONE, PF_POOL_BITMASK, PF_POOL_RANDOM,
 	  PF_POOL_SRCHASH, PF_POOL_ROUNDROBIN };
 enum	{ PF_ADDR_ADDRMASK, PF_ADDR_NOROUTE, PF_ADDR_DYNIFTL,
 	  PF_ADDR_TABLE, PF_ADDR_URPFFAILED,
-	  PF_ADDR_RANGE };
+	  PF_ADDR_RANGE, PF_ADDR_NONE };
 #define PF_POOL_TYPEMASK	0x0f
 #define PF_POOL_STICKYADDR	0x20
+#define PF_POOL_ENDPI		0x40
 #define	PF_WSCALE_FLAG		0x80
 #define	PF_WSCALE_MASK		0x0f
+
+#define PF_POOL_DYNTYPE(_o)					\
+	((((_o) & PF_POOL_TYPEMASK) == PF_POOL_ROUNDROBIN) ||	\
+	(((_o) & PF_POOL_TYPEMASK) == PF_POOL_RANDOM) ||	\
+	(((_o) & PF_POOL_TYPEMASK) == PF_POOL_SRCHASH))
 
 #define	PF_LOG			0x01
 #define	PF_LOG_ALL		0x02
 #define	PF_LOG_SOCKET_LOOKUP	0x04
 #define	PF_LOG_FORCE		0x08
+#define	PF_LOG_MATCHES		0x10
 
 /* Reasons code for passing/dropping a packet */
 #define PFRES_MATCH	0		/* Explicit match of a rule */
@@ -131,7 +161,8 @@ enum	{ PF_ADDR_ADDRMASK, PF_ADDR_NOROUTE, PF_ADDR_DYNIFTL,
 #define PFRES_SRCLIMIT	13		/* Source node/conn limit */
 #define PFRES_SYNPROXY	14		/* SYN proxy */
 #define PFRES_MAPFAILED	15		/* pf_map_addr() failed */
-#define PFRES_MAX	16		/* total+1 */
+#define PFRES_TRANSLATE	16		/* No translation address available */
+#define PFRES_MAX	17		/* total+1 */
 
 #define PFRES_NAMES { \
 	"match", \
@@ -150,6 +181,7 @@ enum	{ PF_ADDR_ADDRMASK, PF_ADDR_NOROUTE, PF_ADDR_DYNIFTL,
 	"src-limit", \
 	"synproxy", \
 	"map-failed", \
+	"translate", \
 	NULL \
 }
 
@@ -466,8 +498,8 @@ struct pf_rule {
 #define PF_SKIP_AF		2
 #define PF_SKIP_PROTO		3
 #define PF_SKIP_SRC_ADDR	4
-#define PF_SKIP_SRC_PORT	5
-#define PF_SKIP_DST_ADDR	6
+#define PF_SKIP_DST_ADDR	5
+#define PF_SKIP_SRC_PORT	6
 #define PF_SKIP_DST_PORT	7
 #define PF_SKIP_COUNT		8
 	union pf_rule_ptr	 skip[PF_SKIP_COUNT];
@@ -497,7 +529,7 @@ struct pf_rule {
 	pf_osfp_t		 os_fingerprint;
 
 	int			 rtableid;
-	u_int32_t		 timeout[PFTM_MAX];
+	u_int32_t		 timeout[PFTM_OLD_MAX];
 	u_int32_t		 max_states;
 	u_int32_t		 max_src_nodes;
 	u_int32_t		 max_src_states;
@@ -591,6 +623,9 @@ struct pf_rule {
 #define	PFRULE_SET_TOS		0x00002000
 #define	PFRULE_IFBOUND		0x00010000 /* if-bound */
 #define	PFRULE_STATESLOPPY	0x00020000 /* sloppy state tracking */
+#define	PFRULE_PFLOW		0x00040000
+#define	PFRULE_ALLOW_RELATED	0x00080000
+#define	PFRULE_AFTO		0x00200000  /* af-to rule */
 
 #ifdef _KERNEL
 #define	PFRULE_REFS		0x0080	/* rule has references */
@@ -603,7 +638,7 @@ struct pf_rule {
 /* pf_state->state_flags, pf_rule_actions->flags, pf_krule->scrub_flags */
 #define	PFSTATE_ALLOWOPTS	0x0001
 #define	PFSTATE_SLOPPY		0x0002
-/*  was	PFSTATE_PFLOW		0x0004 */
+#define	PFSTATE_PFLOW		0x0004
 #define	PFSTATE_NOSYNC		0x0008
 #define	PFSTATE_ACK		0x0010
 #define	PFSTATE_NODF		0x0020
@@ -618,6 +653,12 @@ struct pf_rule {
 #define	PFSTATE_DN_IS_QUEUE	0x8000
 #define	PFSTATE_SCRUBMASK (PFSTATE_NODF|PFSTATE_RANDOMID|PFSTATE_SCRUB_TCP)
 #define	PFSTATE_SETMASK   (PFSTATE_SETTOS|PFSTATE_SETPRIO)
+
+/* pfctl_state->src_node_flags */
+#define PFSTATE_SRC_NODE_LIMIT		0x01
+#define PFSTATE_SRC_NODE_NAT		0x02
+#define PFSTATE_SRC_NODE_ROUTE		0x04
+#define PFSTATE_SRC_NODE_LIMIT_GLOBAL	0x10
 
 #define PFSTATE_HIWAT		100000	/* default state table size */
 #define PFSTATE_ADAPT_START	60000	/* default adaptive timeout start */
@@ -647,6 +688,7 @@ struct pf_src_node {
 	u_int32_t	 creation;
 	u_int32_t	 expire;
 	sa_family_t	 af;
+	sa_family_t	 naf;
 	u_int8_t	 ruletype;
 };
 

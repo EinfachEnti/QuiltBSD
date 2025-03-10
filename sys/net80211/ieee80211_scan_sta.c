@@ -1365,7 +1365,7 @@ sta_roam_check(struct ieee80211_scan_state *ss, struct ieee80211vap *vap)
 	/* NB: the most up to date rssi is in the node, not the scan cache */
 	curRssi = ic->ic_node_getrssi(ni);
 	if (ucastRate == IEEE80211_FIXED_RATE_NONE) {
-		curRate = ni->ni_txrate;
+		curRate = ieee80211_node_get_txrate_dot11rate(ni);
 		IEEE80211_DPRINTF(vap, IEEE80211_MSG_ROAM,
 		    "%s: currssi %d currate %u roamrssi %d roamrate %u\n",
 		    __func__, curRssi, curRate, roamRssi, roamRate);
@@ -1680,7 +1680,7 @@ notfound:
 				chan = ieee80211_ht_adjust_channel(ic,
 				    chan, vap->iv_flags_ht);
 				chan = ieee80211_vht_adjust_channel(ic,
-				    chan, vap->iv_flags_vht);
+				    chan, vap->iv_vht_flags);
 				ieee80211_create_ibss(vap, chan);
 				return 1;
 			}
@@ -1713,7 +1713,7 @@ notfound:
 	chan = ieee80211_ht_adjust_channel(ic,
 	    chan, vap->iv_flags_ht);
 	chan = ieee80211_vht_adjust_channel(ic,
-	    chan, vap->iv_flags_vht);
+	    chan, vap->iv_vht_flags);
 	if (!ieee80211_sta_join(vap, chan, &selbs->base))
 		goto notfound;
 	return 1;				/* terminate scan */
@@ -1866,7 +1866,7 @@ ap_end(struct ieee80211_scan_state *ss, struct ieee80211vap *vap)
 		return 1;
 	}
 	chan = ieee80211_ht_adjust_channel(ic, bestchan, vap->iv_flags_ht);
-	chan = ieee80211_vht_adjust_channel(ic, chan, vap->iv_flags_vht);
+	chan = ieee80211_vht_adjust_channel(ic, chan, vap->iv_vht_flags);
 	ieee80211_create_ibss(vap, chan);
 
 	return 1;
@@ -1946,7 +1946,7 @@ notfound:
 					chan = ieee80211_ht_adjust_channel(ic,
 					    chan, vap->iv_flags_ht);
 					chan = ieee80211_vht_adjust_channel(ic,
-					    chan, vap->iv_flags_vht);
+					    chan, vap->iv_vht_flags);
 					}
 			} else
 				chan = vap->iv_des_chan;

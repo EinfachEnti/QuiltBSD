@@ -27,8 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)socketvar.h	8.3 (Berkeley) 2/19/95
  */
 #ifndef _SYS_SOCKBUF_H_
 #define _SYS_SOCKBUF_H_
@@ -42,7 +40,7 @@
 #define	SB_SEL		0x08		/* someone is selecting */
 #define	SB_ASYNC	0x10		/* ASYNC I/O, need signals */
 #define	SB_UPCALL	0x20		/* someone wants an upcall */
-#define	SB_NOINTR	0x40		/* operations not interruptible */
+/* was	SB_NOINTR	0x40		*/
 #define	SB_AIO		0x80		/* AIO operations queued */
 #define	SB_KNOTE	0x100		/* kernel note attached */
 #define	SB_NOCOALESCE	0x200		/* don't coalesce new data into existing mbufs */
@@ -50,7 +48,8 @@
 #define	SB_AUTOSIZE	0x800		/* automatically size socket buffer */
 #define	SB_STOP		0x1000		/* backpressure indicator */
 #define	SB_AIO_RUNNING	0x2000		/* AIO operation running */
-#define	SB_UNUSED	0x4000		/* previously used for SB_TLS_IFNET */
+#define	SB_SPLICED	0x4000		/* socket buffer is spliced;
+					   previously used for SB_TLS_IFNET */
 #define	SB_TLS_RX_RESYNC 0x8000		/* KTLS RX lost HW sync */
 
 #define	SBS_CANTSENDMORE	0x0010	/* can't send more data to peer */
@@ -130,7 +129,8 @@ struct sockbuf {
 			struct	mbuf *sb_mtls;	/*  TLS mbuf chain */
 			struct	mbuf *sb_mtlstail; /* last mbuf in TLS chain */
 			uint64_t sb_tls_seqno;	/* TLS seqno */
-			struct	ktls_session *sb_tls_info; /* TLS state */
+			/* TLS state, locked by sockbuf and sock I/O mutexes. */
+			struct	ktls_session *sb_tls_info;
 		};
 		/*
 		 * PF_UNIX/SOCK_DGRAM
@@ -164,6 +164,12 @@ struct sockbuf {
 			u_int uxdg_cc;
 			u_int uxdg_ctl;
 			u_int uxdg_mbcnt;
+		};
+		/*
+		 * Netlink socket.
+		 */
+		struct {
+			TAILQ_HEAD(, nl_buf)	nl_queue;
 		};
 	};
 };

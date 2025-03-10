@@ -78,7 +78,6 @@
  * Created      : 28/11/94
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -161,8 +160,6 @@ swi_handler(struct trapframe *frame)
 	if (td->td_md.md_spinlock_count == 0) {
 		if (__predict_true(frame->tf_spsr & PSR_I) == 0)
 			enable_interrupts(PSR_I);
-		if (__predict_true(frame->tf_spsr & PSR_F) == 0)
-			enable_interrupts(PSR_F);
 	}
 
 	syscall(td, frame);

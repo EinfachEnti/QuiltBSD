@@ -898,7 +898,7 @@ hn_check_tcpsyn(struct mbuf *m_head, int *tcpsyn)
 
 	PULLUP_HDR(m_head, ehlen + iphlen + sizeof(*th));
 	th = mtodo(m_head, ehlen + iphlen);
-	if (th->th_flags & TH_SYN)
+	if (tcp_get_flags(th) & TH_SYN)
 		*tcpsyn = 1;
 	return (m_head);
 }
@@ -1103,7 +1103,8 @@ static int
 hn_ifmedia_upd(if_t ifp __unused)
 {
 
-	return EOPNOTSUPP;
+	/* Ignore since autoselect is the only defined and valid media */
+	return (0);
 }
 
 static void
@@ -2354,7 +2355,7 @@ hn_attach(device_t dev)
 	}
 
 	SYSCTL_ADD_PROC(ctx, child, OID_AUTO, "rsc_switch",
-	    CTLTYPE_UINT | CTLFLAG_RW, sc, 0, hn_rsc_sysctl, "A",
+	    CTLTYPE_UINT | CTLFLAG_RW, sc, 0, hn_rsc_sysctl, "I",
 	    "switch to rsc");
 
 	/*
@@ -2523,7 +2524,7 @@ hn_detach(device_t dev)
 				hn_stop(sc, true);
 			/*
 			 * NOTE:
-			 * hn_stop() only suspends data, so managment
+			 * hn_stop() only suspends data, so management
 			 * stuffs have to be suspended manually here.
 			 */
 			hn_suspend_mgmt(sc);
@@ -3262,7 +3263,7 @@ hn_txpkt(if_t ifp, struct hn_tx_ring *txr, struct hn_txdesc *txd)
 	int error, send_failed = 0, has_bpf;
 
 again:
-	has_bpf = bpf_peers_present(if_getbpf(ifp));
+	has_bpf = bpf_peers_present_if(ifp);
 	if (has_bpf) {
 		/*
 		 * Make sure that this txd and any aggregated txds are not
@@ -4522,24 +4523,22 @@ static int
 hn_rsc_sysctl(SYSCTL_HANDLER_ARGS)
 {
 	struct hn_softc *sc = arg1;
-	uint32_t mtu;
+	int rsc_ctrl, mtu;
 	int error;
-	HN_LOCK(sc);
-	error = hn_rndis_get_mtu(sc, &mtu);
-	if (error) {
-		if_printf(sc->hn_ifp, "failed to get mtu\n");
-		goto back;
-	}
-	error = SYSCTL_OUT(req, &(sc->hn_rsc_ctrl), sizeof(sc->hn_rsc_ctrl));
-	if (error || req->newptr == NULL)
-		goto back;
 
-	error = SYSCTL_IN(req, &(sc->hn_rsc_ctrl), sizeof(sc->hn_rsc_ctrl));
-	if (error)
-		goto back;
-	error = hn_rndis_reconf_offload(sc, mtu);
-back:
-	HN_UNLOCK(sc);
+	rsc_ctrl = sc->hn_rsc_ctrl;
+	error = sysctl_handle_int(oidp, &rsc_ctrl, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+
+	if (sc->hn_rsc_ctrl != rsc_ctrl) {
+		HN_LOCK(sc);
+		sc->hn_rsc_ctrl = rsc_ctrl;
+		mtu = if_getmtu(sc->hn_ifp);
+		error = hn_rndis_reconf_offload(sc, mtu);
+		HN_UNLOCK(sc);
+	}
+
 	return (error);
 }
 #ifndef RSS
@@ -5130,7 +5129,7 @@ hn_destroy_rx_data(struct hn_softc *sc)
 
 	if (sc->hn_rxbuf != NULL) {
 		if ((sc->hn_flags & HN_FLAG_RXBUF_REF) == 0)
-			contigfree(sc->hn_rxbuf, HN_RXBUF_SIZE, M_DEVBUF);
+			free(sc->hn_rxbuf, M_DEVBUF);
 		else
 			device_printf(sc->hn_dev, "RXBUF is referenced\n");
 		sc->hn_rxbuf = NULL;
@@ -5145,8 +5144,7 @@ hn_destroy_rx_data(struct hn_softc *sc)
 		if (rxr->hn_br == NULL)
 			continue;
 		if ((rxr->hn_rx_flags & HN_RX_FLAG_BR_REF) == 0) {
-			contigfree(rxr->hn_br, HN_TXBR_SIZE + HN_RXBR_SIZE,
-			    M_DEVBUF);
+			free(rxr->hn_br, M_DEVBUF);
 		} else {
 			device_printf(sc->hn_dev,
 			    "%dth channel bufring is referenced", i);
@@ -5648,7 +5646,7 @@ hn_destroy_tx_data(struct hn_softc *sc)
 
 	if (sc->hn_chim != NULL) {
 		if ((sc->hn_flags & HN_FLAG_CHIM_REF) == 0) {
-			contigfree(sc->hn_chim, HN_CHIM_SIZE, M_DEVBUF);
+			free(sc->hn_chim, M_DEVBUF);
 		} else {
 			device_printf(sc->hn_dev,
 			    "chimney sending buffer is referenced");
@@ -5972,7 +5970,7 @@ hn_transmit(if_t ifp, struct mbuf *m)
 			omcast = (m->m_flags & M_MCAST) != 0;
 
 			if (sc->hn_xvf_flags & HN_XVFFLAG_ACCBPF) {
-				if (bpf_peers_present(if_getbpf(ifp))) {
+				if (bpf_peers_present_if(ifp)) {
 					m_bpf = m_copypacket(m, M_NOWAIT);
 					if (m_bpf == NULL) {
 						/*

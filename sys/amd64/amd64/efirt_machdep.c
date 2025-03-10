@@ -29,7 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/efi.h>
 #include <sys/kernel.h>
@@ -236,7 +235,7 @@ efi_create_1t1_map(struct efi_md *map, int ndesc, int descsz)
 				    "attributes unsupported\n", i);
 			mode = VM_MEMATTR_UNCACHEABLE;
 		}
-		bits = pmap_cache_bits(kernel_pmap, mode, FALSE) | X86_PG_RW |
+		bits = pmap_cache_bits(kernel_pmap, mode, false) | X86_PG_RW |
 		    X86_PG_V;
 		VM_OBJECT_WLOCK(obj_1t1_pt);
 		for (va = p->md_phys, idx = 0; idx < p->md_pages; idx++,
@@ -246,7 +245,8 @@ efi_create_1t1_map(struct efi_md *map, int ndesc, int descsz)
 
 			m = PHYS_TO_VM_PAGE(va);
 			if (m != NULL && VM_PAGE_TO_PHYS(m) == 0) {
-				vm_page_init_page(m, va, -1);
+				vm_page_init_page(m, va, -1,
+				    VM_FREEPOOL_DEFAULT);
 				m->order = VM_NFREEORDER + 1; /* invalid */
 				m->pool = VM_NFREEPOOL + 1; /* invalid */
 				pmap_page_set_memattr_noflush(m, mode);

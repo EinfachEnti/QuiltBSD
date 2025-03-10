@@ -1856,18 +1856,18 @@ es_pci_attach(device_t dev)
 		goto bad;
 	}
 
-	snprintf(status, SND_STATUSLEN, "at %s 0x%jx irq %jd %s",
-	    (es->regtype == SYS_RES_IOPORT)? "io" : "memory",
+	snprintf(status, SND_STATUSLEN, "%s 0x%jx irq %jd on %s",
+	    (es->regtype == SYS_RES_IOPORT)? "port" : "mem",
 	    rman_get_start(es->reg), rman_get_start(es->irq),
-	    PCM_KLDSTRING(snd_es137x));
+	    device_get_nameunit(device_get_parent(dev)));
 
-	if (pcm_register(dev, es, numplay, 1))
-		goto bad;
+	pcm_init(dev, es);
 	for (i = 0; i < numplay; i++)
 		pcm_addchan(dev, PCMDIR_PLAY, ct, es);
 	pcm_addchan(dev, PCMDIR_REC, ct, es);
 	es_init_sysctls(dev);
-	pcm_setstatus(dev, status);
+	if (pcm_register(dev, status))
+		goto bad;
 	es->escfg = ES_SET_GP(es->escfg, 0);
 	if (numplay == 1)
 		device_printf(dev, "<Playback: DAC%d / Record: ADC>\n",

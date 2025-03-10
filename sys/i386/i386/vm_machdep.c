@@ -37,8 +37,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)vm_machdep.c	7.3 (Berkeley) 5/13/91
  *	Utah $Hdr: vm_machdep.c 1.16.1.1 89/06/23$
  */
 
@@ -377,16 +375,6 @@ cpu_thread_clean(struct thread *td)
 }
 
 void
-cpu_thread_swapin(struct thread *td)
-{
-}
-
-void
-cpu_thread_swapout(struct thread *td)
-{
-}
-
-void
 cpu_thread_alloc(struct thread *td)
 {
 	struct pcb *pcb;
@@ -488,20 +476,10 @@ cpu_copy_thread(struct thread *td, struct thread *td0)
  * Set that machine state for performing an upcall that starts
  * the entry function with the given argument.
  */
-void
+int
 cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
     stack_t *stack)
 {
-
-	/* 
-	 * Do any extra cleaning that needs to be done.
-	 * The thread may have optional components
-	 * that are not present in a fresh thread.
-	 * This may be a recycled thread so make it look
-	 * as though it's newly allocated.
-	 */
-	cpu_thread_clean(td);
-
 	/*
 	 * Set the trap frame to point at the beginning of the entry
 	 * function.
@@ -512,11 +490,14 @@ cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 	td->td_frame->tf_eip = (int)entry;
 
 	/* Return address sentinel value to stop stack unwinding. */
-	suword((void *)td->td_frame->tf_esp, 0);
+	if (suword((void *)td->td_frame->tf_esp, 0) != 0)
+		return (EFAULT);
 
 	/* Pass the argument to the entry point. */
-	suword((void *)(td->td_frame->tf_esp + sizeof(void *)),
-	    (int)arg);
+	if (suword((void *)(td->td_frame->tf_esp + sizeof(void *)),
+	    (int)arg) != 0)
+		return (EFAULT);
+	return (0);
 }
 
 int
@@ -551,6 +532,13 @@ cpu_set_user_tls(struct thread *td, void *tls_base)
 	}
 	critical_exit();
 	return (0);
+}
+
+void
+cpu_update_pcb(struct thread *td)
+{
+	MPASS(td == curthread);
+	td->td_pcb->pcb_gs = rgs();
 }
 
 /*

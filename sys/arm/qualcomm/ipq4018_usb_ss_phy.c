@@ -25,7 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -37,9 +36,9 @@
 
 #include <machine/bus.h>
 
-#include <dev/extres/hwreset/hwreset.h>
-#include <dev/extres/phy/phy_usb.h>
-#include <dev/extres/regulator/regulator.h>
+#include <dev/hwreset/hwreset.h>
+#include <dev/phy/phy_usb.h>
+#include <dev/regulator/regulator.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
@@ -181,7 +180,8 @@ ipq4018_usb_ss_usbphy_attach(device_t dev)
 	rv = ipq4018_usb_ss_usbphy_init_phy(sc, node);
 	if (rv != 0)
 		goto fail;
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 
 fail:
 	return (ENXIO);

@@ -32,18 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1989, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-static char sccsid[] = "@(#)ping.c	8.1 (Berkeley) 6/5/93";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
 /*
  *			P I N G . C
  *
@@ -186,7 +174,7 @@ static int send_len;
 /* counters */
 static long nmissedmax;		/* max value of ntransmitted - nreceived - 1 */
 static long npackets;		/* max packets to transmit */
-static long snpackets;			/* max packets to transmit in one sweep */
+static long snpackets;		/* max packets to transmit in one sweep */
 static long sntransmitted;	/* # of packets we sent in this sweep */
 static int sweepmax;		/* max value of payload in sweep */
 static int sweepmin = 0;	/* start value of payload in sweep */
@@ -325,30 +313,30 @@ ping(int argc, char *const *argv)
 			options |= F_DOT;
 			setbuf(stdout, (char *)NULL);
 			break;
-		case 'G': /* Maximum packet size for ping sweep */
+		case 'G': /* Maximum payload size for ping sweep */
 			ltmp = strtonum(optarg, 1, INT_MAX, &errstr);
 			if (errstr != NULL) {
-				errx(EX_USAGE, "invalid packet size: `%s'",
+				errx(EX_USAGE, "invalid payload size: `%s'",
 				    optarg);
 			}
 			sweepmax = (int)ltmp;
 			if (uid != 0 && sweepmax > DEFDATALEN) {
 				errc(EX_NOPERM, EPERM,
-				    "packet size too large: %d > %u",
+				    "payload size too large: %d > %u",
 				    sweepmax, DEFDATALEN);
 			}
 			options |= F_SWEEP;
 			break;
-		case 'g': /* Minimum packet size for ping sweep */
-			ltmp = strtonum(optarg, 1, INT_MAX, &errstr);
+		case 'g': /* Minimum payload size for ping sweep */
+			ltmp = strtonum(optarg, 0, INT_MAX, &errstr);
 			if (errstr != NULL) {
-				errx(EX_USAGE, "invalid packet size: `%s'",
+				errx(EX_USAGE, "invalid payload size: `%s'",
 				    optarg);
 			}
 			sweepmin = (int)ltmp;
 			if (uid != 0 && sweepmin > DEFDATALEN) {
 				errc(EX_NOPERM, EPERM,
-				    "packet size too large: %d > %u",
+				    "payload size too large: %d > %u",
 				    sweepmin, DEFDATALEN);
 			}
 			options |= F_SWEEP;
@@ -356,16 +344,16 @@ ping(int argc, char *const *argv)
 		case 'H':
 			options |= F_HOSTNAME;
 			break;
-		case 'h': /* Packet size increment for ping sweep */
+		case 'h': /* Payload size increment for ping sweep */
 			ltmp = strtonum(optarg, 1, INT_MAX, &errstr);
 			if (errstr != NULL) {
-				errx(EX_USAGE, "invalid packet size: `%s'",
+				errx(EX_USAGE, "invalid payload size: `%s'",
 				    optarg);
 			}
 			sweepincr = (int)ltmp;
 			if (uid != 0 && sweepincr > DEFDATALEN) {
 				errc(EX_NOPERM, EPERM,
-				    "packet size too large: %d > %u",
+				    "payload size too large: %d > %u",
 				    sweepincr, DEFDATALEN);
 			}
 			options |= F_SWEEP;

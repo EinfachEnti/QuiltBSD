@@ -50,8 +50,10 @@
 #include <netlink/route/route_var.h>
 
 /* Standard bits: built-in the kernel */
-SYSCTL_NODE(_net, OID_AUTO, netlink, CTLFLAG_RD, 0, "");
-SYSCTL_NODE(_net_netlink, OID_AUTO, debug, CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "");
+SYSCTL_NODE(_net, OID_AUTO, netlink, CTLFLAG_RD, 0,
+    "RFC3549 Netlink network state socket family");
+SYSCTL_NODE(_net_netlink, OID_AUTO, debug, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+    "Netlink per-subsystem debug levels");
 
 MALLOC_DEFINE(M_NETLINK, "netlink", "Memory used for netlink packets");
 
@@ -83,13 +85,13 @@ struct rtbridge *netlink_callback_p = &ignore_cb;
 bool
 nlp_has_priv(struct nlpcb *nlp, int priv)
 {
-	return (priv_check_cred(nlp->nl_cred, priv) == 0);
+	return (priv_check_cred(nlp->nl_socket->so_cred, priv) == 0);
 }
 
 struct ucred *
 nlp_get_cred(struct nlpcb *nlp)
 {
-	return (nlp->nl_cred);
+	return (nlp->nl_socket->so_cred);
 }
 
 uint32_t
@@ -108,29 +110,15 @@ nlp_unconstrained_vnet(const struct nlpcb *nlp)
 /* Stub implementations for the loadable functions */
 
 static bool
-get_stub_writer(struct nl_writer *nw)
-{
-	bzero(nw, sizeof(*nw));
-	nw->writer_type = NS_WRITER_TYPE_STUB;
-	nw->enomem = true;
-
-	return (false);
-}
-
-static bool
-nlmsg_get_unicast_writer_stub(struct nl_writer *nw, int size, struct nlpcb *nlp)
+nl_writer_unicast_stub(struct nl_writer *nw, size_t size, struct nlpcb *nlp,
+    bool waitok)
 {
 	return (get_stub_writer(nw));
 }
 
 static bool
-nlmsg_get_group_writer_stub(struct nl_writer *nw, int size, int protocol, int group_id)
-{
-	return (get_stub_writer(nw));
-}
-
-static bool
-nlmsg_get_chain_writer_stub(struct nl_writer *nw, int size, struct mbuf **pm)
+nl_writer_group_stub(struct nl_writer *nw, size_t size, uint16_t protocol,
+    uint16_t group_id, int priv, bool waitok)
 {
 	return (get_stub_writer(nw));
 }
@@ -147,7 +135,8 @@ nlmsg_ignore_limit_stub(struct nl_writer *nw __unused)
 }
 
 static bool
-nlmsg_refill_buffer_stub(struct nl_writer *nw __unused, int required_len __unused)
+nlmsg_refill_buffer_stub(struct nl_writer *nw __unused,
+    size_t required_len __unused)
 {
 	return (false);
 }
@@ -202,9 +191,8 @@ const static struct nl_function_wrapper nl_stub = {
 	.nlmsg_end = nlmsg_end_stub,
 	.nlmsg_abort = nlmsg_abort_stub,
 	.nlmsg_ignore_limit = nlmsg_ignore_limit_stub,
-	.nlmsg_get_unicast_writer = nlmsg_get_unicast_writer_stub,
-	.nlmsg_get_group_writer = nlmsg_get_group_writer_stub,
-	.nlmsg_get_chain_writer = nlmsg_get_chain_writer_stub,
+	.nl_writer_unicast = nl_writer_unicast_stub,
+	.nl_writer_group = nl_writer_group_stub,
 	.nlmsg_end_dump = nlmsg_end_dump_stub,
 	.nl_modify_ifp_generic = nl_modify_ifp_generic_stub,
 	.nl_store_ifp_cookie = nl_store_ifp_cookie_stub,
@@ -225,21 +213,18 @@ nl_set_functions(const struct nl_function_wrapper *nl)
 
 /* Function wrappers */
 bool
-nlmsg_get_unicast_writer(struct nl_writer *nw, int size, struct nlpcb *nlp)
+nl_writer_unicast(struct nl_writer *nw, size_t size, struct nlpcb *nlp,
+    bool waitok)
 {
-	return (_nl->nlmsg_get_unicast_writer(nw, size, nlp));
+	return (_nl->nl_writer_unicast(nw, size, nlp, waitok));
 }
 
 bool
-nlmsg_get_group_writer(struct nl_writer *nw, int size, int protocol, int group_id)
+nl_writer_group(struct nl_writer *nw, size_t size, uint16_t protocol,
+    uint16_t group_id, int priv, bool waitok)
 {
-	return (_nl->nlmsg_get_group_writer(nw, size, protocol, group_id));
-}
-
-bool
-nlmsg_get_chain_writer(struct nl_writer *nw, int size, struct mbuf **pm)
-{
-	return (_nl->nlmsg_get_chain_writer(nw, size, pm));
+	return (_nl->nl_writer_group(nw, size, protocol, group_id, priv,
+	    waitok));
 }
 
 bool
@@ -254,7 +239,7 @@ void nlmsg_ignore_limit(struct nl_writer *nw)
 }
 
 bool
-nlmsg_refill_buffer(struct nl_writer *nw, int required_len)
+nlmsg_refill_buffer(struct nl_writer *nw, size_t required_len)
 {
 	return (_nl->nlmsg_refill_buffer(nw, required_len));
 }

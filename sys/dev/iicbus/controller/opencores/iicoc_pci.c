@@ -26,7 +26,6 @@
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -51,7 +50,6 @@ iicoc_detach(device_t dev)
 	struct iicoc_softc *sc;
 
 	sc = device_get_softc(dev);
-	device_delete_children(dev);
 	bus_generic_detach(dev);
 	bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
 	mtx_destroy(&sc->sc_mtx);
@@ -81,7 +79,7 @@ iicoc_attach(device_t dev)
 		return (-1);
 	}
 	iicoc_init(dev);
-	sc->iicbus = device_add_child(dev, "iicbus", -1);
+	sc->iicbus = device_add_child(dev, "iicbus", DEVICE_UNIT_ANY);
 	if (sc->iicbus == NULL) {
 		device_printf(dev, "Could not allocate iicbus instance.\n");
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid,
@@ -89,7 +87,7 @@ iicoc_attach(device_t dev)
 		mtx_destroy(&sc->sc_mtx);
 		return (-1);
 	}
-	bus_generic_attach(dev);
+	bus_attach_children(dev);
 
 	return (0);
 }

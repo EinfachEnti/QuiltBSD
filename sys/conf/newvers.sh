@@ -28,8 +28,6 @@
 # LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
-#
-#	@(#)newvers.sh	8.1 (Berkeley) 4/20/94
 
 # Command line options:
 #
@@ -192,7 +190,7 @@ u=${USER:-root}
 d=$(pwd)
 h=${HOSTNAME:-$(hostname)}
 if [ -n "$SOURCE_DATE_EPOCH" ]; then
-	if ! t=$(date -r $SOURCE_DATE_EPOCH 2>/dev/null); then
+	if ! t=$(date -ur $SOURCE_DATE_EPOCH 2>/dev/null); then
 		echo "Invalid SOURCE_DATE_EPOCH" >&2
 		exit 1
 	fi
@@ -257,7 +255,7 @@ if [ -n "$svnversion" ] ; then
 fi
 
 if [ -n "$git_cmd" ] ; then
-	git=$($git_cmd rev-parse --verify --short HEAD 2>/dev/null)
+	git=$($git_cmd rev-parse --verify --short=12 HEAD 2>/dev/null)
 	if [ "$($git_cmd rev-parse --is-shallow-repository)" = false ] ; then
 		git_cnt=$($git_cmd rev-list --first-parent --count HEAD 2>/dev/null)
 		if [ -n "$git_cnt" ] ; then
@@ -314,13 +312,13 @@ $COPYRIGHT
 #define VERSTR "${VERSTR}"
 #define RELSTR "${RELEASE}"
 
-char sccs[sizeof(SCCSSTR) > 128 ? sizeof(SCCSSTR) : 128] = SCCSSTR;
-char version[sizeof(VERSTR) > 256 ? sizeof(VERSTR) : 256] = VERSTR;
-char compiler_version[] = "${compiler_v}";
-char ostype[] = "${TYPE}";
-char osrelease[sizeof(RELSTR) > 32 ? sizeof(RELSTR) : 32] = RELSTR;
-int osreldate = ${RELDATE};
-char kern_ident[] = "${i}";
+const char sccs[sizeof(SCCSSTR) > 128 ? sizeof(SCCSSTR) : 128] = SCCSSTR;
+const char version[sizeof(VERSTR) > 256 ? sizeof(VERSTR) : 256] = VERSTR;
+const char compiler_version[] = "${compiler_v}";
+const char ostype[] = "${TYPE}";
+const char osrelease[sizeof(RELSTR) > 32 ? sizeof(RELSTR) : 32] = RELSTR;
+const int osreldate = ${RELDATE};
+const char kern_ident[] = "${i}";
 EOF
 )
 vers_content_old=$(cat vers.c 2>/dev/null || true)

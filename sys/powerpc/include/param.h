@@ -35,8 +35,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)param.h	5.8 (Berkeley) 6/28/91
  */
 
 #ifndef _POWERPC_INCLUDE_PARAM_H_
@@ -47,9 +45,6 @@
  */
 
 #include <machine/_align.h>
-
-/* Needed to display interrupts on OFW PCI */
-#define __PCI_REROUTE_INTERRUPT
 
 #ifndef MACHINE
 #define	MACHINE		"powerpc"
@@ -143,19 +138,12 @@
 /*
  * Mach derived conversion macros
  */
-#define	trunc_page(x)		((x) & ~(PAGE_MASK))
-#define	round_page(x)		(((x) + PAGE_MASK) & ~PAGE_MASK)
 #define	trunc_2mpage(x)		((unsigned long)(x) & ~L3_PAGE_MASK)
 #define	round_2mpage(x)		((((unsigned long)(x)) + L3_PAGE_MASK) & ~L3_PAGE_MASK)
 #define	trunc_1gpage(x)		((unsigned long)(x) & ~L2_PAGE_MASK)
 
-#define	atop(x)			((x) >> PAGE_SHIFT)
-#define	ptoa(x)			((x) << PAGE_SHIFT)
-
 #define	powerpc_btop(x)		((x) >> PAGE_SHIFT)
 #define	powerpc_ptob(x)		((x) << PAGE_SHIFT)
-
-#define	pgtok(x)		((x) * (PAGE_SIZE / 1024UL))
 
 #define btoc(x)			((vm_offset_t)(((x)+PAGE_MASK)>>PAGE_SHIFT))
 

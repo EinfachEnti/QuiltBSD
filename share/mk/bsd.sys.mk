@@ -10,8 +10,7 @@
 
 .include <bsd.compiler.mk>
 
-# the default is gnu99 for now
-CSTD?=		gnu99
+CSTD?=		gnu17
 
 .if ${CSTD} == "c89" || ${CSTD} == "c90"
 CFLAGS+=	-std=iso9899:1990
@@ -87,6 +86,10 @@ CWARNFLAGS.clang+=	-Wno-empty-body -Wno-string-plus-int
 CWARNFLAGS.clang+=	-Wno-unused-const-variable
 .if ${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} >= 150000
 CWARNFLAGS.clang+=	-Wno-error=unused-but-set-parameter
+.endif
+.if ${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} >= 190000
+# Similar to gcc >= 8.1 -Wno-error=cast-function-type below
+CWARNFLAGS.clang+=	-Wno-error=cast-function-type-mismatch
 .endif
 .endif # WARNS <= 6
 .if ${WARNS} <= 3
@@ -217,6 +220,7 @@ CWARNFLAGS+=	-Wno-error=aggressive-loop-optimizations	\
 		-Wno-error=restrict				\
 		-Wno-error=sizeof-pointer-memaccess		\
 		-Wno-error=stringop-truncation
+CXXWARNFLAGS+=	-Wno-error=class-memaccess
 .endif
 
 # GCC 9.2.0
@@ -232,6 +236,13 @@ CWARNFLAGS+=	-Wno-error=overflow
 # globally for all C++
 CXXWARNFLAGS+=	-Wno-literal-suffix 			\
 		-Wno-error=unknown-pragmas
+.endif
+
+# GCC 13.1.0
+.if ${COMPILER_VERSION} >= 130100
+# These warnings are raised by headers in libc++ so are disabled
+# globally for all C++
+CXXWARNFLAGS+=	-Wno-dangling-reference
 .endif
 
 # GCC produces false positives for functions that switch on an
@@ -287,11 +298,22 @@ CFLAGS.clang+=	 -Qunused-arguments
 # but not yet.
 CXXFLAGS.clang+=	 -Wno-c++11-extensions
 
+# XXX This should be defaulted to 2 when WITH_SSP is in use after further
+# testing and soak time.
+FORTIFY_SOURCE?=	0
 .if ${MK_SSP} != "no"
 # Don't use -Wstack-protector as it breaks world with -Werror.
+.if ${COMPILER_FEATURES:Mstackclash}
+SSP_CFLAGS?=	-fstack-protector-strong -fstack-clash-protection
+.else
 SSP_CFLAGS?=	-fstack-protector-strong
+.endif
 CFLAGS+=	${SSP_CFLAGS}
 .endif # SSP
+.if ${FORTIFY_SOURCE} > 0
+CFLAGS+=	-D_FORTIFY_SOURCE=${FORTIFY_SOURCE}
+CXXFLAGS+=	-D_FORTIFY_SOURCE=${FORTIFY_SOURCE}
+.endif
 
 # Additional flags passed in CFLAGS and CXXFLAGS when MK_DEBUG_FILES is
 # enabled.

@@ -27,12 +27,12 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/linker.h>
 #include <sys/module.h>
 #include <sys/queue.h>
+#include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
 #include <ctype.h>
@@ -42,6 +42,7 @@
 #ifndef WITHOUT_KERBEROS
 #include <krb5.h>
 #endif
+#include <netdb.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -49,6 +50,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <gssapi/gssapi.h>
 #include <rpc/rpc.h>
 #include <rpc/rpc_com.h>
@@ -57,9 +60,6 @@
 
 #ifndef _PATH_GSS_MECH
 #define _PATH_GSS_MECH	"/etc/gss/mech"
-#endif
-#ifndef _PATH_GSSDSOCK
-#define _PATH_GSSDSOCK	"/var/run/gssd.sock"
 #endif
 #define GSSD_CREDENTIAL_CACHE_FILE	"/tmp/krb5cc_gssd"
 
@@ -100,18 +100,16 @@ static OM_uint32 gssd_get_user_cred(OM_uint32 *, uid_t, gss_cred_id_t *);
 void gssd_terminate(int);
 
 extern void gssd_1(struct svc_req *rqstp, SVCXPRT *transp);
-extern int gssd_syscall(char *path);
 
 int
 main(int argc, char **argv)
 {
 	/*
-	 * We provide an RPC service on a local-domain socket. The
-	 * kernel's GSS-API code will pass what it can't handle
-	 * directly to us.
+	 * We provide an RPC service on a Netlink socket. The kernel's GSS API
+	 * code will multicast its calls, we will listen to them, receive them,
+	 * process them and reply.
 	 */
-	struct sockaddr_un sun;
-	int fd, oldmask, ch, debug, jailed;
+	int oldmask, ch, debug, jailed;
 	SVCXPRT *xprt;
 	size_t jailed_size;
 
@@ -192,37 +190,7 @@ main(int argc, char **argv)
 	signal(SIGTERM, gssd_terminate);
 	signal(SIGPIPE, gssd_terminate);
 
-	memset(&sun, 0, sizeof sun);
-	sun.sun_family = AF_LOCAL;
-	unlink(_PATH_GSSDSOCK);
-	strcpy(sun.sun_path, _PATH_GSSDSOCK);
-	sun.sun_len = SUN_LEN(&sun);
-	fd = socket(AF_LOCAL, SOCK_STREAM, 0);
-	if (fd < 0) {
-		if (debug_level == 0) {
-			syslog(LOG_ERR, "Can't create local gssd socket");
-			exit(1);
-		}
-		err(1, "Can't create local gssd socket");
-	}
-	oldmask = umask(S_IXUSR|S_IRWXG|S_IRWXO);
-	if (bind(fd, (struct sockaddr *) &sun, sun.sun_len) < 0) {
-		if (debug_level == 0) {
-			syslog(LOG_ERR, "Can't bind local gssd socket");
-			exit(1);
-		}
-		err(1, "Can't bind local gssd socket");
-	}
-	umask(oldmask);
-	if (listen(fd, SOMAXCONN) < 0) {
-		if (debug_level == 0) {
-			syslog(LOG_ERR, "Can't listen on local gssd socket");
-			exit(1);
-		}
-		err(1, "Can't listen on local gssd socket");
-	}
-	xprt = svc_vc_create(fd, RPC_MAXDATASIZE, RPC_MAXDATASIZE);
-	if (!xprt) {
+	if ((xprt = svc_nl_create("kgss")) == NULL) {
 		if (debug_level == 0) {
 			syslog(LOG_ERR,
 			    "Can't create transport for local gssd socket");
@@ -242,30 +210,7 @@ main(int argc, char **argv)
 	LIST_INIT(&gss_resources);
 	gss_next_id = 1;
 	gss_start_time = time(0);
-
-	if (gssd_syscall(_PATH_GSSDSOCK) < 0) {
-		jailed = 0;
-		if (errno == EPERM) {
-			jailed_size = sizeof(jailed);
-			sysctlbyname("security.jail.jailed", &jailed,
-			    &jailed_size, NULL, 0);
-		}
-		if (debug_level == 0) {
-			if (jailed != 0)
-				syslog(LOG_ERR, "Cannot start gssd."
-				    " allow.nfsd must be configured");
-			else
-				syslog(LOG_ERR, "Cannot start gssd");
-			exit(1);
-		}
-		if (jailed != 0)
-			err(1, "Cannot start gssd."
-			    " allow.nfsd must be configured");
-		else
-			err(1, "Cannot start gssd");
-	}
 	svc_run();
-	gssd_syscall("");
 
 	return (0);
 }
@@ -624,6 +569,51 @@ gssd_import_name_1_svc(import_name_args *argp, import_name_res *result, struct s
 	return (TRUE);
 }
 
+/*
+ * If the name is a numeric IP host address, do a DNS lookup on it and
+ * return the DNS name in a malloc'd string.
+ */
+static char *
+gssd_conv_ip_to_dns(int len, char *name)
+{
+	struct sockaddr_in sin;
+	struct sockaddr_in6 sin6;
+	char *retcp;
+
+	retcp = NULL;
+	if (len > 0) {
+		retcp = mem_alloc(NI_MAXHOST);
+		memcpy(retcp, name, len);
+		retcp[len] = '\0';
+		if (inet_pton(AF_INET, retcp, &sin.sin_addr) != 0) {
+			sin.sin_family = AF_INET;
+			sin.sin_len = sizeof(sin);
+			sin.sin_port = 0;
+			if (getnameinfo((struct sockaddr *)&sin,
+			    sizeof(sin), retcp, NI_MAXHOST,
+			    NULL, 0, NI_NAMEREQD) != 0) {
+				mem_free(retcp, NI_MAXHOST);
+				return (NULL);
+			}
+		} else if (inet_pton(AF_INET6, retcp, &sin6.sin6_addr) != 0) {
+			sin6.sin6_family = AF_INET6;
+			sin6.sin6_len = sizeof(sin6);
+			sin6.sin6_port = 0;
+			if (getnameinfo((struct sockaddr *)&sin6,
+			    sizeof(sin6), retcp, NI_MAXHOST,
+			    NULL, 0, NI_NAMEREQD) != 0) {
+				mem_free(retcp, NI_MAXHOST);
+				return (NULL);
+			}
+		} else {
+			mem_free(retcp, NI_MAXHOST);
+			return (NULL);
+		}
+		gssd_verbose_out("gssd_conv_ip_to_dns: %s\n", retcp);
+	}
+	return (retcp);
+}
+
 bool_t
 gssd_canonicalize_name_1_svc(canonicalize_name_args *argp, canonicalize_name_res *result, struct svc_req *rqstp)
 {
@@ -930,6 +920,25 @@ gssd_display_status_1_svc(display_status_args *argp, display_status_res *result,
 	gssd_verbose_out("gssd_display_status: done major=0x%x minor=%d\n",
 	    (unsigned int)result->major_status, (int)result->minor_status);
 
+	return (TRUE);
+}
+
+bool_t
+gssd_ip_to_dns_1_svc(ip_to_dns_args *argp, ip_to_dns_res *result, struct svc_req *rqstp)
+{
+	char *host;
+
+	memset(result, 0, sizeof(*result));
+	/* Check to see if the name is actually an IP address. */
+	host = gssd_conv_ip_to_dns(argp->ip_addr.ip_addr_len,
+	    argp->ip_addr.ip_addr_val);
+	if (host != NULL) {
+		result->major_status = GSS_S_COMPLETE;
+		result->dns_name.dns_name_len = strlen(host);
+		result->dns_name.dns_name_val = host;
+		return (TRUE);
+	}
+	result->major_status = GSS_S_FAILURE;
 	return (TRUE);
 }
 
@@ -1259,7 +1268,6 @@ void gssd_terminate(int sig __unused)
 	if (hostbased_initiator_cred != 0)
 		unlink(GSSD_CREDENTIAL_CACHE_FILE);
 #endif
-	gssd_syscall("");
 	exit(0);
 }
 

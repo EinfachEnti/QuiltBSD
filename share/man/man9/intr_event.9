@@ -27,7 +27,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 30, 2022
+.Dd January 24, 2025
 .Dt INTR_EVENT 9
 .Os
 .Sh NAME
@@ -230,7 +230,7 @@ argument specifies the priority of this handler,
 corresponding to the values defined in
 .In sys/priority.h .
 It determines the order this handler is called relative to the other handlers
-for this event, as well as the scheduling priority of of the backing kernel
+for this event, as well as the scheduling priority of the backing kernel
 thread.
 .Fa flags
 argument can be used to specify properties of this handler as defined in
@@ -295,6 +295,14 @@ from the handler's source triggers.
 Presently, the
 .Dv INTR_ENTROPY
 flag is not valid for software interrupt handlers.
+The
+.Dv INTR_SLEEPABLE
+flag specifies that the interrupt ithread may sleep.
+Presently, the
+.Dv INTR_SLEEPABLE
+flag requires the
+.Dv INTR_EXCL
+flag to be set.
 .Ss Handler Callbacks
 Each
 .Vt struct intr_event

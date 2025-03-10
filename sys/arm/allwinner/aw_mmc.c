@@ -27,7 +27,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -53,9 +52,9 @@
 #include <dev/mmc/mmc_fdt_helpers.h>
 
 #include <arm/allwinner/aw_mmc.h>
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
-#include <dev/extres/regulator/regulator.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
+#include <dev/regulator/regulator.h>
 
 #include "opt_mmccam.h"
 
@@ -323,32 +322,29 @@ aw_mmc_helper_cd_handler(device_t dev, bool present)
 #ifdef MMCCAM
 	mmc_cam_sim_discover(&sc->mmc_sim);
 #else
-	AW_MMC_LOCK(sc);
+	bus_topo_lock();
 	if (present) {
 		if (sc->child == NULL) {
 			if (__predict_false(aw_mmc_debug & AW_MMC_DEBUG_CARD))
 				device_printf(sc->aw_dev, "Card inserted\n");
 
-			sc->child = device_add_child(sc->aw_dev, "mmc", -1);
-			AW_MMC_UNLOCK(sc);
+			sc->child = device_add_child(sc->aw_dev, "mmc", DEVICE_UNIT_ANY);
 			if (sc->child) {
 				device_set_ivars(sc->child, sc);
 				(void)device_probe_and_attach(sc->child);
 			}
-		} else
-			AW_MMC_UNLOCK(sc);
+		}
 	} else {
 		/* Card isn't present, detach if necessary */
 		if (sc->child != NULL) {
 			if (__predict_false(aw_mmc_debug & AW_MMC_DEBUG_CARD))
 				device_printf(sc->aw_dev, "Card removed\n");
 
-			AW_MMC_UNLOCK(sc);
 			device_delete_child(sc->aw_dev, sc->child);
 			sc->child = NULL;
-		} else
-			AW_MMC_UNLOCK(sc);
+		}
 	}
+	bus_topo_unlock();
 #endif /* MMCCAM */
 }
 
@@ -483,7 +479,6 @@ static int
 aw_mmc_detach(device_t dev)
 {
 	struct aw_mmc_softc *sc;
-	device_t d;
 
 	sc = device_get_softc(dev);
 
@@ -495,12 +490,7 @@ aw_mmc_detach(device_t dev)
 
 	callout_drain(&sc->aw_timeoutc);
 
-	AW_MMC_LOCK(sc);
-	d = sc->child;
-	sc->child = NULL;
-	AW_MMC_UNLOCK(sc);
-	if (d != NULL)
-		device_delete_child(sc->aw_dev, d);
+	device_delete_children(sc->aw_dev);
 
 	aw_mmc_teardown_dma(sc);
 

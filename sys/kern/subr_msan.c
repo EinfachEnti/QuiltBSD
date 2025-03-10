@@ -179,6 +179,9 @@ kmsan_report_hook(const void *addr, msan_orig_t *orig, size_t size, size_t off,
 
 	if (__predict_false(KERNEL_PANICKED() || kdb_active || kmsan_reporting))
 		return;
+	if (__predict_false(curthread != NULL &&
+	    (curthread->td_pflags2 & TDP2_SAN_QUIET) != 0))
+		return;
 
 	kmsan_reporting = true;
 	__compiler_membar();
@@ -231,6 +234,9 @@ kmsan_report_inline(msan_orig_t orig, unsigned long pc)
 	int type;
 
 	if (__predict_false(KERNEL_PANICKED() || kdb_active || kmsan_reporting))
+		return;
+	if (__predict_false(curthread != NULL &&
+	    (curthread->td_pflags2 & TDP2_SAN_QUIET) != 0))
 		return;
 
 	kmsan_reporting = true;
@@ -375,7 +381,7 @@ kmsan_shadow_check(uintptr_t addr, size_t size, const char *hook)
 	for (i = 0; i < size; i++) {
 		if (__predict_true(shad[i] == 0))
 			continue;
-		orig = (msan_orig_t *)kmsan_md_addr_to_orig((vm_offset_t)&shad[i]);
+		orig = (msan_orig_t *)kmsan_md_addr_to_orig(addr + i);
 		orig = (msan_orig_t *)((uintptr_t)orig & MSAN_ORIG_MASK);
 		kmsan_report_hook((const char *)addr + i, orig, size, i, hook);
 		break;
@@ -452,7 +458,7 @@ kmsan_thread_alloc(struct thread *td)
 		    sizeof(int));
 		mtd = malloc(sizeof(*mtd), M_KMSAN, M_WAITOK);
 	}
-	kmsan_memset(mtd, 0, sizeof(*mtd));
+	__builtin_memset(mtd, 0, sizeof(*mtd));
 	mtd->ctx = 0;
 
 	if (td->td_kstack != 0)
@@ -585,6 +591,15 @@ kmsan_check_mbuf(const struct mbuf *m, const char *descr)
 	do {
 		kmsan_shadow_check((uintptr_t)mtod(m, void *), m->m_len, descr);
 	} while ((m = m->m_next) != NULL);
+}
+
+void
+kmsan_check_uio(const struct uio *uio, const char *descr)
+{
+	for (int i = 0; i < uio->uio_iovcnt; i++) {
+		kmsan_check(uio->uio_iov[i].iov_base, uio->uio_iov[i].iov_len,
+		    descr);
+	}
 }
 
 void
@@ -1205,7 +1220,7 @@ kmsan_casueword(volatile u_long *base, u_long oldval, u_long *oldvalp,
 	}
 
 #define	_MSAN_ATOMIC_FUNC_LOAD(name, type)				\
-	type kmsan_atomic_load_##name(volatile type *ptr)		\
+	type kmsan_atomic_load_##name(const volatile type *ptr)		\
 	{								\
 		kmsan_check_arg(sizeof(ptr),				\
 		    "atomic_load_" #name "():args");			\
@@ -1280,11 +1295,13 @@ MSAN_ATOMIC_FUNC_TESTANDCLEAR(32, uint32_t);
 MSAN_ATOMIC_FUNC_TESTANDCLEAR(64, uint64_t);
 MSAN_ATOMIC_FUNC_TESTANDCLEAR(int, u_int);
 MSAN_ATOMIC_FUNC_TESTANDCLEAR(long, u_long);
+MSAN_ATOMIC_FUNC_TESTANDCLEAR(ptr, uintptr_t);
 
 MSAN_ATOMIC_FUNC_TESTANDSET(32, uint32_t);
 MSAN_ATOMIC_FUNC_TESTANDSET(64, uint64_t);
 MSAN_ATOMIC_FUNC_TESTANDSET(int, u_int);
 MSAN_ATOMIC_FUNC_TESTANDSET(long, u_long);
+MSAN_ATOMIC_FUNC_TESTANDSET(ptr, uintptr_t);
 
 MSAN_ATOMIC_FUNC_SWAP(32, uint32_t);
 MSAN_ATOMIC_FUNC_SWAP(64, uint64_t);
@@ -1382,13 +1399,18 @@ kmsan_bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t hnd,
 	bus_space_barrier(tag, hnd, offset, size, flags);
 }
 
-/* XXXMJ x86-specific */
+#if defined(__amd64__)
+#define	BUS_SPACE_IO(tag)	((tag) == X86_BUS_SPACE_IO)
+#else
+#define	BUS_SPACE_IO(tag)	(false)
+#endif
+
 #define MSAN_BUS_READ_FUNC(func, width, type)				\
 	type kmsan_bus_space_read##func##_##width(bus_space_tag_t tag,	\
 	    bus_space_handle_t hnd, bus_size_t offset)			\
 	{								\
 		type ret;						\
-		if ((tag) != X86_BUS_SPACE_IO)				\
+		if (!BUS_SPACE_IO(tag))					\
 			kmsan_shadow_fill((uintptr_t)(hnd + offset),	\
 			    KMSAN_STATE_INITED, (width));		\
 		ret = bus_space_read##func##_##width(tag, hnd, offset);	\
@@ -1429,6 +1451,13 @@ MSAN_BUS_READ_PTR_FUNC(region, 4, uint32_t)
 MSAN_BUS_READ_PTR_FUNC(region_stream, 4, uint32_t)
 
 MSAN_BUS_READ_FUNC(, 8, uint64_t)
+#ifndef __amd64__
+MSAN_BUS_READ_FUNC(_stream, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(multi, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(multi_stream, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(region, 8, uint64_t)
+MSAN_BUS_READ_PTR_FUNC(region_stream, 8, uint64_t)
+#endif
 
 #define	MSAN_BUS_WRITE_FUNC(func, width, type)				\
 	void kmsan_bus_space_write##func##_##width(bus_space_tag_t tag,	\
@@ -1494,6 +1523,28 @@ MSAN_BUS_SET_FUNC(multi, 4, uint32_t)
 MSAN_BUS_SET_FUNC(region, 4, uint32_t)
 MSAN_BUS_SET_FUNC(multi_stream, 4, uint32_t)
 MSAN_BUS_SET_FUNC(region_stream, 4, uint32_t)
+
+#define	MSAN_BUS_PEEK_FUNC(width, type)					\
+	int kmsan_bus_space_peek_##width(bus_space_tag_t tag,		\
+	    bus_space_handle_t hnd, bus_size_t offset, type *value)	\
+	{								\
+		return (bus_space_peek_##width(tag, hnd, offset, value)); \
+	}
+
+MSAN_BUS_PEEK_FUNC(1, uint8_t)
+MSAN_BUS_PEEK_FUNC(2, uint16_t)
+MSAN_BUS_PEEK_FUNC(4, uint32_t)
+
+#define	MSAN_BUS_POKE_FUNC(width, type)					\
+	int kmsan_bus_space_poke_##width(bus_space_tag_t tag,		\
+	    bus_space_handle_t hnd, bus_size_t offset, type value)	\
+	{								\
+		return (bus_space_poke_##width(tag, hnd, offset, value)); \
+	}
+
+MSAN_BUS_POKE_FUNC(1, uint8_t)
+MSAN_BUS_POKE_FUNC(2, uint16_t)
+MSAN_BUS_POKE_FUNC(4, uint32_t)
 
 /* -------------------------------------------------------------------------- */
 

@@ -77,32 +77,9 @@ static const char	*IFFBITS[] = {
 	"STICKYARP",		/* 20:0x100000 IFF_STICKYARP*/
 	"DYING",		/* 21:0x200000 IFF_DYING*/
 	"RENAMING",		/* 22:0x400000 IFF_RENAMING*/
-	"NOGROUP",		/* 23:0x800000 IFF_NOGROUP*/
+	"PALLMULTI",		/* 23:0x800000 IFF_PALLMULTI*/
 	"LOWER_UP",		/* 24:0x1000000 IFF_NETLINK_1*/
 };
-
-static void
-print_bits(const char *btype, uint32_t *v, const int v_count,
-    const char **names, const int n_count)
-{
-	int num = 0;
-
-	for (int i = 0; i < v_count * 32; i++) {
-		bool is_set = v[i / 32] & (1U << (i % 32));
-		if (is_set) {
-			if (num++ == 0)
-				printf("<");
-			if (num != 1)
-				printf(",");
-			if (i < n_count)
-				printf("%s", names[i]);
-			else
-				printf("%s_%d", btype, i);
-		}
-	}
-	if (num > 0)
-		printf(">");
-}
 
 static void
 nl_init_socket(struct snl_state *ss)
@@ -171,7 +148,7 @@ prepare_ifmap(struct snl_state *ss)
 	hdr->nlmsg_flags |= NLM_F_DUMP;
 	snl_reserve_msg_object(&nw, struct ifinfomsg);
 
-	if (!snl_finalize_msg(&nw) || !snl_send_message(ss, hdr))
+	if (! (hdr = snl_finalize_msg(&nw)) || !snl_send_message(ss, hdr))
 		return (NULL);
 
 	uint32_t nlmsg_seq = hdr->nlmsg_seq;
@@ -212,7 +189,7 @@ if_nametoindex_nl(struct snl_state *ss, const char *ifname)
 	snl_reserve_msg_object(&nw, struct ifinfomsg);
 	snl_add_msg_attr_string(&nw, IFLA_IFNAME, ifname);
 
-	if (!snl_finalize_msg(&nw) || !snl_send_message(ss, hdr))
+	if (! (hdr = snl_finalize_msg(&nw)) || !snl_send_message(ss, hdr))
 		return (0);
 
 	hdr = snl_read_reply(ss, hdr->nlmsg_seq);
@@ -247,7 +224,7 @@ prepare_ifaddrs(struct snl_state *ss, struct ifmap *ifmap)
 	hdr->nlmsg_flags |= NLM_F_DUMP;
 	snl_reserve_msg_object(&nw, struct ifaddrmsg);
 
-	if (!snl_finalize_msg(&nw) || !snl_send_message(ss, hdr))
+	if (! (hdr = snl_finalize_msg(&nw)) || !snl_send_message(ss, hdr))
 		return;
 
 	uint32_t nlmsg_seq = hdr->nlmsg_seq;
@@ -388,6 +365,7 @@ status_nl(if_ctx *ctx, struct iface *iface)
 {
 	if_link_t *link = &iface->link;
 	struct ifconfig_args *args = ctx->args;
+	char *drivername = NULL;
 
 	printf("%s: ", link->ifla_ifname);
 
@@ -432,6 +410,22 @@ status_nl(if_ctx *ctx, struct iface *iface)
 		args->afp->af_other_status(ctx);
 
 	print_ifstatus(ctx);
+	if (args->drivername || args->verbose) {
+		if (ifconfig_get_orig_name(lifh, link->ifla_ifname,
+		    &drivername) != 0) {
+			if (ifconfig_err_errtype(lifh) == OTHER)
+				fprintf(stderr, "get original name: %s\n",
+				    strerror(ifconfig_err_errno(lifh)));
+			else
+				fprintf(stderr,
+				    "get original name: error type %d\n",
+				    ifconfig_err_errtype(lifh));
+			exit_code = 1;
+		}
+		if (drivername != NULL)
+			printf("\tdrivername: %s\n", drivername);
+		free(drivername);
+	}
 	if (args->verbose > 0)
 		sfp_status(ctx);
 }

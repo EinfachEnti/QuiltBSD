@@ -73,6 +73,8 @@ typedef struct {
 	mtx_assert(IEEE80211_LOCK_OBJ(_ic), MA_OWNED)
 #define	IEEE80211_UNLOCK_ASSERT(_ic) \
 	mtx_assert(IEEE80211_LOCK_OBJ(_ic), MA_NOTOWNED)
+#define	IEEE80211_IS_LOCKED(_ic) \
+	mtx_owned(IEEE80211_LOCK_OBJ(_ic))
 
 /*
  * Transmit lock.
@@ -417,8 +419,7 @@ MODULE_DEPEND(wlan_##name, wlan, 1, 1, 1)
 /*
  * Crypto modules implement cipher support.
  */
-#define	IEEE80211_CRYPTO_MODULE(name, version)				\
-_IEEE80211_POLICY_MODULE(crypto, name, version);			\
+#define	IEEE80211_CRYPTO_MODULE_ADD(name)				\
 static void								\
 name##_modevent(int type)						\
 {									\
@@ -428,6 +429,10 @@ name##_modevent(int type)						\
 		ieee80211_crypto_unregister(&name);			\
 }									\
 TEXT_SET(crypto##_set, name##_modevent)
+
+#define	IEEE80211_CRYPTO_MODULE(name, version)				\
+	_IEEE80211_POLICY_MODULE(crypto, name, version);		\
+	IEEE80211_CRYPTO_MODULE_ADD(name)
 
 /*
  * Scanner modules provide scanning policy.

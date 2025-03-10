@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)param.h	8.3 (Berkeley) 4/4/95
  */
 
 #ifndef _SYS_PARAM_H_
@@ -75,7 +73,7 @@
  * cannot include sys/param.h and should only be updated here.
  */
 #undef __FreeBSD_version
-#define __FreeBSD_version 1500001
+#define __FreeBSD_version 1500034
 
 /*
  * __FreeBSD_kernel__ indicates that this system uses the kernel of FreeBSD,
@@ -152,17 +150,16 @@
 #endif
 #endif
 
-#ifndef _KERNEL
-#ifndef LOCORE
+#if !defined(_KERNEL) && !defined(_STANDALONE) && !defined(LOCORE)
 /* Signals. */
 #include <sys/signal.h>
-#endif
 #endif
 
 /* Machine type dependent parameters. */
 #include <machine/param.h>
 #ifndef _KERNEL
 #include <sys/limits.h>
+#include <sys/_maxphys.h>
 #endif
 
 #ifndef DEV_BSHIFT
@@ -175,13 +172,6 @@
 #endif
 #ifndef DFLTPHYS
 #define DFLTPHYS	(64 * 1024)	/* default max raw I/O transfer size */
-#endif
-#ifndef MAXPHYS				/* max raw I/O transfer size */
-#ifdef __ILP32__
-#define MAXPHYS		(128 * 1024)
-#else
-#define MAXPHYS		(1024 * 1024)
-#endif
 #endif
 #ifndef MAXDUMPPGS
 #define MAXDUMPPGS	(DFLTPHYS/PAGE_SIZE)
@@ -209,6 +199,17 @@
 
 #define	MJUM9BYTES	(9 * 1024)	/* jumbo cluster 9k */
 #define	MJUM16BYTES	(16 * 1024)	/* jumbo cluster 16k */
+
+/*
+ * Mach derived conversion macros
+ */
+#define	round_page(x)	roundup2(x, PAGE_SIZE)
+#define	trunc_page(x)	rounddown2(x, PAGE_SIZE)
+
+#define	atop(x)		((x) >> PAGE_SHIFT)
+#define	ptoa(x)		((x) << PAGE_SHIFT)
+
+#define	pgtok(x)	((x) * (PAGE_SIZE / 1024))
 
 /*
  * Some macros for units conversion

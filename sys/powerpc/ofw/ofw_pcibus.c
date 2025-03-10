@@ -29,7 +29,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
@@ -146,7 +145,8 @@ ofw_pcibus_attach(device_t dev)
 	if (!ofw_devices_only)
 		ofw_pcibus_enum_bus(dev, domain, busno);
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 struct pci_devinfo *

@@ -376,6 +376,7 @@ static void
 get_sta_info(void *arg, struct ieee80211_node *ni)
 {
 	struct stainforeq *req = arg;
+	struct ieee80211_node_txrate tr;
 	struct ieee80211vap *vap = ni->ni_vap;
 	struct ieee80211req_sta_info *si;
 	size_t ielen, len;
@@ -406,23 +407,18 @@ get_sta_info(void *arg, struct ieee80211_node *ni)
 	if (si->isi_nrates > 15)
 		si->isi_nrates = 15;
 	memcpy(si->isi_rates, ni->ni_rates.rs_rates, si->isi_nrates);
-	si->isi_txrate = ni->ni_txrate;
-	if (si->isi_txrate & IEEE80211_RATE_MCS) {
-		const struct ieee80211_mcs_rates *mcs =
-		    &ieee80211_htrates[ni->ni_txrate &~ IEEE80211_RATE_MCS];
-		if (IEEE80211_IS_CHAN_HT40(ni->ni_chan)) {
-			if (ni->ni_flags & IEEE80211_NODE_SGI40)
-				si->isi_txmbps = mcs->ht40_rate_800ns;
-			else
-				si->isi_txmbps = mcs->ht40_rate_400ns;
-		} else {
-			if (ni->ni_flags & IEEE80211_NODE_SGI20)
-				si->isi_txmbps = mcs->ht20_rate_800ns;
-			else
-				si->isi_txmbps = mcs->ht20_rate_400ns;
-		}
-	} else
-		si->isi_txmbps = si->isi_txrate;
+	/*
+	 * isi_txrate can only represent the legacy/HT rates.
+	 * Only set it if the rate is a legacy/HT rate.
+	 *
+	 * TODO: For VHT and later rates the API will need changing.
+	 */
+	ieee80211_node_get_txrate(ni, &tr);
+	if ((tr.type == IEEE80211_NODE_TXRATE_LEGACY) ||
+	    (tr.type == IEEE80211_NODE_TXRATE_HT))
+		si->isi_txrate = ieee80211_node_get_txrate_dot11rate(ni);
+	/* Note: txmbps is in 1/2Mbit/s units */
+	si->isi_txmbps = ieee80211_node_get_txrate_kbit(ni) / 500;
 	si->isi_associd = ni->ni_associd;
 	si->isi_txpower = ni->ni_txpower;
 	si->isi_vlan = ni->ni_vlan;
@@ -709,9 +705,13 @@ ieee80211_ioctl_getdevcaps(struct ieee80211com *ic,
 	if (dc == NULL)
 		return ENOMEM;
 	dc->dc_drivercaps = ic->ic_caps;
-	dc->dc_cryptocaps = ic->ic_cryptocaps;
+	/*
+	 * Announce the set of both hardware and software supported
+	 * ciphers.
+	 */
+	dc->dc_cryptocaps = ic->ic_cryptocaps | ic->ic_sw_cryptocaps;
 	dc->dc_htcaps = ic->ic_htcaps;
-	dc->dc_vhtcaps = ic->ic_vhtcaps;
+	dc->dc_vhtcaps = ic->ic_vht_cap.vht_cap_info;
 	ci = &dc->dc_chaninfo;
 	ic->ic_getradiocaps(ic, maxchans, &ci->ic_nchans, ci->ic_chans);
 	KASSERT(ci->ic_nchans <= maxchans,
@@ -1156,7 +1156,7 @@ ieee80211_ioctl_get80211(struct ieee80211vap *vap, u_long cmd,
 			ireq->i_val = 1;
 		break;
 	case IEEE80211_IOC_VHTCONF:
-		ireq->i_val = vap->iv_flags_vht & IEEE80211_FVHT_MASK;
+		ireq->i_val = vap->iv_vht_flags & IEEE80211_FVHT_MASK;
 		break;
 	default:
 		error = ieee80211_ioctl_getdefault(vap, ireq);
@@ -3502,6 +3502,26 @@ ieee80211_ioctl_set80211(struct ieee80211vap *vap, u_long cmd, struct ieee80211r
 		else
 			ieee80211_syncflag_vht(vap, -IEEE80211_FVHT_USEVHT80P80);
 
+		/* Check if we can do STBC TX/RX before changing the setting. */
+		if ((ireq->i_val & IEEE80211_FVHT_STBC_TX) &&
+		    ((vap->iv_vht_cap.vht_cap_info & IEEE80211_VHTCAP_TXSTBC) == 0))
+			return EOPNOTSUPP;
+		if ((ireq->i_val & IEEE80211_FVHT_STBC_RX) &&
+		    ((vap->iv_vht_cap.vht_cap_info & IEEE80211_VHTCAP_RXSTBC_MASK) == 0))
+			return EOPNOTSUPP;
+
+		/* TX */
+		if (ireq->i_val & IEEE80211_FVHT_STBC_TX)
+			ieee80211_syncflag_vht(vap, IEEE80211_FVHT_STBC_TX);
+		else
+			ieee80211_syncflag_vht(vap, -IEEE80211_FVHT_STBC_TX);
+
+		/* RX */
+		if (ireq->i_val & IEEE80211_FVHT_STBC_RX)
+			ieee80211_syncflag_vht(vap, IEEE80211_FVHT_STBC_RX);
+		else
+			ieee80211_syncflag_vht(vap, -IEEE80211_FVHT_STBC_RX);
+
 		error = ENETRESET;
 		break;
 
@@ -3636,8 +3656,8 @@ ieee80211_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		break;
 	case SIOCG80211STATS:
 		ifr = (struct ifreq *)data;
-		copyout(&vap->iv_stats, ifr_data_get_ptr(ifr),
-		    sizeof (vap->iv_stats));
+		error = copyout(&vap->iv_stats, ifr_data_get_ptr(ifr),
+		    sizeof(vap->iv_stats));
 		break;
 	case SIOCSIFMTU:
 		ifr = (struct ifreq *)data;

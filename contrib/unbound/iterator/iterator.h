@@ -55,6 +55,9 @@ struct rbtree_type;
 
 /** max number of targets spawned for a query and its subqueries */
 #define MAX_TARGET_COUNT	64
+/** max number of upstream queries for a query and its subqueries, it is
+ * never reset. */
+extern int MAX_GLOBAL_QUOTA;
 /** max number of target lookups per qstate, per delegation point */
 #define MAX_DP_TARGET_COUNT	16
 /** max number of nxdomains allowed for target lookups for a query and
@@ -101,6 +104,8 @@ extern int BLACKLIST_PENALTY;
  * Chosen so that the UNKNOWN_SERVER_NICENESS falls within the band of a 
  * fast server, this causes server exploration as a side benefit. msec. */
 #define RTT_BAND 400
+/** Number of retries for empty nodata packets before it is accepted. */
+#define EMPTY_NODATA_RETRY_COUNT 2
 
 /**
  * Global state for the iterator.
@@ -246,6 +251,9 @@ enum target_count_variables {
 	TARGET_COUNT_QUERIES,
 	/** Number of nxdomain responses encountered. */
 	TARGET_COUNT_NX,
+	/** Global quota on number of queries to upstream servers per
+	 * client request, that is never reset. */
+	TARGET_COUNT_GLOBAL_QUOTA,
 
 	/** This should stay last here, it is used for the allocation */
 	TARGET_COUNT_MAX,
@@ -414,6 +422,11 @@ struct iter_qstate {
 	 * be used when creating the state. A higher one will be attempted.
 	 */
 	int refetch_glue;
+
+	/**
+	 * This flag detects that a completely empty nodata was received,
+	 * already so that it is accepted later. */
+	int empty_nodata_found;
 
 	/** list of pending queries to authoritative servers. */
 	struct outbound_list outlist;

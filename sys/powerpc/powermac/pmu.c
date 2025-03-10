@@ -28,7 +28,6 @@
  *
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/module.h>
@@ -400,7 +399,7 @@ pmu_attach(device_t dev)
 			device_printf(dev, "PMU child <%s>\n",name);
 
 		if (strncmp(name, "adb", 4) == 0) {
-			sc->adb_bus = device_add_child(dev,"adb",-1);
+			sc->adb_bus = device_add_child(dev,"adb",DEVICE_UNIT_ANY);
 		}
 
 		if (strncmp(name, "power-mgt", 9) == 0) {
@@ -518,13 +517,19 @@ pmu_attach(device_t dev)
 	EVENTHANDLER_REGISTER(shutdown_final, pmu_shutdown, sc,
 	    SHUTDOWN_PRI_LAST);
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 static int 
 pmu_detach(device_t dev) 
 {
 	struct pmu_softc *sc;
+	int error;
+
+	error = bus_generic_detach(dev);
+	if (error != 0)
+		return (error);
 
 	sc = device_get_softc(dev);
 
@@ -536,7 +541,7 @@ pmu_detach(device_t dev)
 	bus_release_resource(dev, SYS_RES_MEMORY, sc->sc_memrid, sc->sc_memr);
 	mtx_destroy(&sc->sc_mutex);
 
-	return (bus_generic_detach(dev));
+	return (0);
 }
 
 static uint8_t
@@ -812,10 +817,12 @@ pmu_shutdown(void *xsc, int howto)
 	struct pmu_softc *sc = xsc;
 	uint8_t cmd[] = {'M', 'A', 'T', 'T'};
 
-	if (howto & RB_HALT)
+	if ((howto & RB_POWEROFF) != 0)
 		pmu_send(sc, PMU_POWER_OFF, 4, cmd, 0, NULL);
-	else
+	else if ((howto & RB_HALT) == 0)
 		pmu_send(sc, PMU_RESET_CPU, 0, NULL, 0, NULL);
+	else
+		return;
 
 	for (;;);
 }

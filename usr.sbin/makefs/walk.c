@@ -37,8 +37,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -605,8 +603,6 @@ inode_type(mode_t mode)
 		return ("symlink");
 	if (S_ISDIR(mode))
 		return ("dir");
-	if (S_ISLNK(mode))
-		return ("link");
 	if (S_ISFIFO(mode))
 		return ("fifo");
 	if (S_ISSOCK(mode))

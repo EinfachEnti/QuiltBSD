@@ -50,7 +50,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/cdefs.h>
 /*-
  * Driver for Atheros AR5523 USB parts.
  *
@@ -183,6 +182,7 @@ static const STRUCT_USB_HOST_ID uath_devs[] = {
 	UATH_DEV(UMEDIA,		AR5523_2),
 	UATH_DEV(WISTRONNEWEB,		AR5523_1),
 	UATH_DEV(WISTRONNEWEB,		AR5523_2),
+	UATH_DEV(WISTRONNEWEB,		AR5523_2_ALT),
 	UATH_DEV(ZCOM,			AR5523)
 #undef UATH_DEV
 };
@@ -1830,6 +1830,8 @@ uath_set_channel(struct ieee80211com *ic)
 		UATH_UNLOCK(sc);
 		return;
 	}
+	/* flush data & control requests into the target  */
+	(void)uath_flush(sc);
 	(void)uath_switch_channel(sc, ic->ic_curchan);
 	UATH_UNLOCK(sc);
 }
@@ -2014,6 +2016,8 @@ uath_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 		break;
 
 	case IEEE80211_S_AUTH:
+		/* flush data & control requests into the target  */
+		(void)uath_flush(sc);
 		/* XXX good place?  set RTS threshold  */
 		uath_config(sc, CFG_USER_RTS_THRESHOLD, vap->iv_rtsthreshold);
 		/* XXX bad place  */
@@ -2053,7 +2057,8 @@ uath_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 		 * Tx rate is controlled by firmware, report the maximum
 		 * negotiated rate in ifconfig output.
 		 */
-		ni->ni_txrate = ni->ni_rates.rs_rates[ni->ni_rates.rs_nrates-1];
+		ieee80211_node_set_txrate_dot11rate(ni,
+		    ni->ni_rates.rs_rates[ni->ni_rates.rs_nrates-1]);
 
 		if (uath_write_associd(sc) != 0) {
 			device_printf(sc->sc_dev,
@@ -2303,10 +2308,12 @@ uath_cmdeof(struct uath_softc *sc, struct uath_cmd *cmd)
 			    __func__, dlen, sizeof(uint32_t));
 			return;
 		}
-		/* XXX have submitter do this */
-		/* copy answer into caller's supplied buffer */
-		bcopy(hdr+1, cmd->odata, sizeof(uint32_t));
-		cmd->olen = sizeof(uint32_t);
+		if (cmd->odata != NULL) {
+			/* XXX have submitter do this */
+			/* copy answer into caller's supplied buffer */
+			bcopy(hdr+1, cmd->odata, sizeof(uint32_t));
+			cmd->olen = sizeof(uint32_t);
+		}
 		wakeup_one(cmd);		/* wake up caller */
 		break;
 
@@ -2703,7 +2710,6 @@ uath_bulk_rx_callback(struct usb_xfer *xfer, usb_error_t error)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_frame *wh;
 	struct ieee80211_node *ni;
-	struct epoch_tracker et;
 	struct mbuf *m = NULL;
 	struct uath_data *data;
 	struct uath_rx_desc *desc = NULL;
@@ -2750,7 +2756,6 @@ setup:
 			ni = ieee80211_find_rxnode(ic,
 			    (struct ieee80211_frame_min *)wh);
 			nf = -95;	/* XXX */
-			NET_EPOCH_ENTER(et);
 			if (ni != NULL) {
 				(void) ieee80211_input(ni, m,
 				    (int)be32toh(desc->rssi), nf);
@@ -2759,7 +2764,6 @@ setup:
 			} else
 				(void) ieee80211_input_all(ic, m,
 				    (int)be32toh(desc->rssi), nf);
-			NET_EPOCH_EXIT(et);
 			m = NULL;
 			desc = NULL;
 		}

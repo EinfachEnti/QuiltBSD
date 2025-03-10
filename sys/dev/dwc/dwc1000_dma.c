@@ -27,7 +27,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -50,8 +49,8 @@
 
 #include <machine/bus.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
 
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -218,6 +217,7 @@ txdesc_setup(struct dwc_softc *sc, int idx, bus_addr_t paddr,
 	sc->txdesc_ring[idx].desc1 = desc1;
 	wmb();
 	sc->txdesc_ring[idx].desc0 |= TDESC0_OWN;
+	wmb();
 }
 
 inline static uint32_t
@@ -238,6 +238,7 @@ rxdesc_setup(struct dwc_softc *sc, int idx, bus_addr_t paddr)
 
 	wmb();
 	sc->rxdesc_ring[idx].desc0 = RDESC0_OWN;
+	wmb();
 	return (nidx);
 }
 
@@ -362,7 +363,7 @@ dwc_rxfinish_one(struct dwc_softc *sc, struct dwc_hwdesc *desc,
 		    (RDESC0_FS | RDESC0_LS)) {
 		/*
 		 * Something very wrong happens. The whole packet should be
-		 * recevied in one descriptr. Report problem.
+		 * received in one descriptor. Report problem.
 		 */
 		device_printf(sc->dev,
 		    "%s: RX descriptor without FIRST and LAST bit set: 0x%08X",
@@ -524,6 +525,7 @@ dma1000_rxfinish_locked(struct dwc_softc *sc)
 		if (m == NULL) {
 			wmb();
 			desc->desc0 = RDESC0_OWN;
+			wmb();
 		} else {
 			/* We cannot create hole in RX ring */
 			error = dma1000_setup_rxbuf(sc, idx, m);

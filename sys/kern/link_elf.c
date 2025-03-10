@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_ddb.h"
 #include "opt_gdb.h"
 
@@ -68,6 +67,10 @@
 #include <sys/link_elf.h>
 
 #include "linker_if.h"
+
+#ifdef DDB_CTF
+#include <ddb/db_ctf.h>
+#endif
 
 #define MAXSEGS 4
 
@@ -142,6 +145,8 @@ static int	link_elf_lookup_symbol(linker_file_t, const char *,
 		    c_linker_sym_t *);
 static int	link_elf_lookup_debug_symbol(linker_file_t, const char *,
 		    c_linker_sym_t *);
+static int 	link_elf_lookup_debug_symbol_ctf(linker_file_t lf,
+		    const char *name, c_linker_sym_t *sym, linker_ctf_t *lc);
 static int	link_elf_symbol_values(linker_file_t, c_linker_sym_t,
 		    linker_symval_t *);
 static int	link_elf_debug_symbol_values(linker_file_t, c_linker_sym_t,
@@ -168,6 +173,7 @@ static int	elf_lookup(linker_file_t, Elf_Size, int, Elf_Addr *);
 static kobj_method_t link_elf_methods[] = {
 	KOBJMETHOD(linker_lookup_symbol,	link_elf_lookup_symbol),
 	KOBJMETHOD(linker_lookup_debug_symbol,	link_elf_lookup_debug_symbol),
+	KOBJMETHOD(linker_lookup_debug_symbol_ctf, link_elf_lookup_debug_symbol_ctf),
 	KOBJMETHOD(linker_symbol_values,	link_elf_symbol_values),
 	KOBJMETHOD(linker_debug_symbol_values,	link_elf_debug_symbol_values),
 	KOBJMETHOD(linker_search_symbol,	link_elf_search_symbol),
@@ -179,6 +185,7 @@ static kobj_method_t link_elf_methods[] = {
 	KOBJMETHOD(linker_each_function_name,	link_elf_each_function_name),
 	KOBJMETHOD(linker_each_function_nameval, link_elf_each_function_nameval),
 	KOBJMETHOD(linker_ctf_get,		link_elf_ctf_get),
+	KOBJMETHOD(linker_ctf_lookup_typename,  link_elf_ctf_lookup_typename),
 	KOBJMETHOD(linker_symtab_get,		link_elf_symtab_get),
 	KOBJMETHOD(linker_strtab_get,		link_elf_strtab_get),
 #ifdef VIMAGE
@@ -351,7 +358,7 @@ link_elf_error(const char *filename, const char *s)
 }
 
 static void
-link_elf_invoke_ctors(caddr_t addr, size_t size)
+link_elf_invoke_cbs(caddr_t addr, size_t size)
 {
 	void (**ctor)(void);
 	size_t i, cnt;
@@ -364,6 +371,17 @@ link_elf_invoke_ctors(caddr_t addr, size_t size)
 		if (ctor[i] != NULL)
 			(*ctor[i])();
 	}
+}
+
+static void
+link_elf_invoke_ctors(linker_file_t lf)
+{
+	KASSERT(lf->ctors_invoked == LF_NONE,
+	    ("%s: file %s ctor state %d",
+	    __func__, lf->filename, lf->ctors_invoked));
+
+	link_elf_invoke_cbs(lf->ctors_addr, lf->ctors_size);
+	lf->ctors_invoked = LF_CTORS;
 }
 
 /*
@@ -396,7 +414,7 @@ link_elf_link_common_finish(linker_file_t lf)
 #endif
 
 	/* Invoke .ctors */
-	link_elf_invoke_ctors(lf->ctors_addr, lf->ctors_size);
+	link_elf_invoke_ctors(lf);
 	return (0);
 }
 
@@ -432,18 +450,14 @@ link_elf_init(void* arg)
 	Elf_Dyn *dp;
 	Elf_Addr *ctors_addrp;
 	Elf_Size *ctors_sizep;
-	caddr_t modptr, baseptr, sizeptr;
+	caddr_t baseptr, sizeptr;
 	elf_file_t ef;
 	const char *modname;
 
 	linker_add_class(&link_elf_class);
 
 	dp = (Elf_Dyn *)&_DYNAMIC;
-	modname = NULL;
-	modptr = preload_search_by_type("elf" __XSTRING(__ELF_WORD_SIZE) " kernel");
-	if (modptr == NULL)
-		modptr = preload_search_by_type("elf kernel");
-	modname = (char *)preload_search_info(modptr, MODINFO_NAME);
+	modname = (char *)preload_search_info(preload_kmdp, MODINFO_NAME);
 	if (modname == NULL)
 		modname = "kernel";
 	linker_kernel_file = linker_make_file(modname, &link_elf_class);
@@ -475,17 +489,17 @@ link_elf_init(void* arg)
 	linker_kernel_file->size = -(intptr_t)linker_kernel_file->address;
 #endif
 
-	if (modptr != NULL) {
-		ef->modptr = modptr;
-		baseptr = preload_search_info(modptr, MODINFO_ADDR);
+	if (preload_kmdp != NULL) {
+		ef->modptr = preload_kmdp;
+		baseptr = preload_search_info(preload_kmdp, MODINFO_ADDR);
 		if (baseptr != NULL)
 			linker_kernel_file->address = *(caddr_t *)baseptr;
-		sizeptr = preload_search_info(modptr, MODINFO_SIZE);
+		sizeptr = preload_search_info(preload_kmdp, MODINFO_SIZE);
 		if (sizeptr != NULL)
 			linker_kernel_file->size = *(size_t *)sizeptr;
-		ctors_addrp = (Elf_Addr *)preload_search_info(modptr,
+		ctors_addrp = (Elf_Addr *)preload_search_info(preload_kmdp,
 			MODINFO_METADATA | MODINFOMD_CTORS_ADDR);
-		ctors_sizep = (Elf_Size *)preload_search_info(modptr,
+		ctors_sizep = (Elf_Size *)preload_search_info(preload_kmdp,
 			MODINFO_METADATA | MODINFOMD_CTORS_SIZE);
 		if (ctors_addrp != NULL && ctors_sizep != NULL) {
 			linker_kernel_file->ctors_addr = ef->address +
@@ -881,9 +895,7 @@ link_elf_link_preload(linker_class_t cls, const char *filename,
 	sizeptr = preload_search_info(modptr, MODINFO_SIZE);
 	dynptr = preload_search_info(modptr,
 	    MODINFO_METADATA | MODINFOMD_DYNAMIC);
-	if (type == NULL ||
-	    (strcmp(type, "elf" __XSTRING(__ELF_WORD_SIZE) " module") != 0 &&
-	     strcmp(type, "elf module") != 0))
+	if (type == NULL || strcmp(type, preload_modtype) != 0)
 		return (EFTYPE);
 	if (baseptr == NULL || sizeptr == NULL || dynptr == NULL)
 		return (EINVAL);
@@ -1589,6 +1601,34 @@ link_elf_lookup_debug_symbol(linker_file_t lf, const char *name,
 }
 
 static int
+link_elf_lookup_debug_symbol_ctf(linker_file_t lf, const char *name,
+    c_linker_sym_t *sym, linker_ctf_t *lc)
+{
+	elf_file_t ef = (elf_file_t)lf;
+	const Elf_Sym *symp;
+	const char *strp;
+	int i;
+
+	for (i = 0, symp = ef->ddbsymtab; i < ef->ddbsymcnt; i++, symp++) {
+		strp = ef->ddbstrtab + symp->st_name;
+		if (strcmp(name, strp) == 0) {
+			if (symp->st_shndx != SHN_UNDEF ||
+			    (symp->st_value != 0 &&
+				(ELF_ST_TYPE(symp->st_info) == STT_FUNC ||
+				    ELF_ST_TYPE(symp->st_info) ==
+					STT_GNU_IFUNC))) {
+				*sym = (c_linker_sym_t)symp;
+				break;
+			}
+			return (ENOENT);
+		}
+	}
+
+	/* Populate CTF info structure if symbol was found. */
+	return (i < ef->ddbsymcnt ? link_elf_ctf_get_ddb(lf, lc) : ENOENT);
+}
+
+static int
 link_elf_symbol_values1(linker_file_t lf, c_linker_sym_t sym,
     linker_symval_t *symval, bool see_local)
 {
@@ -1970,7 +2010,7 @@ elf_lookup_ifunc(linker_file_t lf, Elf_Size symidx, int deps __unused,
 }
 
 void
-link_elf_ireloc(caddr_t kmdp)
+link_elf_ireloc(void)
 {
 	struct elf_file eff;
 	elf_file_t ef;
@@ -1980,7 +2020,7 @@ link_elf_ireloc(caddr_t kmdp)
 
 	bzero_early(ef, sizeof(*ef));
 
-	ef->modptr = kmdp;
+	ef->modptr = preload_kmdp;
 	ef->dynamic = (Elf_Dyn *)&_DYNAMIC;
 
 #ifdef RELOCATABLE_KERNEL

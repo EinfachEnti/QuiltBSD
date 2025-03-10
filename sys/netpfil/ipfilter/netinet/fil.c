@@ -101,10 +101,6 @@ extern struct callout ipf_slowtimer_ch;
 #endif
 /* END OF INCLUDES */
 
-#if !defined(lint)
-static const char sccsid[] = "@(#)fil.c	1.36 6/5/96 (C) 1993-2000 Darren Reed";
-/* static const char rcsid[] = "@(#)$Id: fil.c,v 2.243.2.125 2007/10/10 09:27:20 darrenr Exp $"; */
-#endif
 
 #ifndef	_KERNEL
 # include "ipf.h"
@@ -1334,8 +1330,8 @@ ipf_pr_tcpcommon(fr_info_t *fin)
 		return (1);
 	}
 
-	flags = tcp->th_flags;
-	fin->fin_tcpf = tcp->th_flags;
+	flags = tcp_get_flags(tcp);
+	fin->fin_tcpf = tcp_get_flags(tcp);
 
 	/*
 	 * If the urgent flag is set, then the urgent pointer must
@@ -5956,7 +5952,7 @@ ipf_updateipid(fr_info_t *fin)
 		id = (u_short)sum;
 		ip->ip_id = htons(id);
 	} else {
-		ip_fillid(ip);
+		ip_fillid(ip, V_ip_random_id);
 		id = ntohs(ip->ip_id);
 		if ((fin->fin_flx & FI_FRAG) != 0)
 			(void) ipf_frag_ipidnew(fin, (u_32_t)id);
@@ -7894,14 +7890,14 @@ ipf_genericiter(ipf_main_softc_t *softc, void *data, int uid, void *ctx)
 /* ------------------------------------------------------------------------ */
 /* Function:    ipf_ipf_ioctl                                               */
 /* Returns:     int - 0 = success, else error                               */
-/* Parameters:  softc(I)- pointer to soft context main structure           */
+/* Parameters:  softc(I)- pointer to soft context main structure            */
 /*              data(I) - the token type to match                           */
 /*              cmd(I)  - the ioctl command number                          */
 /*              mode(I) - mode flags for the ioctl                          */
 /*              uid(I)  - uid owning the token                              */
 /*              ptr(I)  - context pointer for the token                     */
 /*                                                                          */
-/* This function handles all of the ioctl command that are actually isssued */
+/* This function handles all of the ioctl command that are actually issued  */
 /* to the /dev/ipl device.                                                  */
 /* ------------------------------------------------------------------------ */
 int

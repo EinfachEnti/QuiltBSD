@@ -32,7 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <sys/types.h>
@@ -50,6 +49,5 @@ fcntl(int fd, int cmd, ...)
 	arg = va_arg(args, long);
 	va_end(args);
 
-	return (((int (*)(int, int, ...))
-	    __libc_interposing[INTERPOS_fcntl])(fd, cmd, arg));
+	return (INTERPOS_SYS(fcntl, fd, cmd, arg));
 }

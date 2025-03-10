@@ -28,9 +28,6 @@
 # LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
-#
-#	@(#)shar.sh	8.1 (Berkeley) 6/6/93
-#
 
 if [ $# -eq 0 ]; then
 	echo 'usage: shar file ...' 1>&2
@@ -64,14 +61,14 @@ echo "#"
 
 for i
 do
-	if [ -d $i ]; then
-		echo "echo c - $i"
-		echo "mkdir -p $i > /dev/null 2>&1"
+	if [ -d "$i" ]; then
+		echo "echo c - '$i'"
+		echo "mkdir -p '$i' > /dev/null 2>&1"
 	else
-		md5sum=`echo -n $i | md5`
-		echo "echo x - $i"
-		echo "sed 's/^X//' >$i << '$md5sum'"
-		sed 's/^/X/' $i || exit
+		md5sum=`echo -n "$i" | md5`
+		echo "echo x - '$i'"
+		echo "sed 's/^X//' >'$i' << '$md5sum'"
+		sed 's/^/X/' "$i" || exit 1
 		echo "$md5sum"
 	fi
 done

@@ -29,7 +29,6 @@
 
 /* Driver for DM&P Electronics, Inc, Vortex86 RDC R6040 FastEthernet. */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -436,12 +435,6 @@ vte_attach(device_t dev)
 	vte_get_macaddr(sc);
 
 	ifp = sc->vte_ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(dev, "cannot allocate ifnet structure.\n");
-		error = ENXIO;
-		goto fail;
-	}
-
 	if_setsoftc(ifp, sc);
 	if_initname(ifp, device_get_name(dev), device_get_unit(dev));
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
@@ -513,10 +506,6 @@ vte_detach(device_t dev)
 		ether_ifdetach(ifp);
 	}
 
-	if (sc->vte_miibus != NULL) {
-		device_delete_child(dev, sc->vte_miibus);
-		sc->vte_miibus = NULL;
-	}
 	bus_generic_detach(dev);
 
 	if (sc->vte_intrhand != NULL) {

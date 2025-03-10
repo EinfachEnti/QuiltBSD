@@ -29,7 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/ioccom.h>
 
@@ -62,18 +61,21 @@ print_intel_temp_stats(const struct nvme_controller_data *cdata __unused, void *
 	printf("=====================\n");
 
 	printf("Current:                        ");
-	print_temp_C(temp->current);
-	printf("Overtemp Last Flags             %#jx\n", (uintmax_t)temp->overtemp_flag_last);
-	printf("Overtemp Lifetime Flags         %#jx\n", (uintmax_t)temp->overtemp_flag_life);
+	print_temp_C(letoh(temp->current));
+	printf("Overtemp Last Flags             %#jx\n",
+	    (uintmax_t)letoh(temp->overtemp_flag_last));
+	printf("Overtemp Lifetime Flags         %#jx\n",
+	    (uintmax_t)letoh(temp->overtemp_flag_life));
 	printf("Max Temperature                 ");
-	print_temp_C(temp->max_temp);
+	print_temp_C(letoh(temp->max_temp));
 	printf("Min Temperature                 ");
-	print_temp_C(temp->min_temp);
+	print_temp_C(letoh(temp->min_temp));
 	printf("Max Operating Temperature       ");
-	print_temp_C(temp->max_oper_temp);
+	print_temp_C(letoh(temp->max_oper_temp));
 	printf("Min Operating Temperature       ");
-	print_temp_C(temp->min_oper_temp);
-	printf("Estimated Temperature Offset:   %ju C/K\n", (uintmax_t)temp->est_offset);
+	print_temp_C(letoh(temp->min_oper_temp));
+	printf("Estimated Temperature Offset:   %ju C/K\n",
+	    (uintmax_t)letoh(temp->est_offset));
 }
 
 /*
@@ -116,6 +118,8 @@ print_intel_write_lat_log(const struct nvme_controller_data *cdata __unused, voi
 
 /*
  * Table 19. 5.4 SMART Attributes. Others also implement this and some extra data not documented.
+ * Note: different models implement the same key values to mean different things. To fix that,
+ * we'd need to index this to a vendor/device values.
  */
 void
 print_intel_add_smart(const struct nvme_controller_data *cdata __unused, void *buf, uint32_t size __unused)
@@ -136,11 +140,15 @@ print_intel_add_smart(const struct nvme_controller_data *cdata __unused, void *b
 		{ 0xe2, "Timed: Media Wear" },
 		{ 0xe3, "Timed: Host Read %" },
 		{ 0xe4, "Timed: Elapsed Time" },
+		{ 0xe7, "Lifetime Temperature" },
+		{ 0xe8, "Power" },
 		{ 0xea, "Thermal Throttle Status" },
 		{ 0xf0, "Retry Buffer Overflows" },
 		{ 0xf3, "PLL Lock Loss Count" },
 		{ 0xf4, "NAND Bytes Written" },
 		{ 0xf5, "Host Bytes Written" },
+		{ 0xf9, "NAND GiB Written" },
+		{ 0xfa, "NAND GiB Read" },
 	};
 
 	printf("Additional SMART Data Log\n");
@@ -168,11 +176,19 @@ print_intel_add_smart(const struct nvme_controller_data *cdata __unused, void *b
 		case 0xe2:
 			printf("%-32s: %3d %.3f%%\n", name, normalized, raw / 1024.0);
 			break;
+		case 0xe7:
+			printf("%-32s: %3d %#jx max: %dK min: %dK cur: %dK\n", name, normalized,
+			    (uintmax_t)raw, le16dec(walker+5), le16dec(walker+7), le16dec(walker+9));
+			break;
+		case 0xe8:
+			printf("%-32s: %3d %#jx max: %dW min: %dW cur: %dW\n", name, normalized,
+			    (uintmax_t)raw, le16dec(walker+5), le16dec(walker+7), le16dec(walker+9));
+			break;
 		case 0xea:
 			printf("%-32s: %3d %d%% %d times\n", name, normalized, walker[5], le32dec(walker+6));
 			break;
 		default:
-			printf("%-32s: %3d %ju\n", name, normalized, (uintmax_t)raw);
+			printf("%-32s: %3d %ju %#jx\n", name, normalized, (uintmax_t)raw, (uintmax_t)raw);
 			break;
 		}
 		walker += 12;
@@ -188,6 +204,6 @@ NVME_LOGPAGE(intel_rlat,
 NVME_LOGPAGE(intel_wlat,
     INTEL_LOG_WRITE_LAT_LOG,		"intel", "Write Latencies",
     print_intel_write_lat_log,		DEFAULT_SIZE);
-NVME_LOGPAGE(intel_smart,
+NVME_LOGPAGE(intel_smart,	/* Note: Samsung and Micron also use this */
     INTEL_LOG_ADD_SMART,		"intel", "Extra Health/SMART Data",
     print_intel_add_smart,		DEFAULT_SIZE);

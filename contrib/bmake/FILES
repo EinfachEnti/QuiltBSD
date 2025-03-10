@@ -593,6 +593,8 @@ unit-tests/shell-ksh.exp
 unit-tests/shell-ksh.mk
 unit-tests/shell-sh.exp
 unit-tests/shell-sh.mk
+unit-tests/suff.exp
+unit-tests/suff.mk
 unit-tests/suff-add-later.exp
 unit-tests/suff-add-later.mk
 unit-tests/suff-clear-regular.exp
@@ -759,6 +761,8 @@ unit-tests/varmod-to-one-word.exp
 unit-tests/varmod-to-one-word.mk
 unit-tests/varmod-to-separator.exp
 unit-tests/varmod-to-separator.mk
+unit-tests/varmod-to-title.exp
+unit-tests/varmod-to-title.mk
 unit-tests/varmod-to-upper.exp
 unit-tests/varmod-to-upper.mk
 unit-tests/varmod-undefined.exp

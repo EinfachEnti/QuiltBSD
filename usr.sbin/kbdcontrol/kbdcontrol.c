@@ -1038,8 +1038,10 @@ badopt:
 			warnx("argument to -b must be duration.pitch or [quiet.]visual|normal|off");
 			return;
 		}
-		if (pitch != 0)
-			pitch = 1193182 / pitch;	/* in Hz */
+		if (!is_vt4()) {
+			if (pitch != 0)
+				pitch = 1193182 / pitch;	/* in Hz */
+		}
 		duration /= 10;	/* in 10 m sec */
 	}
 
@@ -1117,7 +1119,7 @@ get_kbd_type_name(int type)
 	};
 	unsigned int i;
 
-	for (i = 0; i < sizeof(name_table)/sizeof(name_table[0]); ++i) {
+	for (i = 0; i < nitems(name_table); ++i) {
 		if (type == name_table[i].type)
 			return name_table[i].name;
 	}

@@ -57,6 +57,17 @@
 
 void _rtld_bind_secureplt_start(void);
 
+bool
+arch_digest_dynamic(struct Struct_Obj_Entry *obj, const Elf_Dyn *dynp)
+{
+	if (dynp->d_tag == DT_PPC_GOT) {
+		obj->gotptr = (Elf_Addr *)(obj->relocbase + dynp->d_un.d_ptr);
+		return (true);
+	}
+
+	return (false);
+}
+
 /*
  * Process the R_PPC_COPY relocations
  */
@@ -802,7 +813,7 @@ powerpc_abi_variant_hook(Elf_Auxinfo** aux_info)
 }
 
 void
-ifunc_init(Elf_Auxinfo aux_info[__min_size(AT_COUNT)] __unused)
+ifunc_init(Elf_Auxinfo *aux_info[__min_size(AT_COUNT)] __unused)
 {
 
 }
@@ -817,7 +828,8 @@ allocate_initial_tls(Obj_Entry *list)
 	* use.
 	*/
 
-	tls_static_space = tls_last_offset + tls_last_size + RTLD_STATIC_TLS_EXTRA;
+	tls_static_space = tls_last_offset + tls_last_size +
+	    ld_static_tls_extra;
 
 	_tcb_set(allocate_tls(list, NULL, TLS_TCB_SIZE, TLS_TCB_ALIGN));
 }

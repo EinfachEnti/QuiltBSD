@@ -24,7 +24,7 @@
  * SUCH DAMAGE.
  *
  */
-#include <sys/cdefs.h>
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -194,9 +194,9 @@ fsl_espi_attach(device_t dev)
 	/* Disable all interrupts until we start transfers  */
 	FSL_ESPI_WRITE(sc, ESPI_SPIM, 0);
 
-	device_add_child(dev, "spibus", -1);
-
-	return (bus_generic_attach(dev));
+	device_add_child(dev, "spibus", DEVICE_UNIT_ANY);
+	bus_attach_children(dev);
+	return (0);
 }
 
 static int

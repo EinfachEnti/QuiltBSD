@@ -35,7 +35,6 @@
  * and register definitions are in appendix B.18.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -76,7 +75,7 @@
 #include <dev/mii/miivar.h>
 #include <dev/mii/mii_fdt.h>
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #if BUS_SPACE_MAXADDR > BUS_SPACE_MAXADDR_32BIT
 #define CGEM64
@@ -1814,11 +1813,6 @@ cgem_attach(device_t dev)
 
 	/* Set up ifnet structure. */
 	ifp = sc->ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(dev, "could not allocate ifnet structure\n");
-		cgem_detach(dev);
-		return (ENOMEM);
-	}
 	if_setsoftc(ifp, sc);
 	if_initname(ifp, IF_CGEM_NAME, device_get_unit(dev));
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
@@ -1915,10 +1909,7 @@ cgem_detach(device_t dev)
 		ether_ifdetach(sc->ifp);
 	}
 
-	if (sc->miibus != NULL) {
-		device_delete_child(dev, sc->miibus);
-		sc->miibus = NULL;
-	}
+	bus_generic_detach(dev);
 
 	/* Release resources. */
 	if (sc->mem_res != NULL) {
@@ -1970,8 +1961,6 @@ cgem_detach(device_t dev)
 		bus_dma_tag_destroy(sc->mbuf_dma_tag);
 		sc->mbuf_dma_tag = NULL;
 	}
-
-	bus_generic_detach(dev);
 
 	if (sc->clk_tsuclk)
 		clk_release(sc->clk_tsuclk);

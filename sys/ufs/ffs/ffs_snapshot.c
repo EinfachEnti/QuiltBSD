@@ -31,8 +31,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ffs_snapshot.c	8.11 (McKusick) 7/23/00
  */
 
 #include <sys/cdefs.h>
@@ -224,6 +222,15 @@ ffs_snapshot(struct mount *mp, char *snapfile)
 	ump = VFSTOUFS(mp);
 	fs = ump->um_fs;
 	sn = NULL;
+	/*
+	 * At the moment, filesystems using gjournal cannot support
+	 * taking snapshots.
+	 */
+	if ((mp->mnt_flag & MNT_GJOURNAL) != 0) {
+		vfs_mount_error(mp, "%s: Snapshots are not yet supported when "
+		    "using gjournal", fs->fs_fsmnt);
+		return (EOPNOTSUPP);
+	}
 	MNT_ILOCK(mp);
 	flag = mp->mnt_flag;
 	MNT_IUNLOCK(mp);
@@ -831,7 +838,7 @@ resumefs:
 		copy_fs->fs_fmod = 0;
 		bpfs = (struct fs *)&nbp->b_data[loc];
 		bcopy((caddr_t)copy_fs, (caddr_t)bpfs, (uint64_t)fs->fs_sbsize);
-		ffs_oldfscompat_write(bpfs, ump);
+		ffs_oldfscompat_write(bpfs);
 		bpfs->fs_ckhash = ffs_calc_sbhash(bpfs);
 		bawrite(nbp);
 	}
@@ -2336,9 +2343,8 @@ ffs_copyonwrite(struct vnode *devvp, struct buf *bp)
 		    TAILQ_EMPTY(&sn->sn_head)) {
 			VI_UNLOCK(devvp);
 			if (saved_runningbufspace != 0) {
-				bp->b_runningbufspace = saved_runningbufspace;
-				atomic_add_long(&runningbufspace,
-					       bp->b_runningbufspace);
+				(void)runningbufclaim(bp,
+				    saved_runningbufspace);
 			}
 			return (0);		/* Snapshot gone */
 		}
@@ -2472,10 +2478,8 @@ ffs_copyonwrite(struct vnode *devvp, struct buf *bp)
 	/*
 	 * I/O on bp will now be started, so count it in runningbufspace.
 	 */
-	if (saved_runningbufspace != 0) {
-		bp->b_runningbufspace = saved_runningbufspace;
-		atomic_add_long(&runningbufspace, bp->b_runningbufspace);
-	}
+	if (saved_runningbufspace != 0)
+		(void)runningbufclaim(bp, saved_runningbufspace);
 	return (error);
 }
 

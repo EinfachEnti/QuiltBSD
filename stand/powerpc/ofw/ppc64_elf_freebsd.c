@@ -24,7 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #define __ELF_WORD_SIZE 64
 
 #include <sys/param.h>
@@ -58,7 +57,7 @@ ppc64_ofw_elf_loadfile(char *filename, uint64_t dest,
 	 * No need to sync the icache for modules: this will
 	 * be done by the kernel after relocation.
 	 */
-	if (!strcmp((*result)->f_type, "elf kernel"))
+	if (!strcmp((*result)->f_type, md_kerntype))
 		__syncicache((void *) (*result)->f_addr, (*result)->f_size);
 	return (0);
 }

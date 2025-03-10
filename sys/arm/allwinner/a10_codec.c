@@ -28,7 +28,6 @@
  * Allwinner A10/A20 and H3 Audio Codec
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -41,15 +40,14 @@
 #include <machine/bus.h>
 
 #include <dev/sound/pcm/sound.h>
-#include <dev/sound/chip.h>
 
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
 #include <dev/gpio/gpiobusvar.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
 
 #include "sunxi_dma_if.h"
 #include "mixer_if.h"
@@ -1167,16 +1165,16 @@ a10codec_attach(device_t dev)
 
 	pcm_setflags(dev, pcm_getflags(dev) | SD_F_MPSAFE);
 
-	if (pcm_register(dev, sc, 1, 1)) {
-		device_printf(dev, "pcm_register failed\n");
-		goto fail;
-	}
+	pcm_init(dev, sc);
 
 	pcm_addchan(dev, PCMDIR_PLAY, &a10codec_chan_class, sc);
 	pcm_addchan(dev, PCMDIR_REC, &a10codec_chan_class, sc);
 
 	snprintf(status, SND_STATUSLEN, "at %s", ofw_bus_get_name(dev));
-	pcm_setstatus(dev, status);
+	if (pcm_register(dev, status)) {
+		device_printf(dev, "pcm_register failed\n");
+		goto fail;
+	}
 
 	return (0);
 

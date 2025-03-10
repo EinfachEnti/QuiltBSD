@@ -312,7 +312,7 @@ ipfw_table_handler(int ac, char *av[])
 
 void
 table_fill_ntlv(ipfw_obj_ntlv *ntlv, const char *name, uint8_t set,
-    uint16_t uidx)
+    uint32_t uidx)
 {
 
 	ntlv->head.type = IPFW_TLV_TBL_NAME;
@@ -1037,6 +1037,9 @@ table_modify_record(ipfw_obj_header *oh, int ac, char *av[], int add,
 		}
 	}
 
+	/* Get real OS error */
+	error = errno;
+
 	/* Report results back */
 	ptent = tent_buf;
 	for (i = 0; i < count; ptent++, i++) {
@@ -1089,8 +1092,6 @@ table_modify_record(ipfw_obj_header *oh, int ac, char *av[], int add,
 
 	if (error == 0)
 		return;
-	/* Get real OS error */
-	error = errno;
 
 	/* Try to provide more human-readable error */
 	switch (error) {

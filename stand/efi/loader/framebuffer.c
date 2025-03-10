@@ -25,7 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <bootstrap.h>
 #include <sys/endian.h>
 #include <sys/param.h>
@@ -76,6 +75,11 @@ static struct named_resolution {
 		.name = "1080p",
 		.width = 1920,
 		.height = 1080,
+	},
+	{
+		.name = "1440p",
+		.width = 2560,
+		.height = 1440,
 	},
 	{
 		.name = "2160p",
@@ -145,7 +149,16 @@ efifb_from_gop(struct efi_fb *efifb, EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *mode,
 {
 	int result;
 
-	efifb->fb_addr = mode->FrameBufferBase;
+	/*
+	 * The Asus EEEPC 1025C, and possibly others,
+	 * require the address to be masked.
+	 */
+	efifb->fb_addr =
+#ifdef __i386__
+	    mode->FrameBufferBase & 0xffffffff;
+#else
+	    mode->FrameBufferBase;
+#endif
 	efifb->fb_size = mode->FrameBufferSize;
 	efifb->fb_height = info->VerticalResolution;
 	efifb->fb_width = info->HorizontalResolution;
@@ -551,6 +564,7 @@ efi_has_gop(void)
 int
 efi_find_framebuffer(teken_gfx_t *gfx_state)
 {
+	EFI_PHYSICAL_ADDRESS ptr;
 	EFI_HANDLE *hlist;
 	UINTN nhandles, i, hsize;
 	struct efi_fb efifb;
@@ -647,16 +661,15 @@ efi_find_framebuffer(teken_gfx_t *gfx_state)
 	    efifb.fb_mask_blue | efifb.fb_mask_reserved);
 
 	if (gfx_state->tg_shadow_fb != NULL)
-		BS->FreePages((EFI_PHYSICAL_ADDRESS)gfx_state->tg_shadow_fb,
+		BS->FreePages((uintptr_t)gfx_state->tg_shadow_fb,
 		    gfx_state->tg_shadow_sz);
 	gfx_state->tg_shadow_sz =
 	    EFI_SIZE_TO_PAGES(efifb.fb_height * efifb.fb_width *
 	    sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
-	status = BS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
-	    gfx_state->tg_shadow_sz,
-	    (EFI_PHYSICAL_ADDRESS *)&gfx_state->tg_shadow_fb);
-	if (status != EFI_SUCCESS)
-		gfx_state->tg_shadow_fb = NULL;
+	status = BS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+	    gfx_state->tg_shadow_sz, &ptr);
+	gfx_state->tg_shadow_fb = status == EFI_SUCCESS ?
+	    (uint32_t *)(uintptr_t)ptr : NULL;
 
 	return (0);
 }
@@ -843,6 +856,7 @@ command_gop(int argc, char *argv[])
 	struct efi_fb efifb;
 	EFI_STATUS status;
 	u_int mode;
+	extern bool ignore_gop_blt;
 
 	if (gop == NULL) {
 		snprintf(command_errbuf, sizeof(command_errbuf),
@@ -853,7 +867,7 @@ command_gop(int argc, char *argv[])
 	if (argc < 2)
 		goto usage;
 
-	if (!strcmp(argv[1], "set")) {
+	if (strcmp(argv[1], "set") == 0) {
 		char *cp;
 
 		if (argc != 3)
@@ -871,7 +885,26 @@ command_gop(int argc, char *argv[])
 			return (CMD_ERROR);
 		}
 		(void) cons_update_mode(true);
+	} else if (strcmp(argv[1], "blt") == 0) {
+		/*
+		 * "blt on" does allow gop->Blt() to be used (default).
+		 * "blt off" does block gop->Blt() to be used and use
+		 * software rendering instead.
+		 */
+		if (argc != 3)
+			goto usage;
+		if (strcmp(argv[2], "on") == 0)
+			ignore_gop_blt = false;
+		else if (strcmp(argv[2], "off") == 0)
+			ignore_gop_blt = true;
+		else
+			goto usage;
 	} else if (strcmp(argv[1], "off") == 0) {
+		/*
+		 * Tell console to use SimpleTextOutput protocol.
+		 * This means that we do not render the glyphs, but rely on
+		 * UEFI firmware to draw on ConsOut device(s).
+		 */
 		(void) cons_update_mode(false);
 	} else if (strcmp(argv[1], "get") == 0) {
 		edid_res_list_t res;
@@ -895,7 +928,7 @@ command_gop(int argc, char *argv[])
 		}
 		print_efifb(gop->Mode->Mode, &efifb, 1);
 		printf("\n");
-	} else if (!strcmp(argv[1], "list")) {
+	} else if (strcmp(argv[1], "list") == 0) {
 		EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
 		UINTN infosz;
 
@@ -918,7 +951,7 @@ command_gop(int argc, char *argv[])
 
  usage:
 	snprintf(command_errbuf, sizeof(command_errbuf),
-	    "usage: %s [list | get | set <mode> | off]", argv[0]);
+	    "usage: %s [list | get | set <mode> | off | blt <on|off>]", argv[0]);
 	return (CMD_ERROR);
 }
 

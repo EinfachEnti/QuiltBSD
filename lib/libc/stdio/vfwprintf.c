@@ -37,12 +37,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)vfprintf.c	8.1 (Berkeley) 6/4/93";
-#endif /* LIBC_SCCS and not lint */
-#endif
-#include <sys/cdefs.h>
 /*
  * Actual wprintf innards.
  *
@@ -375,13 +369,9 @@ vfwprintf(FILE * __restrict fp, const wchar_t * __restrict fmt0, va_list ap)
 /*
  * The size of the buffer we use as scratch space for integer
  * conversions, among other things.  We need enough space to
- * write a uintmax_t in octal (plus one byte).
+ * write a uintmax_t in binary.
  */
-#if UINTMAX_MAX <= UINT64_MAX
-#define	BUF	32
-#else
-#error "BUF must be large enough to format a uintmax_t"
-#endif
+#define BUF	(sizeof(uintmax_t) * CHAR_BIT)
 
 /*
  * Non-MT-safe version

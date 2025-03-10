@@ -26,8 +26,6 @@
  * RCSid:
  *	from: signer.c,v 1.10 2018/03/23 01:14:30 sjg
  *
- *	@(#) Copyright (c) 2012 Simon J. Gerraty
- *
  *	This file is provided in the hope that it will
  *	be of use.  There is absolutely NO WARRANTY.
  *	Permission to copy, redistribute or otherwise
@@ -341,8 +339,19 @@ openpgp_verify(const char *filename,
 				mlen = br_sha256_SIZE;
 				hash_oid = BR_HASH_OID_SHA256;
 				break;
+			case 9:			/* sha384 */
+				md = &br_sha384_vtable;
+				mlen = br_sha384_SIZE;
+				hash_oid = BR_HASH_OID_SHA384;
+				break;
+			case 10:		/* sha512 */
+				md = &br_sha512_vtable;
+				mlen = br_sha512_SIZE;
+				hash_oid = BR_HASH_OID_SHA512;
+				break;
 			default:
 				warnx("unsupported hash algorithm: %s", hname);
+				rc = -1;
 				goto oops;
 			}
 			md->init(&mctx.vtable);

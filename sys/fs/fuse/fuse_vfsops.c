@@ -60,7 +60,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/buf.h>
 #include <sys/module.h>
@@ -287,7 +286,7 @@ fuse_vfsop_fhtovp(struct mount *mp, struct fid *fhp, int flags,
 		return (ESTALE);
 	}
 	*vpp = nvp;
-	vnode_create_vobject(*vpp, 0, curthread);
+	vnode_create_vobject(*vpp, VNODE_NO_SIZE, curthread);
 	return (0);
 }
 
@@ -566,7 +565,7 @@ fuse_vfsop_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 	error = fdisp_wait_answ(&fdi);
 
 	if (error)
-		return error;
+		goto out;
 
 	feo = (struct fuse_entry_out *)fdi.answ;
 	if (feo->nodeid == 0) {

@@ -26,6 +26,9 @@
 #include <linux/compat.h>
 #endif
 #include <linux/fs.h>
+#ifdef HAVE_VFS_SPLICE_COPY_FILE_RANGE
+#include <linux/splice.h>
+#endif
 #include <sys/file.h>
 #include <sys/zfs_znode.h>
 #include <sys/zfs_vnops.h>
@@ -38,7 +41,7 @@
  * care of that depending on how it was called.
  */
 static ssize_t
-__zpl_clone_file_range(struct file *src_file, loff_t src_off,
+zpl_clone_file_range_impl(struct file *src_file, loff_t src_off,
     struct file *dst_file, loff_t dst_off, size_t len)
 {
 	struct inode *src_i = file_inode(src_file);
@@ -49,6 +52,9 @@ __zpl_clone_file_range(struct file *src_file, loff_t src_off,
 	cred_t *cr = CRED();
 	fstrans_cookie_t cookie;
 	int err;
+
+	if (!zfs_bclone_enabled)
+		return (-EOPNOTSUPP);
 
 	if (!spa_feature_is_enabled(
 	    dmu_objset_spa(ITOZSB(dst_i)->z_os), SPA_FEATURE_BLOCK_CLONING))
@@ -77,8 +83,6 @@ __zpl_clone_file_range(struct file *src_file, loff_t src_off,
 	return ((ssize_t)len_o);
 }
 
-#if defined(HAVE_VFS_COPY_FILE_RANGE) || \
-    defined(HAVE_VFS_FILE_OPERATIONS_EXTEND)
 /*
  * Entry point for copy_file_range(). Copy len bytes from src_off in src_file
  * to dst_off in dst_file. We are permitted to do this however we like, so we
@@ -91,14 +95,15 @@ zpl_copy_file_range(struct file *src_file, loff_t src_off,
 {
 	ssize_t ret;
 
+	/* Flags is reserved for future extensions and must be zero. */
 	if (flags != 0)
 		return (-EINVAL);
 
-	/* Try to do it via zfs_clone_range() */
-	ret = __zpl_clone_file_range(src_file, src_off,
+	/* Try to do it via zfs_clone_range() and allow shortening. */
+	ret = zpl_clone_file_range_impl(src_file, src_off,
 	    dst_file, dst_off, len);
 
-#ifdef HAVE_VFS_GENERIC_COPY_FILE_RANGE
+#if defined(HAVE_VFS_GENERIC_COPY_FILE_RANGE)
 	/*
 	 * Since Linux 5.3 the filesystem driver is responsible for executing
 	 * an appropriate fallback, and a generic fallback function is provided.
@@ -107,6 +112,15 @@ zpl_copy_file_range(struct file *src_file, loff_t src_off,
 	    ret == -EAGAIN)
 		ret = generic_copy_file_range(src_file, src_off, dst_file,
 		    dst_off, len, flags);
+#elif defined(HAVE_VFS_SPLICE_COPY_FILE_RANGE)
+	/*
+	 * Since 6.8 the fallback function is called splice_copy_file_range
+	 * and has a slightly different signature.
+	 */
+	if (ret == -EOPNOTSUPP || ret == -EINVAL || ret == -EXDEV ||
+	    ret == -EAGAIN)
+		ret = splice_copy_file_range(src_file, src_off, dst_file,
+		    dst_off, len);
 #else
 	/*
 	 * Before Linux 5.3 the filesystem has to return -EOPNOTSUPP to signal
@@ -114,11 +128,10 @@ zpl_copy_file_range(struct file *src_file, loff_t src_off,
 	 */
 	if (ret == -EINVAL || ret == -EXDEV || ret == -EAGAIN)
 		ret = -EOPNOTSUPP;
-#endif /* HAVE_VFS_GENERIC_COPY_FILE_RANGE */
+#endif /* HAVE_VFS_GENERIC_COPY_FILE_RANGE || HAVE_VFS_SPLICE_COPY_FILE_RANGE */
 
 	return (ret);
 }
-#endif /* HAVE_VFS_COPY_FILE_RANGE || HAVE_VFS_FILE_OPERATIONS_EXTEND */
 
 #ifdef HAVE_VFS_REMAP_FILE_RANGE
 /*
@@ -132,6 +145,11 @@ zpl_copy_file_range(struct file *src_file, loff_t src_off,
  * FIDEDUPERANGE is for turning a non-clone into a clone, that is, compare the
  * range in both files and if they're the same, arrange for them to be backed
  * by the same storage.
+ *
+ * REMAP_FILE_CAN_SHORTEN lets us know we can clone less than the given range
+ * if we want. It's designed for filesystems that may need to shorten the
+ * length for alignment, EOF, or any other requirement. ZFS may shorten the
+ * request when there is outstanding dirty data which hasn't been written.
  */
 loff_t
 zpl_remap_file_range(struct file *src_file, loff_t src_off,
@@ -140,29 +158,25 @@ zpl_remap_file_range(struct file *src_file, loff_t src_off,
 	if (flags & ~(REMAP_FILE_DEDUP | REMAP_FILE_CAN_SHORTEN))
 		return (-EINVAL);
 
-	/*
-	 * REMAP_FILE_CAN_SHORTEN lets us know we can clone less than the given
-	 * range if we want. Its designed for filesystems that make data past
-	 * EOF available, and don't want it to be visible in both files. ZFS
-	 * doesn't do that, so we just turn the flag off.
-	 */
-	flags &= ~REMAP_FILE_CAN_SHORTEN;
-
+	/* No support for dedup yet */
 	if (flags & REMAP_FILE_DEDUP)
-		/* No support for dedup yet */
 		return (-EOPNOTSUPP);
 
 	/* Zero length means to clone everything to the end of the file */
 	if (len == 0)
 		len = i_size_read(file_inode(src_file)) - src_off;
 
-	return (__zpl_clone_file_range(src_file, src_off,
-	    dst_file, dst_off, len));
+	ssize_t ret = zpl_clone_file_range_impl(src_file, src_off,
+	    dst_file, dst_off, len);
+
+	if (!(flags & REMAP_FILE_CAN_SHORTEN) && ret >= 0 && ret != len)
+		ret = -EINVAL;
+
+	return (ret);
 }
 #endif /* HAVE_VFS_REMAP_FILE_RANGE */
 
-#if defined(HAVE_VFS_CLONE_FILE_RANGE) || \
-    defined(HAVE_VFS_FILE_OPERATIONS_EXTEND)
+#if defined(HAVE_VFS_CLONE_FILE_RANGE)
 /*
  * Entry point for FICLONE and FICLONERANGE, before Linux 4.20.
  */
@@ -174,10 +188,16 @@ zpl_clone_file_range(struct file *src_file, loff_t src_off,
 	if (len == 0)
 		len = i_size_read(file_inode(src_file)) - src_off;
 
-	return (__zpl_clone_file_range(src_file, src_off,
-	    dst_file, dst_off, len));
+	/* The entire length must be cloned or this is an error. */
+	ssize_t ret = zpl_clone_file_range_impl(src_file, src_off,
+	    dst_file, dst_off, len);
+
+	if (ret >= 0 && ret != len)
+		ret = -EINVAL;
+
+	return (ret);
 }
-#endif /* HAVE_VFS_CLONE_FILE_RANGE || HAVE_VFS_FILE_OPERATIONS_EXTEND */
+#endif /* HAVE_VFS_CLONE_FILE_RANGE */
 
 #ifdef HAVE_VFS_DEDUPE_FILE_RANGE
 /*
@@ -209,8 +229,7 @@ zpl_ioctl_ficlone(struct file *dst_file, void *arg)
 
 	size_t len = i_size_read(file_inode(src_file));
 
-	ssize_t ret =
-	    __zpl_clone_file_range(src_file, 0, dst_file, 0, len);
+	ssize_t ret = zpl_clone_file_range_impl(src_file, 0, dst_file, 0, len);
 
 	fput(src_file);
 
@@ -248,7 +267,7 @@ zpl_ioctl_ficlonerange(struct file *dst_file, void __user *arg)
 	if (len == 0)
 		len = i_size_read(file_inode(src_file)) - fcr.fcr_src_offset;
 
-	ssize_t ret = __zpl_clone_file_range(src_file, fcr.fcr_src_offset,
+	ssize_t ret = zpl_clone_file_range_impl(src_file, fcr.fcr_src_offset,
 	    dst_file, fcr.fcr_dest_offset, len);
 
 	fput(src_file);

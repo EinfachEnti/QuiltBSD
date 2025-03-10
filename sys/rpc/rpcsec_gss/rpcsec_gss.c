@@ -64,7 +64,6 @@
   $Id: auth_gss.c,v 1.32 2002/01/15 15:43:00 andros Exp $
 */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/hash.h>
@@ -548,8 +547,7 @@ rpc_gss_marshal(AUTH *auth, uint32_t xid, XDR *xdrs, struct mbuf *args)
 			_rpc_gss_set_error(RPC_GSS_ER_SYSTEMERROR, ENOMEM);
 			return (FALSE);
 		}
-		xdrmbuf_append(xdrs, args);
-		return (TRUE);
+		return (xdr_putmbuf(xdrs, args));
 	} else {
 		/*
 		 * Keep track of this XID + seq pair so that we can do
@@ -597,15 +595,13 @@ rpc_gss_marshal(AUTH *auth, uint32_t xid, XDR *xdrs, struct mbuf *args)
 		}
 		if (gd->gd_state != RPCSEC_GSS_ESTABLISHED ||
 		    gd->gd_cred.gc_svc == rpc_gss_svc_none) {
-			xdrmbuf_append(xdrs, args);
-			return (TRUE);
+			return (xdr_putmbuf(xdrs, args));
 		} else {
 			if (!xdr_rpc_gss_wrap_data(&args,
 				gd->gd_ctx, gd->gd_qop, gd->gd_cred.gc_svc,
 				seq))
 				return (FALSE);
-			xdrmbuf_append(xdrs, args);
-			return (TRUE);
+			return (xdr_putmbuf(xdrs, args));
 		}
 	}
 

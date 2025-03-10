@@ -10,6 +10,7 @@ struct ndp_opts {
 	bool tflag;
 	int flags;
 	time_t expire_time;
+	int repeat;
 };
 
 extern struct ndp_opts opts;
@@ -20,7 +21,7 @@ char *ether_str(struct sockaddr_dl *sdl);
 char *sec2str(time_t total);
 int getaddr(char *host, struct sockaddr_in6 *sin6);
 int print_entries_nl(uint32_t ifindex, struct sockaddr_in6 *addr, bool cflag);
-int delete_nl(uint32_t ifindex, char *host);
+int delete_nl(uint32_t ifindex, char *host, bool warn);
 int set_nl(uint32_t ifindex, struct sockaddr_in6 *dst, struct sockaddr_dl *sdl,
     char *host);
 

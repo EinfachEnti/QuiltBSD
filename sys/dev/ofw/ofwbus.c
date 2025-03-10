@@ -32,7 +32,6 @@
  * 	from: FreeBSD: src/sys/i386/i386/nexus.c,v 1.43 2001/02/09
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -118,7 +117,7 @@ ofwbus_attach(device_t dev)
 	/*
 	 * Allow devices to identify.
 	 */
-	bus_generic_probe(dev);
+	bus_identify_children(dev);
 
 	/*
 	 * Now walk the OFW tree and attach top-level devices.
@@ -126,7 +125,8 @@ ofwbus_attach(device_t dev)
 	for (node = OF_child(node); node > 0; node = OF_peer(node))
 		simplebus_add_device(dev, node, 0, NULL, -1, NULL);
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 static struct resource *
@@ -171,8 +171,7 @@ ofwbus_alloc_resource(device_t bus, device_t child, int type, int *rid,
 }
 
 static int
-ofwbus_release_resource(device_t bus, device_t child, int type,
-    int rid, struct resource *r)
+ofwbus_release_resource(device_t bus, device_t child, struct resource *r)
 {
 	struct resource_list_entry *rle;
 	bool passthrough;
@@ -181,11 +180,11 @@ ofwbus_release_resource(device_t bus, device_t child, int type,
 	if (!passthrough) {
 		/* Clean resource list entry */
 		rle = resource_list_find(BUS_GET_RESOURCE_LIST(bus, child),
-		    type, rid);
+		    rman_get_type(r), rman_get_rid(r));
 		if (rle != NULL)
 			rle->res = NULL;
 	}
 
 	/* Let nexus handle the release. */
-	return (bus_generic_release_resource(bus, child, type, rid, r));
+	return (bus_generic_release_resource(bus, child, r));
 }

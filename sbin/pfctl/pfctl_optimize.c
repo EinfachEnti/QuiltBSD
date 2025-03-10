@@ -16,7 +16,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -136,7 +135,9 @@ static struct pf_rule_field {
     PF_RULE_FIELD(return_ttl,		BREAK),
     PF_RULE_FIELD(overload_tblname,	BREAK),
     PF_RULE_FIELD(flush,		BREAK),
-    PF_RULE_FIELD(rpool,		BREAK),
+    PF_RULE_FIELD(rdr,			BREAK),
+    PF_RULE_FIELD(nat,			BREAK),
+    PF_RULE_FIELD(route,		BREAK),
     PF_RULE_FIELD(logif,		BREAK),
 
     /*
@@ -173,6 +174,7 @@ static struct pf_rule_field {
     PF_RULE_FIELD(dst.port_op,		NOMERGE),
     PF_RULE_FIELD(src.neg,		NOMERGE),
     PF_RULE_FIELD(dst.neg,		NOMERGE),
+    PF_RULE_FIELD(af,			NOMERGE),
 
     /* These fields can be merged */
     PF_RULE_FIELD(src.addr,		COMBINED),
@@ -250,8 +252,8 @@ static const char *skip_comparitors_names[PF_SKIP_COUNT];
     { "af", PF_SKIP_AF, skip_cmp_af },			\
     { "proto", PF_SKIP_PROTO, skip_cmp_proto },		\
     { "saddr", PF_SKIP_SRC_ADDR, skip_cmp_src_addr },	\
-    { "sport", PF_SKIP_SRC_PORT, skip_cmp_src_port },	\
     { "daddr", PF_SKIP_DST_ADDR, skip_cmp_dst_addr },	\
+    { "sport", PF_SKIP_SRC_PORT, skip_cmp_src_port },	\
     { "dport", PF_SKIP_DST_PORT, skip_cmp_dst_port }	\
 }
 
@@ -290,13 +292,24 @@ pfctl_optimize_ruleset(struct pfctl *pf, struct pfctl_ruleset *rs)
 		if ((por = calloc(1, sizeof(*por))) == NULL)
 			err(1, "calloc");
 		memcpy(&por->por_rule, r, sizeof(*r));
-		if (TAILQ_FIRST(&r->rpool.list) != NULL) {
-			TAILQ_INIT(&por->por_rule.rpool.list);
-			pfctl_move_pool(&r->rpool, &por->por_rule.rpool);
+		if (TAILQ_FIRST(&r->rdr.list) != NULL) {
+			TAILQ_INIT(&por->por_rule.rdr.list);
+			pfctl_move_pool(&r->rdr, &por->por_rule.rdr);
 		} else
-			bzero(&por->por_rule.rpool,
-			    sizeof(por->por_rule.rpool));
-
+			bzero(&por->por_rule.rdr,
+			    sizeof(por->por_rule.rdr));
+		if (TAILQ_FIRST(&r->nat.list) != NULL) {
+			TAILQ_INIT(&por->por_rule.nat.list);
+			pfctl_move_pool(&r->nat, &por->por_rule.nat);
+		} else
+			bzero(&por->por_rule.nat,
+			    sizeof(por->por_rule.nat));
+		if (TAILQ_FIRST(&r->route.list) != NULL) {
+			TAILQ_INIT(&por->por_rule.route.list);
+			pfctl_move_pool(&r->route, &por->por_rule.route);
+		} else
+			bzero(&por->por_rule.route,
+			    sizeof(por->por_rule.route));
 
 		TAILQ_INSERT_TAIL(&opt_queue, por, por_entry);
 	}
@@ -325,8 +338,10 @@ pfctl_optimize_ruleset(struct pfctl *pf, struct pfctl_ruleset *rs)
 			if ((r = calloc(1, sizeof(*r))) == NULL)
 				err(1, "calloc");
 			memcpy(r, &por->por_rule, sizeof(*r));
-			TAILQ_INIT(&r->rpool.list);
-			pfctl_move_pool(&por->por_rule.rpool, &r->rpool);
+			TAILQ_INIT(&r->rdr.list);
+			pfctl_move_pool(&por->por_rule.rdr, &r->rdr);
+			TAILQ_INIT(&r->nat.list);
+			pfctl_move_pool(&por->por_rule.nat, &r->nat);
 			TAILQ_INSERT_TAIL(
 			    rs->rules[PF_RULESET_FILTER].active.ptr,
 			    r, entries);
@@ -878,24 +893,23 @@ block_feedback(struct pfctl *pf, struct superblock *block)
 int
 load_feedback_profile(struct pfctl *pf, struct superblocks *superblocks)
 {
+	char anchor_call[MAXPATHLEN] = "";
 	struct superblock *block, *blockcur;
 	struct superblocks prof_superblocks;
 	struct pf_opt_rule *por;
 	struct pf_opt_queue queue;
-	struct pfioc_rule pr;
+	struct pfctl_rules_info rules;
 	struct pfctl_rule a, b, rule;
 	int nr, mnr;
 
 	TAILQ_INIT(&queue);
 	TAILQ_INIT(&prof_superblocks);
 
-	memset(&pr, 0, sizeof(pr));
-	pr.rule.action = PF_PASS;
-	if (ioctl(pf->dev, DIOCGETRULES, &pr)) {
+	if (pfctl_get_rules_info_h(pf->h, &rules, PF_PASS, "")) {
 		warn("DIOCGETRULES");
 		return (1);
 	}
-	mnr = pr.nr;
+	mnr = rules.nr;
 
 	DEBUG("Loading %d active rules for a feedback profile", mnr);
 	for (nr = 0; nr < mnr; ++nr) {
@@ -904,24 +918,26 @@ load_feedback_profile(struct pfctl *pf, struct superblocks *superblocks)
 			warn("calloc");
 			return (1);
 		}
-		pr.nr = nr;
 
-		if (pfctl_get_rule(pf->dev, nr, pr.ticket, "", PF_PASS,
-		    &rule, pr.anchor_call)) {
+		if (pfctl_get_rule_h(pf->h, nr, rules.ticket, "", PF_PASS,
+		    &rule, anchor_call)) {
 			warn("DIOCGETRULENV");
 			return (1);
 		}
 		memcpy(&por->por_rule, &rule, sizeof(por->por_rule));
-		rs = pf_find_or_create_ruleset(pr.anchor_call);
+		rs = pf_find_or_create_ruleset(anchor_call);
 		por->por_rule.anchor = rs->anchor;
-		if (TAILQ_EMPTY(&por->por_rule.rpool.list))
-			memset(&por->por_rule.rpool, 0,
-			    sizeof(por->por_rule.rpool));
+		if (TAILQ_EMPTY(&por->por_rule.rdr.list))
+			memset(&por->por_rule.rdr, 0,
+			    sizeof(por->por_rule.rdr));
+		if (TAILQ_EMPTY(&por->por_rule.nat.list))
+			memset(&por->por_rule.nat, 0,
+			    sizeof(por->por_rule.nat));
 		TAILQ_INSERT_TAIL(&queue, por, por_entry);
 
-		/* XXX pfctl_get_pool(pf->dev, &rule.rpool, nr, pr.ticket,
+		/* XXX pfctl_get_pool(pf->dev, &rule.rdr, nr, pr.ticket,
 		 *         PF_PASS, pf->anchor) ???
-		 * ... pfctl_clear_pool(&rule.rpool)
+		 * ... pfctl_clear_pool(&rule.rdr)
 		 */
 	}
 

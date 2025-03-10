@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 Ruslan Bukin <br@bsdpad.com>
+ * Copyright (c) 2023 Arm Ltd
  *
  * This work was supported by Innovate UK project 105694, "Digital Security
  * by Design (DSbD) Technology Platform Prototype".
@@ -31,50 +32,66 @@
 #ifndef	_ARM64_SCMI_SCMI_H_
 #define	_ARM64_SCMI_SCMI_H_
 
-#define	SCMI_LOCK(sc)		mtx_lock(&(sc)->mtx)
-#define	SCMI_UNLOCK(sc)		mtx_unlock(&(sc)->mtx)
-#define	SCMI_ASSERT_LOCKED(sc)	mtx_assert(&(sc)->mtx, MA_OWNED)
+#include <sys/sysctl.h>
 
-#define dprintf(fmt, ...)
+#include "scmi_if.h"
 
-/* Shared Memory Transfer. */
-struct scmi_smt_header {
-	uint32_t reserved;
-	uint32_t channel_status;
-#define	SCMI_SHMEM_CHAN_STAT_CHANNEL_ERROR	(1 << 1)
-#define	SCMI_SHMEM_CHAN_STAT_CHANNEL_FREE	(1 << 0)
-	uint32_t reserved1[2];
-	uint32_t flags;
-#define	SCMI_SHMEM_FLAG_INTR_ENABLED		(1 << 0)
-	uint32_t length;
-	uint32_t msg_header;
-	uint8_t msg_payload[0];
+#define SCMI_DEF_MAX_MSG		32
+#define SCMI_DEF_MAX_MSG_PAYLD_SIZE	128
+
+#define SCMI_MAX_MSG_PAYLD_SIZE(sc)	((sc)->trs_desc.max_payld_sz + sizeof(uint32_t))
+#define SCMI_MAX_MSG_REPLY_SIZE(sc)	(SCMI_MAX_MSG_PAYLD_SIZE((sc)) + sizeof(uint32_t))
+#define SCMI_MAX_MSG_SIZE(sc)		(SCMI_MAX_MSG_REPLY_SIZE(sc) + sizeof(uint32_t))
+#define SCMI_MAX_MSG(sc)		((sc)->trs_desc.max_msg)
+#define SCMI_MAX_MSG_TIMEOUT_MS(sc)	((sc)->trs_desc.reply_timo_ms)
+
+enum scmi_chan {
+	SCMI_CHAN_A2P,
+	SCMI_CHAN_P2A,
+	SCMI_CHAN_MAX
 };
 
-#define	SMT_HEADER_SIZE			sizeof(struct scmi_smt_header)
-
-#define	SMT_HEADER_TOKEN_S		18
-#define	SMT_HEADER_TOKEN_M		(0x3fff << SMT_HEADER_TOKEN_S)
-#define	SMT_HEADER_PROTOCOL_ID_S	10
-#define	SMT_HEADER_PROTOCOL_ID_M	(0xff << SMT_HEADER_PROTOCOL_ID_S)
-#define	SMT_HEADER_MESSAGE_TYPE_S	8
-#define	SMT_HEADER_MESSAGE_TYPE_M	(0x3 << SMT_HEADER_MESSAGE_TYPE_S)
-#define	SMT_HEADER_MESSAGE_ID_S		0
-#define	SMT_HEADER_MESSAGE_ID_M		(0xff << SMT_HEADER_MESSAGE_ID_S)
-
-struct scmi_req {
-	int protocol_id;
-	int message_id;
-	const void *in_buf;
-	uint32_t in_size;
-	void *out_buf;
-	uint32_t out_size;
+struct scmi_transport_desc {
+	bool no_completion_irq;
+	unsigned int max_msg;
+	unsigned int max_payld_sz;
+	unsigned int reply_timo_ms;
 };
 
-int scmi_request(device_t dev, struct scmi_req *req);
-void scmi_shmem_read(device_t dev, bus_size_t offset, void *buf,
-    bus_size_t len);
-void scmi_shmem_write(device_t dev, bus_size_t offset, const void *buf,
-    bus_size_t len);
+struct scmi_transport;
+
+struct scmi_softc {
+	struct simplebus_softc		simplebus_sc;
+	device_t			dev;
+	struct mtx			mtx;
+	struct scmi_transport_desc	trs_desc;
+	struct scmi_transport		*trs;
+	struct sysctl_oid		*sysctl_root;
+};
+
+struct scmi_msg {
+	bool		polling;
+	int		poll_done;
+	uint32_t	tx_len;
+	uint32_t	rx_len;
+#define SCMI_MSG_HDR_SIZE	(sizeof(uint32_t))
+	uint32_t	hdr;
+	uint8_t		payld[];
+};
+#define hdr_to_msg(h)	__containerof((h), struct scmi_msg, hdr)
+
+void *scmi_buf_get(device_t dev, uint8_t protocol_id, uint8_t message_id,
+		   int tx_payd_sz, int rx_payld_sz);
+void scmi_buf_put(device_t dev, void *buf);
+struct scmi_msg *scmi_msg_get(device_t dev, int tx_payld_sz, int rx_payld_sz);
+void scmi_msg_put(device_t dev, struct scmi_msg *msg);
+int scmi_request(device_t dev, void *in, void **);
+int scmi_request_tx(device_t dev, void *in);
+int scmi_msg_async_enqueue(struct scmi_msg *msg);
+void scmi_rx_irq_callback(device_t dev, void *chan, uint32_t hdr, uint32_t rx_len);
+
+DECLARE_CLASS(scmi_driver);
+
+int scmi_attach(device_t dev);
 
 #endif /* !_ARM64_SCMI_SCMI_H_ */

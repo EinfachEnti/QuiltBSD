@@ -29,8 +29,6 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"	@(#)kill.1	8.2 (Berkeley) 4/28/95
-.\"
 .Dd October 3, 2016
 .Dt KILL 1
 .Os
@@ -81,9 +79,15 @@ of the default
 .Pp
 The following PIDs have special meanings:
 .Bl -tag -width indent
+.It 0
+The signal is sent to all processes whose group ID is equal to the process
+group ID of the sender, and for which the process has permission.
 .It -1
 If superuser, broadcast the signal to all processes; otherwise broadcast
 to all processes belonging to the user.
+.It - Ns Ar PGID
+The signal is sent to all processes that belong to the specified
+process group ID (PGID).
 .El
 .Pp
 Some of the more commonly used signals:

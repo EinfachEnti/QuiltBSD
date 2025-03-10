@@ -1,4 +1,6 @@
-# $Id: sys.mk,v 1.57 2023/07/14 16:30:37 sjg Exp $
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# $Id: sys.mk,v 1.61 2024/10/30 23:46:26 sjg Exp $
 #
 #	@(#) Copyright (c) 2003-2023, Simon J. Gerraty
 #
@@ -46,6 +48,11 @@ _TARGETS := ${.TARGETS}
 # Popular suffixes for C++
 CXX_SUFFIXES += .cc .cpp .cxx .C
 CXX_SUFFIXES := ${CXX_SUFFIXES:O:u}
+# and C++ Modules
+CCM_SUFFIXES += .ccm
+CCM_SUFFIXES := ${CCM_SUFFIXES:O:u}
+# precompiled modules
+PCM ?= .pcm
 
 SYS_MK ?= ${.PARSEDIR:tA}/${.PARSEFILE}
 SYS_MK := ${SYS_MK}
@@ -90,6 +97,7 @@ OPTIONS_DEFAULT_NO += \
 
 OPTIONS_DEFAULT_DEPENDENT += \
 	AUTO_OBJ/DIRDEPS_BUILD \
+	META_ERROR_TARGET/DIRDEPS_BUILD \
 	META_MODE/DIRDEPS_BUILD \
 	STAGING/DIRDEPS_BUILD \
 	STATIC_DIRDEPS_CACHE/DIRDEPS_CACHE \
@@ -152,14 +160,8 @@ Mkdirs= Mkdirs() { \
 		mkdir $$d || exit $$?; \
 	done; }
 
-# this often helps with debugging
-.SUFFIXES:      .cpp-out
-
-.c.cpp-out:
-	@${COMPILE.c:N-c} -E ${.IMPSRC} | grep -v '^[ 	]*$$'
-
-${CXX_SUFFIXES:%=%.cpp-out}:
-	@${COMPILE.cc:N-c} -E ${.IMPSRC} | grep -v '^[ 	]*$$'
+# pick up generic suffix rules
+.include <suffixes.mk>
 
 # late customizations
 .-include <local.sys.mk>

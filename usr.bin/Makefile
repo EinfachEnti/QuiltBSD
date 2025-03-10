@@ -1,5 +1,3 @@
-#	From: @(#)Makefile	8.3 (Berkeley) 1/7/94
-
 .include <src.opts.mk>
 
 SUBDIR=	alias \
@@ -63,8 +61,6 @@ SUBDIR=	alias \
 	ipcs \
 	join \
 	jot \
-	keylogin \
-	keylogout \
 	killall \
 	ktrace \
 	ktrdump \
@@ -84,12 +80,13 @@ SUBDIR=	alias \
 	logins \
 	logname \
 	look \
-	lorder \
 	lsvfs \
 	lzmainfo \
 	m4 \
 	mandoc \
+	mdo \
 	mesg \
+	mididump \
 	ministat \
 	mkdep \
 	mkfifo \
@@ -111,6 +108,7 @@ SUBDIR=	alias \
 	patch \
 	pathchk \
 	perror \
+	posixmqcontrol \
 	posixshmcontrol \
 	pr \
 	printenv \
@@ -207,11 +205,9 @@ SUBDIR.${MK_GAMES}+=	number
 SUBDIR.${MK_GAMES}+=	pom
 SUBDIR.${MK_GAMES}+=	primes
 SUBDIR.${MK_GAMES}+=	random
-.if ${MK_GH_BC} == "yes"
 SUBDIR+=		gh-bc
-.else
-SUBDIR.${MK_OPENSSL}+=	bc
-SUBDIR.${MK_OPENSSL}+=	dc
+.if ${MK_GNU_DIFF} == "no"
+SUBDIR+=		diff3
 .endif
 SUBDIR.${MK_HESIOD}+=	hesinfo
 SUBDIR.${MK_ICONV}+=	iconv
@@ -238,8 +234,6 @@ SUBDIR.${MK_NIS}+=	ypcat
 SUBDIR.${MK_NIS}+=	ypmatch
 SUBDIR.${MK_NIS}+=	ypwhich
 SUBDIR.${MK_OPENSSH}+=	ssh-copy-id
-SUBDIR.${MK_OPENSSL}+=	chkey
-SUBDIR.${MK_OPENSSL}+=	newkey
 SUBDIR.${MK_QUOTAS}+=	quota
 SUBDIR.${MK_SENDMAIL}+=	vacation
 SUBDIR.${MK_TALK}+=	talk
@@ -268,6 +262,7 @@ SUBDIR.${MK_TOOLCHAIN}+=	file2c
 SUBDIR.${MK_TOOLCHAIN}+=	gprof
 SUBDIR.${MK_TOOLCHAIN}+=	indent
 SUBDIR.${MK_TOOLCHAIN}+=	lex
+SUBDIR.${MK_TOOLCHAIN}+=	lorder
 SUBDIR.${MK_TOOLCHAIN}+=	mkstr
 SUBDIR.${MK_TOOLCHAIN}+=	rpcgen
 SUBDIR.${MK_TOOLCHAIN}+=	unifdef

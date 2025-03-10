@@ -34,7 +34,6 @@
 #include "opt_platform.h"
 #include "opt_iommu.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -46,6 +45,7 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/physmem.h>
 #include <sys/proc.h>
 #include <sys/taskqueue.h>
 #include <sys/tree.h>
@@ -157,8 +157,7 @@ struct its_dev {
 	/* List of assigned LPIs */
 	struct lpi_chunk	lpis;
 	/* Virtual address of ITT */
-	vm_offset_t		itt;
-	size_t			itt_size;
+	void			*itt;
 };
 
 /*
@@ -221,7 +220,7 @@ struct its_cmd {
 
 /* An ITS private table */
 struct its_ptable {
-	vm_offset_t	ptab_vaddr;
+	void		*ptab_vaddr;
 	/* Size of the L1 and L2 tables */
 	size_t		ptab_l1_size;
 	size_t		ptab_l2_size;
@@ -267,7 +266,7 @@ struct gicv3_its_softc {
 	 * single copy of each across the interrupt controller.
 	 */
 	uint8_t		*sc_conf_base;
-	vm_offset_t sc_pend_base[MAXCPU];
+	void		*sc_pend_base[MAXCPU];
 
 	/* Command handling */
 	struct mtx sc_its_cmd_lock;
@@ -287,12 +286,11 @@ struct gicv3_its_softc {
 #define	ITS_FLAGS_CMDQ_FLUSH		0x00000001
 #define	ITS_FLAGS_LPI_CONF_FLUSH	0x00000002
 #define	ITS_FLAGS_ERRATA_CAVIUM_22375	0x00000004
+#define	ITS_FLAGS_LPI_PREALLOC		0x00000008
 	u_int sc_its_flags;
 	bool	trace_enable;
 	vm_page_t ma; /* fake msi page */
 };
-
-static void *conf_base;
 
 typedef void (its_quirk_func_t)(device_t);
 static its_quirk_func_t its_quirk_cavium_22375;
@@ -446,7 +444,7 @@ gicv3_its_table_page_size(struct gicv3_its_softc *sc, int table)
 	reg = gic_its_read_8(sc, GITS_BASER(table));
 
 	while (1) {
-		reg &= GITS_BASER_PSZ_MASK;
+		reg &= ~GITS_BASER_PSZ_MASK;
 		switch (page_size) {
 		case PAGE_SIZE_4K:	/* 4KB */
 			reg |= GITS_BASER_PSZ_4K << GITS_BASER_PSZ_SHIFT;
@@ -502,7 +500,7 @@ gicv3_its_table_supports_indirect(struct gicv3_its_softc *sc, int table)
 static int
 gicv3_its_table_init(device_t dev, struct gicv3_its_softc *sc)
 {
-	vm_offset_t table;
+	void *table;
 	vm_paddr_t paddr;
 	uint64_t cache, reg, share, tmp, type;
 	size_t its_tbl_size, nitspages, npages;
@@ -534,7 +532,7 @@ gicv3_its_table_init(device_t dev, struct gicv3_its_softc *sc)
 		cache = 0;
 	} else {
 		devbits = GITS_TYPER_DEVB(gic_its_read_8(sc, GITS_TYPER));
-		cache = GITS_BASER_CACHE_WAWB;
+		cache = GITS_BASER_CACHE_RAWAWB;
 	}
 	sc->sc_devbits = devbits;
 	share = GITS_BASER_SHARE_IS;
@@ -588,11 +586,20 @@ gicv3_its_table_init(device_t dev, struct gicv3_its_softc *sc)
 			its_tbl_size = l1_esize * l1_nidents;
 			its_tbl_size = roundup2(its_tbl_size, page_size);
 			break;
-		case GITS_BASER_TYPE_VP:
 		case GITS_BASER_TYPE_PP: /* Undocumented? */
 		case GITS_BASER_TYPE_IC:
 			its_tbl_size = page_size;
 			break;
+		case GITS_BASER_TYPE_VP:
+			/*
+			 * If GITS_TYPER.SVPET != 0, the pending table is
+			 * shared amongst the redistibutors and ther other
+			 * ITSes. Requiring sharing across the ITSes when none
+			 * of the redistributors have GICR_VPROPBASER.Valid==1
+			 * isn't specified in the architecture, but that's how
+			 * the GIC-700 behaves. We don't handle vPE tables at
+			 * all yet, so just skip this base register.
+			 */
 		default:
 			if (bootverbose)
 				device_printf(dev, "Unhandled table type %lx\n",
@@ -602,7 +609,7 @@ gicv3_its_table_init(device_t dev, struct gicv3_its_softc *sc)
 		npages = howmany(its_tbl_size, PAGE_SIZE);
 
 		/* Allocate the table */
-		table = (vm_offset_t)contigmalloc_domainset(npages * PAGE_SIZE,
+		table = contigmalloc_domainset(npages * PAGE_SIZE,
 		    M_GICV3_ITS, sc->sc_ds, M_WAITOK | M_ZERO, 0,
 		    (1ul << 48) - 1, PAGE_SIZE_64K, 0);
 
@@ -681,46 +688,90 @@ gicv3_its_table_init(device_t dev, struct gicv3_its_softc *sc)
 static void
 gicv3_its_conftable_init(struct gicv3_its_softc *sc)
 {
-	void *conf_table;
+	/* note: we assume the ITS children are serialized by the parent */
+	static void *conf_table;
+	int extra_flags = 0;
+	device_t gicv3;
+	uint32_t ctlr;
+	vm_paddr_t conf_pa;
+	vm_offset_t conf_va;
 
-	conf_table = atomic_load_ptr(&conf_base);
-	if (conf_table == NULL) {
+	/*
+	 * The PROPBASER is a singleton in our parent. We only set it up the
+	 * first time through. conf_table is effectively global to all the units
+	 * and we rely on subr_bus to serialize probe/attach.
+	 */
+	if (conf_table != NULL) {
+		sc->sc_conf_base = conf_table;
+		return;
+	}
+
+	gicv3 = device_get_parent(sc->dev);
+	ctlr = gic_r_read_4(gicv3, GICR_CTLR);
+	if ((ctlr & GICR_CTLR_LPI_ENABLE) != 0) {
+		conf_pa = gic_r_read_8(gicv3, GICR_PROPBASER);
+		conf_pa &= GICR_PROPBASER_PA_MASK;
+		/*
+		 * If there was a pre-existing PROPBASER, then we need to honor
+		 * it because implementation defined behavior in gicv3 makes it
+		 * impossible to quiesce to change it out. We will only see a
+		 * pre-existing one when we've been kexec'd from a Linux kernel,
+		 * or from a LinuxBoot environment.
+		 *
+		 * Linux provides us with a MEMRESERVE table that we put into
+		 * the excluded physmem area. If PROPBASER isn't in this tabke,
+		 * the system cannot run due to random memory corruption,
+		 * so we panic for this case.
+		 */
+		if (!physmem_excluded(conf_pa, LPI_CONFTAB_SIZE))
+			panic("gicv3 PROPBASER needs to reuse %#lx, but not reserved",
+			    conf_pa);
+		conf_va = PHYS_TO_DMAP(conf_pa);
+		if (!pmap_klookup(conf_va, NULL))
+			panic("Cannot map prior LPI mapping into KVA");
+		conf_table = (void *)conf_va;
+		extra_flags = ITS_FLAGS_LPI_PREALLOC | ITS_FLAGS_LPI_CONF_FLUSH;
+		if (bootverbose)
+			device_printf(sc->dev,
+			    "LPI enabled, conf table using pa %#lx va %lx\n",
+			    conf_pa, conf_va);
+	} else {
+		/*
+		 * Otherwise just allocate contiguous pages. We'll configure the
+		 * PROPBASER register later in its_init_cpu_lpi().
+		 */
 		conf_table = contigmalloc(LPI_CONFTAB_SIZE,
 		    M_GICV3_ITS, M_WAITOK, 0, LPI_CONFTAB_MAX_ADDR,
 		    LPI_CONFTAB_ALIGN, 0);
-
-		if (atomic_cmpset_ptr((uintptr_t *)&conf_base,
-		    (uintptr_t)NULL, (uintptr_t)conf_table) == 0) {
-			contigfree(conf_table, LPI_CONFTAB_SIZE, M_GICV3_ITS);
-			conf_table = atomic_load_ptr(&conf_base);
-		}
 	}
 	sc->sc_conf_base = conf_table;
+	sc->sc_its_flags |= extra_flags;
 
 	/* Set the default configuration */
 	memset(sc->sc_conf_base, GIC_PRIORITY_MAX | LPI_CONF_GROUP1,
 	    LPI_CONFTAB_SIZE);
 
 	/* Flush the table to memory */
-	cpu_dcache_wb_range((vm_offset_t)sc->sc_conf_base, LPI_CONFTAB_SIZE);
+	cpu_dcache_wb_range(sc->sc_conf_base, LPI_CONFTAB_SIZE);
 }
 
 static void
 gicv3_its_pendtables_init(struct gicv3_its_softc *sc)
 {
-	int i;
 
-	for (i = 0; i <= mp_maxid; i++) {
-		if (CPU_ISSET(i, &sc->sc_cpus) == 0)
-			continue;
+	if ((sc->sc_its_flags & ITS_FLAGS_LPI_PREALLOC) == 0) {
+		for (int i = 0; i <= mp_maxid; i++) {
+			if (CPU_ISSET(i, &sc->sc_cpus) == 0)
+				continue;
 
-		sc->sc_pend_base[i] = (vm_offset_t)contigmalloc(
-		    LPI_PENDTAB_SIZE, M_GICV3_ITS, M_WAITOK | M_ZERO,
-		    0, LPI_PENDTAB_MAX_ADDR, LPI_PENDTAB_ALIGN, 0);
+			sc->sc_pend_base[i] = contigmalloc(
+			    LPI_PENDTAB_SIZE, M_GICV3_ITS, M_WAITOK | M_ZERO,
+			    0, LPI_PENDTAB_MAX_ADDR, LPI_PENDTAB_ALIGN, 0);
 
-		/* Flush so the ITS can see the memory */
-		cpu_dcache_wb_range((vm_offset_t)sc->sc_pend_base[i],
-		    LPI_PENDTAB_SIZE);
+			/* Flush so the ITS can see the memory */
+			cpu_dcache_wb_range(sc->sc_pend_base[i],
+			    LPI_PENDTAB_SIZE);
+		}
 	}
 }
 
@@ -728,81 +779,104 @@ static void
 its_init_cpu_lpi(device_t dev, struct gicv3_its_softc *sc)
 {
 	device_t gicv3;
-	uint64_t xbaser, tmp;
+	uint64_t xbaser, tmp, size;
 	uint32_t ctlr;
 	u_int cpuid;
 
 	gicv3 = device_get_parent(dev);
 	cpuid = PCPU_GET(cpuid);
 
-	/* Disable LPIs */
-	ctlr = gic_r_read_4(gicv3, GICR_CTLR);
-	ctlr &= ~GICR_CTLR_LPI_ENABLE;
-	gic_r_write_4(gicv3, GICR_CTLR, ctlr);
-
-	/* Make sure changes are observable my the GIC */
-	dsb(sy);
-
 	/*
-	 * Set the redistributor base
+	 * Set the redistributor base. If we're reusing what we found on boot
+	 * since the gic was already running, then don't touch it here. We also
+	 * don't need to disable / enable LPI if we're not changing PROPBASER,
+	 * so only do that if we're not prealloced.
 	 */
-	xbaser = vtophys(sc->sc_conf_base) |
-	    (GICR_PROPBASER_SHARE_IS << GICR_PROPBASER_SHARE_SHIFT) |
-	    (GICR_PROPBASER_CACHE_NIWAWB << GICR_PROPBASER_CACHE_SHIFT) |
-	    (flsl(LPI_CONFTAB_SIZE | GIC_FIRST_LPI) - 1);
-	gic_r_write_8(gicv3, GICR_PROPBASER, xbaser);
+	if ((sc->sc_its_flags & ITS_FLAGS_LPI_PREALLOC) == 0) {
+		/* Disable LPIs */
+		ctlr = gic_r_read_4(gicv3, GICR_CTLR);
+		ctlr &= ~GICR_CTLR_LPI_ENABLE;
+		gic_r_write_4(gicv3, GICR_CTLR, ctlr);
 
-	/* Check the cache attributes we set */
-	tmp = gic_r_read_8(gicv3, GICR_PROPBASER);
+		/* Make sure changes are observable my the GIC */
+		dsb(sy);
 
-	if ((tmp & GICR_PROPBASER_SHARE_MASK) !=
-	    (xbaser & GICR_PROPBASER_SHARE_MASK)) {
-		if ((tmp & GICR_PROPBASER_SHARE_MASK) ==
-		    (GICR_PROPBASER_SHARE_NS << GICR_PROPBASER_SHARE_SHIFT)) {
-			/* We need to mark as non-cacheable */
-			xbaser &= ~(GICR_PROPBASER_SHARE_MASK |
-			    GICR_PROPBASER_CACHE_MASK);
-			/* Non-cacheable */
-			xbaser |= GICR_PROPBASER_CACHE_NIN <<
-			    GICR_PROPBASER_CACHE_SHIFT;
-			/* Non-shareable */
-			xbaser |= GICR_PROPBASER_SHARE_NS <<
-			    GICR_PROPBASER_SHARE_SHIFT;
-			gic_r_write_8(gicv3, GICR_PROPBASER, xbaser);
+		size = (flsl(LPI_CONFTAB_SIZE | GIC_FIRST_LPI) - 1);
+
+		xbaser = vtophys(sc->sc_conf_base) |
+		    (GICR_PROPBASER_SHARE_IS << GICR_PROPBASER_SHARE_SHIFT) |
+		    (GICR_PROPBASER_CACHE_NIWAWB << GICR_PROPBASER_CACHE_SHIFT) |
+		    size;
+
+		gic_r_write_8(gicv3, GICR_PROPBASER, xbaser);
+
+		/* Check the cache attributes we set */
+		tmp = gic_r_read_8(gicv3, GICR_PROPBASER);
+
+		if ((tmp & GICR_PROPBASER_SHARE_MASK) !=
+		    (xbaser & GICR_PROPBASER_SHARE_MASK)) {
+			if ((tmp & GICR_PROPBASER_SHARE_MASK) ==
+			    (GICR_PROPBASER_SHARE_NS << GICR_PROPBASER_SHARE_SHIFT)) {
+				/* We need to mark as non-cacheable */
+				xbaser &= ~(GICR_PROPBASER_SHARE_MASK |
+				    GICR_PROPBASER_CACHE_MASK);
+				/* Non-cacheable */
+				xbaser |= GICR_PROPBASER_CACHE_NIN <<
+				    GICR_PROPBASER_CACHE_SHIFT;
+				/* Non-shareable */
+				xbaser |= GICR_PROPBASER_SHARE_NS <<
+				    GICR_PROPBASER_SHARE_SHIFT;
+				gic_r_write_8(gicv3, GICR_PROPBASER, xbaser);
+			}
+			sc->sc_its_flags |= ITS_FLAGS_LPI_CONF_FLUSH;
 		}
-		sc->sc_its_flags |= ITS_FLAGS_LPI_CONF_FLUSH;
+
+		/*
+		 * Set the LPI pending table base
+		 */
+		xbaser = vtophys(sc->sc_pend_base[cpuid]) |
+		    (GICR_PENDBASER_CACHE_NIWAWB << GICR_PENDBASER_CACHE_SHIFT) |
+		    (GICR_PENDBASER_SHARE_IS << GICR_PENDBASER_SHARE_SHIFT);
+
+		gic_r_write_8(gicv3, GICR_PENDBASER, xbaser);
+
+		tmp = gic_r_read_8(gicv3, GICR_PENDBASER);
+
+		if ((tmp & GICR_PENDBASER_SHARE_MASK) ==
+		    (GICR_PENDBASER_SHARE_NS << GICR_PENDBASER_SHARE_SHIFT)) {
+			/* Clear the cahce and shareability bits */
+			xbaser &= ~(GICR_PENDBASER_CACHE_MASK |
+			    GICR_PENDBASER_SHARE_MASK);
+			/* Mark as non-shareable */
+			xbaser |= GICR_PENDBASER_SHARE_NS << GICR_PENDBASER_SHARE_SHIFT;
+			/* And non-cacheable */
+			xbaser |= GICR_PENDBASER_CACHE_NIN <<
+			    GICR_PENDBASER_CACHE_SHIFT;
+		}
+
+		/* Enable LPIs */
+		ctlr = gic_r_read_4(gicv3, GICR_CTLR);
+		ctlr |= GICR_CTLR_LPI_ENABLE;
+		gic_r_write_4(gicv3, GICR_CTLR, ctlr);
+
+		/* Make sure the GIC has seen everything */
+		dsb(sy);
+	} else {
+		KASSERT(sc->sc_pend_base[cpuid] == NULL,
+		    ("PREALLOC too soon cpuid %d", cpuid));
+		tmp = gic_r_read_8(gicv3, GICR_PENDBASER);
+		tmp &= GICR_PENDBASER_PA_MASK;
+		if (!physmem_excluded(tmp, LPI_PENDTAB_SIZE))
+			panic("gicv3 PENDBASER on cpu %d needs to reuse 0x%#lx, but not reserved\n",
+			    cpuid, tmp);
+		sc->sc_pend_base[cpuid] = (void *)PHYS_TO_DMAP(tmp);
 	}
 
-	/*
-	 * Set the LPI pending table base
-	 */
-	xbaser = vtophys(sc->sc_pend_base[cpuid]) |
-	    (GICR_PENDBASER_CACHE_NIWAWB << GICR_PENDBASER_CACHE_SHIFT) |
-	    (GICR_PENDBASER_SHARE_IS << GICR_PENDBASER_SHARE_SHIFT);
 
-	gic_r_write_8(gicv3, GICR_PENDBASER, xbaser);
-
-	tmp = gic_r_read_8(gicv3, GICR_PENDBASER);
-
-	if ((tmp & GICR_PENDBASER_SHARE_MASK) ==
-	    (GICR_PENDBASER_SHARE_NS << GICR_PENDBASER_SHARE_SHIFT)) {
-		/* Clear the cahce and shareability bits */
-		xbaser &= ~(GICR_PENDBASER_CACHE_MASK |
-		    GICR_PENDBASER_SHARE_MASK);
-		/* Mark as non-shareable */
-		xbaser |= GICR_PENDBASER_SHARE_NS << GICR_PENDBASER_SHARE_SHIFT;
-		/* And non-cacheable */
-		xbaser |= GICR_PENDBASER_CACHE_NIN <<
-		    GICR_PENDBASER_CACHE_SHIFT;
-	}
-
-	/* Enable LPIs */
-	ctlr = gic_r_read_4(gicv3, GICR_CTLR);
-	ctlr |= GICR_CTLR_LPI_ENABLE;
-	gic_r_write_4(gicv3, GICR_CTLR, ctlr);
-
-	/* Make sure the GIC has seen everything */
-	dsb(sy);
+	if (bootverbose)
+		device_printf(gicv3, "using %sPENDBASE of %#lx on cpu %d\n",
+		    (sc->sc_its_flags & ITS_FLAGS_LPI_PREALLOC) ? "pre-existing " : "",
+		    vtophys(sc->sc_pend_base[cpuid]), cpuid);
 }
 
 static int
@@ -1092,7 +1166,7 @@ gicv3_its_disable_intr(device_t dev, struct intr_irqsrc *isrc)
 
 	if ((sc->sc_its_flags & ITS_FLAGS_LPI_CONF_FLUSH) != 0) {
 		/* Clean D-cache under command. */
-		cpu_dcache_wb_range((vm_offset_t)&conf[girq->gi_lpi], 1);
+		cpu_dcache_wb_range(&conf[girq->gi_lpi], 1);
 	} else {
 		/* DSB inner shareable, store */
 		dsb(ishst);
@@ -1116,7 +1190,7 @@ gicv3_its_enable_intr(device_t dev, struct intr_irqsrc *isrc)
 
 	if ((sc->sc_its_flags & ITS_FLAGS_LPI_CONF_FLUSH) != 0) {
 		/* Clean D-cache under command. */
-		cpu_dcache_wb_range((vm_offset_t)&conf[girq->gi_lpi], 1);
+		cpu_dcache_wb_range(&conf[girq->gi_lpi], 1);
 	} else {
 		/* DSB inner shareable, store */
 		dsb(ishst);
@@ -1219,7 +1293,7 @@ gicv3_its_setup_intr(device_t dev, struct intr_irqsrc *isrc,
 
 #ifdef SMP
 static void
-gicv3_its_init_secondary(device_t dev)
+gicv3_its_init_secondary(device_t dev, uint32_t rootnum)
 {
 	struct gicv3_its_softc *sc;
 
@@ -1270,7 +1344,7 @@ static bool
 its_device_alloc(struct gicv3_its_softc *sc, int devid)
 {
 	struct its_ptable *ptable;
-	vm_offset_t l2_table;
+	void *l2_table;
 	uint64_t *table;
 	uint32_t index;
 	bool shareable;
@@ -1325,18 +1399,16 @@ its_device_alloc(struct gicv3_its_softc *sc, int devid)
 	if ((ptable->ptab_share & GITS_BASER_SHARE_MASK) == GITS_BASER_SHARE_NS)
 		shareable = false;
 
-	l2_table = (vm_offset_t)contigmalloc_domainset(ptable->ptab_l2_size,
+	l2_table = contigmalloc_domainset(ptable->ptab_l2_size,
 	    M_GICV3_ITS, sc->sc_ds, M_WAITOK | M_ZERO, 0, (1ul << 48) - 1,
 	    ptable->ptab_page_size, 0);
 
 	if (!shareable)
-		cpu_dcache_wb_range((vm_offset_t)l2_table,
-		    ptable->ptab_l2_size);
+		cpu_dcache_wb_range(l2_table, ptable->ptab_l2_size);
 
 	table[index] = vtophys(l2_table) | GITS_BASER_VALID;
 	if (!shareable)
-		cpu_dcache_wb_range((vm_offset_t)&table[index],
-		    sizeof(table[index]));
+		cpu_dcache_wb_range(&table[index], sizeof(table[index]));
 
 	dsb(sy);
 	return (true);
@@ -1348,7 +1420,7 @@ its_device_get(device_t dev, device_t child, u_int nvecs)
 	struct gicv3_its_softc *sc;
 	struct its_dev *its_dev;
 	vmem_addr_t irq_base;
-	size_t esize;
+	size_t esize, itt_size;
 
 	sc = device_get_softc(dev);
 
@@ -1386,11 +1458,11 @@ its_device_get(device_t dev, device_t child, u_int nvecs)
 	 * Allocate ITT for this device.
 	 * PA has to be 256 B aligned. At least two entries for device.
 	 */
-	its_dev->itt_size = roundup2(MAX(nvecs, 2) * esize, 256);
-	its_dev->itt = (vm_offset_t)contigmalloc_domainset(its_dev->itt_size,
+	itt_size = roundup2(MAX(nvecs, 2) * esize, 256);
+	its_dev->itt = contigmalloc_domainset(itt_size,
 	    M_GICV3_ITS, sc->sc_ds, M_NOWAIT | M_ZERO, 0,
 	    LPI_INT_TRANS_TAB_MAX_ADDR, LPI_INT_TRANS_TAB_ALIGN, 0);
-	if (its_dev->itt == 0) {
+	if (its_dev->itt == NULL) {
 		vmem_free(sc->sc_irq_alloc, its_dev->lpis.lpi_base, nvecs);
 		free(its_dev, M_GICV3_ITS);
 		return (NULL);
@@ -1398,7 +1470,7 @@ its_device_get(device_t dev, device_t child, u_int nvecs)
 
 	/* Make sure device sees zeroed ITT. */
 	if ((sc->sc_its_flags & ITS_FLAGS_CMDQ_FLUSH) != 0)
-		cpu_dcache_wb_range(its_dev->itt, its_dev->itt_size);
+		cpu_dcache_wb_range(its_dev->itt, itt_size);
 
 	mtx_lock_spin(&sc->sc_its_dev_lock);
 	TAILQ_INSERT_TAIL(&sc->sc_its_dev_list, its_dev, entry);
@@ -1429,8 +1501,8 @@ its_device_release(device_t dev, struct its_dev *its_dev)
 	mtx_unlock_spin(&sc->sc_its_dev_lock);
 
 	/* Free ITT */
-	KASSERT(its_dev->itt != 0, ("Invalid ITT in valid ITS device"));
-	contigfree((void *)its_dev->itt, its_dev->itt_size, M_GICV3_ITS);
+	KASSERT(its_dev->itt != NULL, ("Invalid ITT in valid ITS device"));
+	free(its_dev->itt, M_GICV3_ITS);
 
 	/* Free the IRQ allocation */
 	vmem_free(sc->sc_irq_alloc, its_dev->lpis.lpi_base,
@@ -1672,9 +1744,15 @@ gicv3_iommu_init(device_t dev, device_t child, struct iommu_domain **domain)
 	int error;
 
 	sc = device_get_softc(dev);
+	/*
+	 * Get the context. If no context is found then the device isn't
+	 * behind an IOMMU so no setup is needed.
+	 */
 	ctx = iommu_get_dev_ctx(child);
-	if (ctx == NULL)
-		return (ENXIO);
+	if (ctx == NULL) {
+		*domain = NULL;
+		return (0);
+	}
 	/* Map the page containing the GITS_TRANSLATER register. */
 	error = iommu_map_msi(ctx, PAGE_SIZE, 0,
 	    IOMMU_MAP_ENTRY_WRITE, IOMMU_MF_CANWAIT, &sc->ma);
@@ -1796,7 +1874,7 @@ its_cmd_sync(struct gicv3_its_softc *sc, struct its_cmd *cmd)
 
 	if ((sc->sc_its_flags & ITS_FLAGS_CMDQ_FLUSH) != 0) {
 		/* Clean D-cache under command. */
-		cpu_dcache_wb_range((vm_offset_t)cmd, sizeof(*cmd));
+		cpu_dcache_wb_range(cmd, sizeof(*cmd));
 	} else {
 		/* DSB inner shareable, store */
 		dsb(ishst);
@@ -2144,6 +2222,9 @@ gicv3_its_fdt_probe(device_t dev)
 	if (!ofw_bus_is_compatible(dev, "arm,gic-v3-its"))
 		return (ENXIO);
 
+	if (!gicv3_get_support_lpis(dev))
+		return (ENXIO);
+
 	device_set_desc(dev, "ARM GIC Interrupt Translation Service");
 	return (BUS_PROBE_DEFAULT);
 }
@@ -2212,6 +2293,9 @@ gicv3_its_acpi_probe(device_t dev)
 
 	if (gic_get_hw_rev(dev) < 3)
 		return (EINVAL);
+
+	if (!gicv3_get_support_lpis(dev))
+		return (ENXIO);
 
 	device_set_desc(dev, "ARM GIC Interrupt Translation Service");
 	return (BUS_PROBE_DEFAULT);

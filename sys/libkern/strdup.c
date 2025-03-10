@@ -31,7 +31,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
@@ -47,7 +46,7 @@ strdup_flags(const char *string, struct malloc_type *type, int flags)
 	copy = malloc(len, type, flags);
 	if (copy == NULL)
 		return (NULL);
-	bcopy(string, copy, len);
+	memcpy(copy, string, len);
 	return (copy);
 }
 

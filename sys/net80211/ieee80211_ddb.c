@@ -222,7 +222,7 @@ _db_show_rxampdu(const char *sep, int ix, const struct ieee80211_rx_ampdu *rap)
 	db_printf("%s  age %d nframes %d\n", sep,
 		rap->rxa_age, rap->rxa_nframes);
 	for (i = 0; i < IEEE80211_AGGR_BAWMAX; i++)
-		if (mbufq_len(&rap->rxa_mq[i]) > 0) {
+		if (!mbufq_empty(&rap->rxa_mq[i])) {
 			db_printf("%s  m[%2u:%4u] ", sep, i,
 			    IEEE80211_SEQ_ADD(rap->rxa_start, i));
 			STAILQ_FOREACH(m, &rap->rxa_mq[i].mq_head,
@@ -294,8 +294,9 @@ _db_show_sta(const struct ieee80211_node *ni)
 	db_printf("\thtcap %b htparam 0x%x htctlchan %u ht2ndchan %u\n",
 		ni->ni_htcap, IEEE80211_HTCAP_BITS,
 		ni->ni_htparam, ni->ni_htctlchan, ni->ni_ht2ndchan);
-	db_printf("\thtopmode 0x%x htstbc 0x%x chw %u\n",
-		ni->ni_htopmode, ni->ni_htstbc, ni->ni_chw);
+	db_printf("\thtopmode 0x%x htstbc 0x%x chw %d (%s)\n",
+		ni->ni_htopmode, ni->ni_htstbc,
+		ni->ni_chw, ieee80211_ni_chw_to_str(ni->ni_chw));
 
 	/* XXX ampdu state */
 	for (i = 0; i < WME_NUM_TID; i++)
@@ -305,8 +306,9 @@ _db_show_sta(const struct ieee80211_node *ni)
 		if (ni->ni_rx_ampdu[i].rxa_flags)
 			_db_show_rxampdu("\t", i, &ni->ni_rx_ampdu[i]);
 
-	db_printf("\tinact %u inact_reload %u txrate %u\n",
-		ni->ni_inact, ni->ni_inact_reload, ni->ni_txrate);
+	db_printf("\tinact %u inact_reload %u txrate type %d rate %u\n",
+		ni->ni_inact, ni->ni_inact_reload, ni->ni_txrate.type,
+		ni->ni_txrate.dot11rate);
 #ifdef IEEE80211_SUPPORT_MESH
 	_db_show_ssid("\tmeshid ", 0, ni->ni_meshidlen, ni->ni_meshid);
 	db_printf(" mlstate %b mllid 0x%x mlpid 0x%x mlrcnt %u mltval %u\n",
@@ -315,9 +317,9 @@ _db_show_sta(const struct ieee80211_node *ni)
 #endif
 
 	/* VHT state */
-	db_printf("\tvhtcap %b vht_basicmcs %#06x vht_pad2 %#06x\n",
+	db_printf("\tvhtcap %b vht_basicmcs %#06x vht_tx_map %#06x\n",
 	    ni->ni_vhtcap, IEEE80211_VHTCAP_BITS,
-	    ni->ni_vht_basicmcs, ni->ni_vht_pad2);
+	    ni->ni_vht_basicmcs, ni->ni_vht_tx_map);
 	db_printf("\tvht_mcsinfo: { rx_mcs_map %#06x rx_highest %#06x "
 	    "tx_mcs_map %#06x tx_highest %#06x }\n",
 	    ni->ni_vht_mcsinfo.rx_mcs_map, ni->ni_vht_mcsinfo.rx_highest,
@@ -470,7 +472,8 @@ _db_show_vap(const struct ieee80211vap *vap, int showmesh, int showprocs)
 	if (vap->iv_opmode == IEEE80211_M_MBSS)
 		db_printf("(%p)", vap->iv_mesh);
 #endif
-	db_printf(" state %s", ieee80211_state_name[vap->iv_state]);
+	db_printf(" state %#x %s", vap->iv_state,
+	    ieee80211_state_name[vap->iv_state]);
 	db_printf(" ifp %p(%s)", vap->iv_ifp, if_name(vap->iv_ifp));
 	db_printf("\n");
 
@@ -482,6 +485,16 @@ _db_show_vap(const struct ieee80211vap *vap, int showmesh, int showprocs)
 	struct sysctllog	*iv_sysctl;	/* dynamic sysctl context */
 #endif
 	db_printf("\n");
+
+	db_printf("\tiv_nstate %#x %s iv_nstate_b %d iv_nstate_n %d\n",
+	    vap->iv_nstate, ieee80211_state_name[vap->iv_nstate], /* historic */
+	    vap->iv_nstate_b, vap->iv_nstate_n);
+	for (i = 0; i < NET80211_IV_NSTATE_NUM; i++) {
+		db_printf("\t [%d] iv_nstates %#x %s _task %p _args %d\n", i,
+		    vap->iv_nstates[i], ieee80211_state_name[vap->iv_nstates[i]],
+		    &vap->iv_nstate_task[i], vap->iv_nstate_args[i]);
+	}
+
 	db_printf("\tdebug=%b\n", vap->iv_debug, IEEE80211_MSG_BITS);
 
 	db_printf("\tflags=%b\n", vap->iv_flags, IEEE80211_F_BITS);
@@ -490,7 +503,7 @@ _db_show_vap(const struct ieee80211vap *vap, int showmesh, int showprocs)
 	db_printf("\tflags_ven=%b\n", vap->iv_flags_ven, IEEE80211_FVEN_BITS);
 	db_printf("\tcaps=%b\n", vap->iv_caps, IEEE80211_C_BITS);
 	db_printf("\thtcaps=%b\n", vap->iv_htcaps, IEEE80211_C_HTCAP_BITS);
-	db_printf("\tvhtcaps=%b\n", vap->iv_vhtcaps, IEEE80211_VHTCAP_BITS);
+	db_printf("\tvhtcap=%b\n", vap->iv_vht_cap.vht_cap_info, IEEE80211_VHTCAP_BITS);
 
 	_db_show_stats(&vap->iv_stats);
 
@@ -672,7 +685,7 @@ _db_show_com(const struct ieee80211com *ic, int showvaps, int showsta,
 	db_printf("\tcryptocaps=%b\n",
 	    ic->ic_cryptocaps, IEEE80211_CRYPTO_BITS);
 	db_printf("\thtcaps=%b\n", ic->ic_htcaps, IEEE80211_HTCAP_BITS);
-	db_printf("\tvhtcaps=%b\n", ic->ic_vhtcaps, IEEE80211_VHTCAP_BITS);
+	db_printf("\tvhtcaps=%b\n", ic->ic_vht_cap.vht_cap_info, IEEE80211_VHTCAP_BITS);
 
 #if 0
 	uint8_t			ic_modecaps[2];	/* set of mode capabilities */
@@ -928,6 +941,9 @@ _db_show_key(const char *tag, int ix, const struct ieee80211_key *wk)
 		break;
 	case IEEE80211_CIPHER_CKIP:
 		db_printf(" CKIP %u:%u-bit", wk->wk_keyix, 8*keylen);
+		break;
+	case IEEE80211_CIPHER_AES_GCM_128:
+		db_printf(" AES-GCM %u:%u-bit", wk->wk_keyix, 8*keylen);
 		break;
 	case IEEE80211_CIPHER_NONE:
 		db_printf(" NULL %u:%u-bit", wk->wk_keyix, 8*keylen);

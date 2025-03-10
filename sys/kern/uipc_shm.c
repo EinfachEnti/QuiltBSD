@@ -150,7 +150,7 @@ static fo_fallocate_t	shm_fallocate;
 static fo_fspacectl_t	shm_fspacectl;
 
 /* File descriptor operations. */
-struct fileops shm_ops = {
+const struct fileops shm_ops = {
 	.fo_read = shm_read,
 	.fo_write = shm_write,
 	.fo_truncate = shm_truncate,
@@ -169,6 +169,7 @@ struct fileops shm_ops = {
 	.fo_add_seals = shm_add_seals,
 	.fo_fallocate = shm_fallocate,
 	.fo_fspacectl = shm_fspacectl,
+	.fo_cmp = file_kcmp_generic,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE,
 };
 
@@ -183,13 +184,13 @@ SYSCTL_INT(_vm_largepages, OID_AUTO, reclaim_tries,
     "Number of contig reclaims before giving up for default alloc policy");
 
 #define	shm_rangelock_unlock(shmfd, cookie)				\
-	rangelock_unlock(&(shmfd)->shm_rl, (cookie), &(shmfd)->shm_mtx)
+	rangelock_unlock(&(shmfd)->shm_rl, (cookie))
 #define	shm_rangelock_rlock(shmfd, start, end)				\
-	rangelock_rlock(&(shmfd)->shm_rl, (start), (end), &(shmfd)->shm_mtx)
+	rangelock_rlock(&(shmfd)->shm_rl, (start), (end))
 #define	shm_rangelock_tryrlock(shmfd, start, end)			\
-	rangelock_tryrlock(&(shmfd)->shm_rl, (start), (end), &(shmfd)->shm_mtx)
+	rangelock_tryrlock(&(shmfd)->shm_rl, (start), (end))
 #define	shm_rangelock_wlock(shmfd, start, end)				\
-	rangelock_wlock(&(shmfd)->shm_rl, (start), (end), &(shmfd)->shm_mtx)
+	rangelock_wlock(&(shmfd)->shm_rl, (start), (end))
 
 static int
 uiomove_object_page(vm_object_t obj, size_t len, struct uio *uio)
@@ -696,51 +697,12 @@ static int
 shm_partial_page_invalidate(vm_object_t object, vm_pindex_t idx, int base,
     int end)
 {
-	vm_page_t m;
-	int rv;
+	int error;
 
-	VM_OBJECT_ASSERT_WLOCKED(object);
-	KASSERT(base >= 0, ("%s: base %d", __func__, base));
-	KASSERT(end - base <= PAGE_SIZE, ("%s: base %d end %d", __func__, base,
-	    end));
-
-retry:
-	m = vm_page_grab(object, idx, VM_ALLOC_NOCREAT);
-	if (m != NULL) {
-		MPASS(vm_page_all_valid(m));
-	} else if (vm_pager_has_page(object, idx, NULL, NULL)) {
-		m = vm_page_alloc(object, idx,
-		    VM_ALLOC_NORMAL | VM_ALLOC_WAITFAIL);
-		if (m == NULL)
-			goto retry;
-		vm_object_pip_add(object, 1);
+	error = vm_page_grab_zero_partial(object, idx, base, end);
+	if (error == EIO)
 		VM_OBJECT_WUNLOCK(object);
-		rv = vm_pager_get_pages(object, &m, 1, NULL, NULL);
-		VM_OBJECT_WLOCK(object);
-		vm_object_pip_wakeup(object);
-		if (rv == VM_PAGER_OK) {
-			/*
-			 * Since the page was not resident, and therefore not
-			 * recently accessed, immediately enqueue it for
-			 * asynchronous laundering.  The current operation is
-			 * not regarded as an access.
-			 */
-			vm_page_launder(m);
-		} else {
-			vm_page_free(m);
-			VM_OBJECT_WUNLOCK(object);
-			return (EIO);
-		}
-	}
-	if (m != NULL) {
-		pmap_zero_page_area(m, base, end - base);
-		KASSERT(vm_page_all_valid(m), ("%s: page %p is invalid",
-		    __func__, m));
-		vm_page_set_dirty(m);
-		vm_page_xunbusy(m);
-	}
-
-	return (0);
+	return (error);
 }
 
 static int
@@ -877,8 +839,9 @@ shm_dotruncate_largepage(struct shmfd *shmfd, off_t length, void *rl_cookie)
 			}
 			error = vm_page_reclaim_contig(aflags,
 			    pagesizes[psind] / PAGE_SIZE, 0, ~0,
-			    pagesizes[psind], 0) ? 0 :
-			    vm_wait_intr(object);
+			    pagesizes[psind], 0);
+			if (error == ENOMEM)
+				error = vm_wait_intr(object);
 			if (error != 0) {
 				VM_OBJECT_WLOCK(object);
 				return (error);
@@ -937,25 +900,36 @@ shm_alloc(struct ucred *ucred, mode_t mode, bool largepage)
 	struct shmfd *shmfd;
 	vm_object_t obj;
 
+	if (largepage) {
+		obj = phys_pager_allocate(NULL, &shm_largepage_phys_ops,
+		    NULL, 0, VM_PROT_DEFAULT, 0, ucred);
+	} else {
+		obj = vm_pager_allocate(shmfd_pager_type, NULL, 0,
+		    VM_PROT_DEFAULT, 0, ucred);
+	}
+	if (obj == NULL) {
+		/*
+		 * swap reservation limits can cause object allocation
+		 * to fail.
+		 */
+		return (NULL);
+	}
+
 	shmfd = malloc(sizeof(*shmfd), M_SHMFD, M_WAITOK | M_ZERO);
-	shmfd->shm_size = 0;
 	shmfd->shm_uid = ucred->cr_uid;
 	shmfd->shm_gid = ucred->cr_gid;
 	shmfd->shm_mode = mode;
 	if (largepage) {
-		shmfd->shm_object = phys_pager_allocate(NULL,
-		    &shm_largepage_phys_ops, NULL, shmfd->shm_size,
-		    VM_PROT_DEFAULT, 0, ucred);
+		obj->un_pager.phys.phys_priv = shmfd;
 		shmfd->shm_lp_alloc_policy = SHM_LARGEPAGE_ALLOC_DEFAULT;
 	} else {
-		obj = vm_pager_allocate(shmfd_pager_type, NULL,
-		    shmfd->shm_size, VM_PROT_DEFAULT, 0, ucred);
-		VM_OBJECT_WLOCK(obj);
 		obj->un_pager.swp.swp_priv = shmfd;
-		VM_OBJECT_WUNLOCK(obj);
-		shmfd->shm_object = obj;
 	}
-	KASSERT(shmfd->shm_object != NULL, ("shm_create: vm_pager_allocate"));
+
+	VM_OBJECT_WLOCK(obj);
+	vm_object_set_flag(obj, OBJ_POSIXSHM);
+	VM_OBJECT_WUNLOCK(obj);
+	shmfd->shm_object = obj;
 	vfs_timestamp(&shmfd->shm_birthtime);
 	shmfd->shm_atime = shmfd->shm_mtime = shmfd->shm_ctime =
 	    shmfd->shm_birthtime;
@@ -991,11 +965,12 @@ shm_drop(struct shmfd *shmfd)
 		rangelock_destroy(&shmfd->shm_rl);
 		mtx_destroy(&shmfd->shm_mtx);
 		obj = shmfd->shm_object;
-		if (!shm_largepage(shmfd)) {
-			VM_OBJECT_WLOCK(obj);
+		VM_OBJECT_WLOCK(obj);
+		if (shm_largepage(shmfd))
+			obj->un_pager.phys.phys_priv = NULL;
+		else
 			obj->un_pager.swp.swp_priv = NULL;
-			VM_OBJECT_WUNLOCK(obj);
-		}
+		VM_OBJECT_WUNLOCK(obj);
 		vm_object_deallocate(obj);
 		free(shmfd, M_SHMFD);
 	}
@@ -1171,14 +1146,6 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 	if ((shmflags & SHM_ALLOW_SEALING) != 0)
 		initial_seals &= ~F_SEAL_SEAL;
 
-#ifdef CAPABILITY_MODE
-	/*
-	 * shm_open(2) is only allowed for anonymous objects.
-	 */
-	if (IN_CAPABILITY_MODE(td) && (userpath != SHM_ANON))
-		return (ECAPMODE);
-#endif
-
 	AUDIT_ARG_FFLAGS(flags);
 	AUDIT_ARG_MODE(mode);
 
@@ -1203,6 +1170,28 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 	if ((initial_seals & ~F_SEAL_SEAL) != 0)
 		return (EINVAL);
 
+	if (userpath != SHM_ANON) {
+		error = shm_copyin_path(td, userpath, &path);
+		if (error != 0)
+			return (error);
+
+#ifdef CAPABILITY_MODE
+		/*
+		 * shm_open(2) is only allowed for anonymous objects.
+		 */
+		if (CAP_TRACING(td))
+			ktrcapfail(CAPFAIL_NAMEI, path);
+		if (IN_CAPABILITY_MODE(td)) {
+			error = ECAPMODE;
+			goto outnofp;
+		}
+#endif
+
+		AUDIT_ARG_UPATH1_CANON(path);
+	} else {
+		path = NULL;
+	}
+
 	pdp = td->td_proc->p_pd;
 	cmode = (mode & ~pdp->pd_cmask) & ACCESSPERMS;
 
@@ -1214,29 +1203,24 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 	 * in sys_shm_open() to keep this implementation compliant.
 	 */
 	error = falloc_caps(td, &fp, &fd, flags & O_CLOEXEC, fcaps);
-	if (error)
-		return (error);
+	if (error != 0)
+		goto outnofp;
 
 	/* A SHM_ANON path pointer creates an anonymous object. */
 	if (userpath == SHM_ANON) {
 		/* A read-only anonymous object is pointless. */
 		if ((flags & O_ACCMODE) == O_RDONLY) {
-			fdclose(td, fp, fd);
-			fdrop(fp, td);
-			return (EINVAL);
+			error = EINVAL;
+			goto out;
 		}
 		shmfd = shm_alloc(td->td_ucred, cmode, largepage);
+		if (shmfd == NULL) {
+			error = ENOMEM;
+			goto out;
+		}
 		shmfd->shm_seals = initial_seals;
 		shmfd->shm_flags = shmflags;
 	} else {
-		error = shm_copyin_path(td, userpath, &path);
-		if (error != 0) {
-			fdclose(td, fp, fd);
-			fdrop(fp, td);
-			return (error);
-		}
-
-		AUDIT_ARG_UPATH1_CANON(path);
 		fnv = fnv_32_str(path, FNV1_32_INIT);
 		sx_xlock(&shm_dict_lock);
 		shmfd = shm_lookup(path, fnv);
@@ -1250,17 +1234,26 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 #endif
 					shmfd = shm_alloc(td->td_ucred, cmode,
 					    largepage);
-					shmfd->shm_seals = initial_seals;
-					shmfd->shm_flags = shmflags;
-					shm_insert(path, fnv, shmfd);
+					if (shmfd == NULL) {
+						error = ENOMEM;
+					} else {
+						shmfd->shm_seals =
+						    initial_seals;
+						shmfd->shm_flags = shmflags;
+						shm_insert(path, fnv, shmfd);
+						path = NULL;
+					}
 #ifdef MAC
 				}
 #endif
 			} else {
-				free(path, M_SHMFD);
 				error = ENOENT;
 			}
 		} else {
+			/*
+			 * Object already exists, obtain a new reference if
+			 * requested and permitted.
+			 */
 			rl_cookie = shm_rangelock_wlock(shmfd, 0, OFF_MAX);
 
 			/*
@@ -1272,12 +1265,6 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 			 * not be sealed.
 			 */
 			initial_seals &= ~shmfd->shm_seals;
-
-			/*
-			 * Object already exists, obtain a new
-			 * reference if requested and permitted.
-			 */
-			free(path, M_SHMFD);
 
 			/*
 			 * initial_seals can't set additional seals if we've
@@ -1337,19 +1324,25 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 		}
 		sx_xunlock(&shm_dict_lock);
 
-		if (error) {
-			fdclose(td, fp, fd);
-			fdrop(fp, td);
-			return (error);
-		}
+		if (error != 0)
+			goto out;
 	}
 
 	finit(fp, FFLAGS(flags & O_ACCMODE), DTYPE_SHM, shmfd, &shm_ops);
 
 	td->td_retval[0] = fd;
 	fdrop(fp, td);
+	free(path, M_SHMFD);
 
 	return (0);
+
+out:
+	fdclose(td, fp, fd);
+	fdrop(fp, td);
+outnofp:
+	free(path, M_SHMFD);
+
+	return (error);
 }
 
 /* System calls. */
@@ -1579,9 +1572,20 @@ shm_mmap_large(struct shmfd *shmfd, vm_map_t map, vm_offset_t *addr,
 	if (align == 0) {
 		align = pagesizes[shmfd->shm_lp_psind];
 	} else if (align == MAP_ALIGNED_SUPER) {
-		if (shmfd->shm_lp_psind != 1)
+		/*
+		 * MAP_ALIGNED_SUPER is only supported on superpage sizes,
+		 * i.e., [1, VM_NRESERVLEVEL].  shmfd->shm_lp_psind < 1 is
+		 * handled above.
+		 */
+		if (
+#if VM_NRESERVLEVEL > 0
+		    shmfd->shm_lp_psind > VM_NRESERVLEVEL
+#else
+		    shmfd->shm_lp_psind > 1
+#endif
+		    )
 			return (EINVAL);
-		align = pagesizes[1];
+		align = pagesizes[shmfd->shm_lp_psind];
 	} else {
 		align >>= MAP_ALIGNMENT_SHIFT;
 		align = 1ULL << align;
@@ -1637,7 +1641,7 @@ fail:
 
 static int
 shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
-    vm_prot_t prot, vm_prot_t cap_maxprot, int flags,
+    vm_prot_t prot, vm_prot_t max_maxprot, int flags,
     vm_ooffset_t foff, struct thread *td)
 {
 	struct shmfd *shmfd;
@@ -1660,8 +1664,8 @@ shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
 	 * writeable.
 	 */
 	if ((flags & MAP_SHARED) == 0) {
-		cap_maxprot |= VM_PROT_WRITE;
-		maxprot |= VM_PROT_WRITE;
+		if ((max_maxprot & VM_PROT_WRITE) != 0)
+			maxprot |= VM_PROT_WRITE;
 		writecnt = false;
 	} else {
 		if ((fp->f_flag & FWRITE) != 0 &&
@@ -1681,7 +1685,7 @@ shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
 			goto out;
 		}
 	}
-	maxprot &= cap_maxprot;
+	maxprot &= max_maxprot;
 
 	/* See comment in vn_mmap(). */
 	if (
@@ -1900,21 +1904,19 @@ shm_fill_kinfo_locked(struct shmfd *shmfd, struct kinfo_file *kif, bool list)
 	kif->kf_un.kf_file.kf_file_mode = S_IFREG | shmfd->shm_mode;
 	kif->kf_un.kf_file.kf_file_size = shmfd->shm_size;
 	if (shmfd->shm_path != NULL) {
-		if (shmfd->shm_path != NULL) {
-			path = shmfd->shm_path;
-			pr_path = curthread->td_ucred->cr_prison->pr_path;
-			if (strcmp(pr_path, "/") != 0) {
-				/* Return the jail-rooted pathname. */
-				pr_pathlen = strlen(pr_path);
-				visible = strncmp(path, pr_path, pr_pathlen)
-				    == 0 && path[pr_pathlen] == '/';
-				if (list && !visible)
-					return (EPERM);
-				if (visible)
-					path += pr_pathlen;
-			}
-			strlcpy(kif->kf_path, path, sizeof(kif->kf_path));
+		path = shmfd->shm_path;
+		pr_path = curthread->td_ucred->cr_prison->pr_path;
+		if (strcmp(pr_path, "/") != 0) {
+			/* Return the jail-rooted pathname. */
+			pr_pathlen = strlen(pr_path);
+			visible = strncmp(path, pr_path, pr_pathlen) == 0 &&
+			    path[pr_pathlen] == '/';
+			if (list && !visible)
+				return (EPERM);
+			if (visible)
+				path += pr_pathlen;
 		}
+		strlcpy(kif->kf_path, path, sizeof(kif->kf_path));
 	}
 	return (0);
 }
@@ -2182,4 +2184,35 @@ sys_shm_open2(struct thread *td, struct shm_open2_args *uap)
 
 	return (kern_shm_open2(td, uap->path, uap->flags, uap->mode,
 	    uap->shmflags, NULL, uap->name));
+}
+
+int
+shm_get_path(struct vm_object *obj, char *path, size_t sz)
+{
+	struct shmfd *shmfd;
+	int error;
+
+	error = 0;
+	shmfd = NULL;
+	sx_slock(&shm_dict_lock);
+	VM_OBJECT_RLOCK(obj);
+	if ((obj->flags & OBJ_POSIXSHM) == 0) {
+		error = EINVAL;
+	} else {
+		if (obj->type == shmfd_pager_type)
+			shmfd = obj->un_pager.swp.swp_priv;
+		else if (obj->type == OBJT_PHYS)
+			shmfd = obj->un_pager.phys.phys_priv;
+		if (shmfd == NULL) {
+			error = ENXIO;
+		} else {
+			strlcpy(path, shmfd->shm_path == NULL ? "anon" :
+			    shmfd->shm_path, sz);
+		}
+	}
+	if (error != 0)
+		path[0] = '\0';
+	VM_OBJECT_RUNLOCK(obj);
+	sx_sunlock(&shm_dict_lock);
+	return (error);
 }

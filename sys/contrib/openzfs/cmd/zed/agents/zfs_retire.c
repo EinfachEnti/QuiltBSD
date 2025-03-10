@@ -445,8 +445,8 @@ zfs_retire_recv(fmd_hdl_t *hdl, fmd_event_t *ep, nvlist_t *nvl,
 		 * its a loopback event from spa_async_remove(). Just
 		 * ignore it.
 		 */
-		if (vs->vs_state == VDEV_STATE_REMOVED &&
-		    state == VDEV_STATE_REMOVED)
+		if ((vs->vs_state == VDEV_STATE_REMOVED && state ==
+		    VDEV_STATE_REMOVED) || vs->vs_state == VDEV_STATE_OFFLINE)
 			return;
 
 		/* Remove the vdev since device is unplugged */
@@ -522,6 +522,9 @@ zfs_retire_recv(fmd_hdl_t *hdl, fmd_event_t *ep, nvlist_t *nvl,
 			fault_device = B_TRUE;
 		} else if (fmd_nvl_class_match(hdl, fault,
 		    "fault.fs.zfs.vdev.checksum")) {
+			degrade_device = B_TRUE;
+		} else if (fmd_nvl_class_match(hdl, fault,
+		    "fault.fs.zfs.vdev.slow_io")) {
 			degrade_device = B_TRUE;
 		} else if (fmd_nvl_class_match(hdl, fault,
 		    "fault.fs.zfs.device")) {

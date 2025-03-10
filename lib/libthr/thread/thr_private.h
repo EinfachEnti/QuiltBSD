@@ -37,7 +37,6 @@
  */
 #include <sys/types.h>
 #include <sys/time.h>
-#include <sys/cdefs.h>
 #include <sys/queue.h>
 #include <sys/param.h>
 #include <sys/cpuset.h>
@@ -261,7 +260,6 @@ struct pthread_atfork {
 };
 
 struct pthread_attr {
-#define pthread_attr_start_copy	sched_policy
 	int	sched_policy;
 	int	sched_inherit;
 	int	prio;
@@ -271,7 +269,6 @@ struct pthread_attr {
 	void	*stackaddr_attr;
 	size_t	stacksize_attr;
 	size_t	guardsize_attr;
-#define pthread_attr_end_copy	cpuset
 	cpuset_t	*cpuset;
 	size_t	cpusetsize;
 };
@@ -565,8 +562,12 @@ struct pthread {
 
 	/* Deferred threads from pthread_cond_signal. */
 	unsigned int 		*defer_waiters[MAX_DEFER_WAITERS];
-#define _pthread_endzero	wake_addr
 
+	/* rtld thread-local dlerror message and seen control */
+	char			dlerror_msg[512];
+	int			dlerror_seen;
+
+#define _pthread_endzero	wake_addr
 	struct wake_addr	*wake_addr;
 #define WAKE_ADDR(td)           ((td)->wake_addr)
 
@@ -575,10 +576,6 @@ struct pthread {
 
 	/* pthread_set/get_name_np */
 	char			*name;
-
-	/* rtld thread-local dlerror message and seen control */
-	char			dlerror_msg[512];
-	int			dlerror_seen;
 };
 
 #define THR_SHOULD_GC(thrd) 						\
@@ -843,6 +840,8 @@ void	_thr_signal_postfork(void) __hidden;
 void	_thr_signal_postfork_child(void) __hidden;
 void	_thr_suspend_all_lock(struct pthread *) __hidden;
 void	_thr_suspend_all_unlock(struct pthread *) __hidden;
+void	_thr_suspend_all_np(void) __hidden;
+void	_thr_resume_all_np(void) __hidden;
 void	_thr_try_gc(struct pthread *, struct pthread *) __hidden;
 int	_rtp_to_schedparam(const struct rtprio *rtp, int *policy,
 		struct sched_param *param) __hidden;
@@ -867,8 +866,8 @@ int	_pthread_mutexattr_setrobust(pthread_mutexattr_t * _Nonnull, int);
 /* #include <fcntl.h> */
 #ifdef  _SYS_FCNTL_H_
 #ifndef _LIBC_PRIVATE_H_
-int     __sys_fcntl(int, int, ...);
-int     __sys_openat(int, const char *, int, ...);
+int     __sys_fcntl(int, int, intptr_t);
+int     __sys_openat(int, const char *, int, int);
 #endif /* _LIBC_PRIVATE_H_ */
 #endif /* _SYS_FCNTL_H_ */
 
@@ -1105,6 +1104,8 @@ int __Tthr_mutex_lock(pthread_mutex_t *);
 int __Tthr_mutex_trylock(pthread_mutex_t *);
 bool __thr_get_main_stack_base(char **base);
 bool __thr_get_main_stack_lim(size_t *lim);
+int _Tthr_sigqueue(pthread_t pthread, int sig, const union sigval value);
+void _thr_resolve_machdep(void);
 
 __END_DECLS
 __NULLABILITY_PRAGMA_POP

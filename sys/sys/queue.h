@@ -27,8 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)queue.h	8.5 (Berkeley) 8/20/94
  */
 
 #ifndef _SYS_QUEUE_H_
@@ -112,6 +110,7 @@
  * _REMOVE_AFTER		+	-	+	-
  * _REMOVE_HEAD			+	+	+	+
  * _REMOVE			s	+	s	+
+ * _REPLACE			-	+	-	+
  * _SWAP			+	+	+	+
  *
  */
@@ -227,6 +226,9 @@ struct {								\
 
 #define	SLIST_EMPTY(head)	((head)->slh_first == NULL)
 
+#define	SLIST_EMPTY_ATOMIC(head)					\
+	(atomic_load_ptr(&(head)->slh_first) == NULL)
+
 #define	SLIST_FIRST(head)	((head)->slh_first)
 
 #define	SLIST_FOREACH(var, head, field)					\
@@ -340,6 +342,40 @@ struct {								\
 /*
  * Singly-linked Tail queue functions.
  */
+#if (defined(_KERNEL) && defined(INVARIANTS))
+/*
+ * QMD_STAILQ_CHECK_EMPTY(STAILQ_HEAD *head)
+ *
+ * Validates that the stailq head's pointer to the last element's next pointer
+ * actually points to the head's first element pointer field.
+ */
+#define	QMD_STAILQ_CHECK_EMPTY(head) do {				\
+	if ((head)->stqh_last != &(head)->stqh_first)			\
+		panic("Empty stailq %p->stqh_last is %p, not head's "	\
+		    "first field address", (head), (head)->stqh_last);	\
+} while (0)
+
+#define	STAILQ_ASSERT_EMPTY(head) do {					\
+	if (!STAILQ_EMPTY((head)))					\
+		panic("stailq %p is not empty", (head));		\
+} while (0)
+
+/*
+ * QMD_STAILQ_CHECK_TAIL(STAILQ_HEAD *head)
+ *
+ * Validates that the stailq's last element's next pointer is NULL.
+ */
+#define	QMD_STAILQ_CHECK_TAIL(head) do {				\
+	if (*(head)->stqh_last != NULL)					\
+		panic("Stailq %p last element's next pointer is %p, "	\
+		    "not NULL", (head), *(head)->stqh_last);		\
+} while (0)
+#else
+#define	QMD_STAILQ_CHECK_EMPTY(head)
+#define	STAILQ_ASSERT_EMPTY(head)
+#define	QMD_STAILQ_CHECK_TAIL(head)
+#endif /* (_KERNEL && INVARIANTS) */
+
 #define	STAILQ_CONCAT(head1, head2) do {				\
 	if (!STAILQ_EMPTY((head2))) {					\
 		*(head1)->stqh_last = (head2)->stqh_first;		\
@@ -348,7 +384,14 @@ struct {								\
 	}								\
 } while (0)
 
-#define	STAILQ_EMPTY(head)	((head)->stqh_first == NULL)
+#define	STAILQ_EMPTY(head)	({					\
+	if (STAILQ_FIRST(head) == NULL)					\
+		QMD_STAILQ_CHECK_EMPTY(head);				\
+	STAILQ_FIRST(head) == NULL;					\
+})
+
+#define	STAILQ_EMPTY_ATOMIC(head)					\
+	(atomic_load_ptr(&(head)->stqh_first) == NULL)
 
 #define	STAILQ_FIRST(head)	((head)->stqh_first)
 
@@ -390,14 +433,15 @@ struct {								\
 } while (0)
 
 #define	STAILQ_INSERT_TAIL(head, elm, field) do {			\
+	QMD_STAILQ_CHECK_TAIL(head);					\
 	STAILQ_NEXT((elm), field) = NULL;				\
 	*(head)->stqh_last = (elm);					\
 	(head)->stqh_last = &STAILQ_NEXT((elm), field);			\
 } while (0)
 
-#define	STAILQ_LAST(head, type, field)				\
-	(STAILQ_EMPTY((head)) ? NULL :				\
-	    __containerof((head)->stqh_last,			\
+#define	STAILQ_LAST(head, type, field)					\
+	(STAILQ_EMPTY((head)) ? NULL :					\
+	    __containerof((head)->stqh_last,				\
 	    QUEUE_TYPEOF(type), field.stqe_next))
 
 #define	STAILQ_NEXT(elm, field)	((elm)->field.stqe_next)
@@ -435,9 +479,9 @@ struct {								\
 	(head1)->stqh_last = (head2)->stqh_last;			\
 	STAILQ_FIRST(head2) = swap_first;				\
 	(head2)->stqh_last = swap_last;					\
-	if (STAILQ_EMPTY(head1))					\
+	if (STAILQ_FIRST(head1) == NULL)				\
 		(head1)->stqh_last = &STAILQ_FIRST(head1);		\
-	if (STAILQ_EMPTY(head2))					\
+	if (STAILQ_FIRST(head2) == NULL)				\
 		(head2)->stqh_last = &STAILQ_FIRST(head2);		\
 } while (0)
 
@@ -500,7 +544,7 @@ struct {								\
 	if (LIST_NEXT((elm), field) != NULL &&				\
 	    LIST_NEXT((elm), field)->field.le_prev !=			\
 	     &((elm)->field.le_next))					\
-	     	panic("Bad link elm %p next->prev != elm", (elm));	\
+		panic("Bad link elm %p next->prev != elm", (elm));	\
 } while (0)
 
 /*
@@ -518,24 +562,27 @@ struct {								\
 #define	QMD_LIST_CHECK_PREV(elm, field)
 #endif /* (_KERNEL && INVARIANTS) */
 
-#define LIST_CONCAT(head1, head2, type, field) do {			      \
-	QUEUE_TYPEOF(type) *curelm = LIST_FIRST(head1);			      \
-	if (curelm == NULL) {						      \
-		if ((LIST_FIRST(head1) = LIST_FIRST(head2)) != NULL) {	      \
-			LIST_FIRST(head2)->field.le_prev =		      \
-			    &LIST_FIRST((head1));			      \
-			LIST_INIT(head2);				      \
-		}							      \
-	} else if (LIST_FIRST(head2) != NULL) {				      \
-		while (LIST_NEXT(curelm, field) != NULL)		      \
-			curelm = LIST_NEXT(curelm, field);		      \
-		LIST_NEXT(curelm, field) = LIST_FIRST(head2);		      \
-		LIST_FIRST(head2)->field.le_prev = &LIST_NEXT(curelm, field); \
-		LIST_INIT(head2);					      \
-	}								      \
+#define LIST_CONCAT(head1, head2, type, field) do {			\
+	QUEUE_TYPEOF(type) *curelm = LIST_FIRST(head1);			\
+	if (curelm == NULL) {						\
+		if ((LIST_FIRST(head1) = LIST_FIRST(head2)) != NULL) {	\
+			LIST_FIRST(head2)->field.le_prev =		\
+			    &LIST_FIRST((head1));			\
+			LIST_INIT(head2);				\
+		}							\
+	} else if (LIST_FIRST(head2) != NULL) {				\
+		while (LIST_NEXT(curelm, field) != NULL)		\
+			curelm = LIST_NEXT(curelm, field);		\
+		LIST_NEXT(curelm, field) = LIST_FIRST(head2);		\
+		LIST_FIRST(head2)->field.le_prev = &LIST_NEXT(curelm, field);\
+		LIST_INIT(head2);					\
+	}								\
 } while (0)
 
 #define	LIST_EMPTY(head)	((head)->lh_first == NULL)
+
+#define	LIST_EMPTY_ATOMIC(head)						\
+	(atomic_load_ptr(&(head)->lh_first) == NULL)
 
 #define	LIST_FIRST(head)	((head)->lh_first)
 
@@ -590,12 +637,12 @@ struct {								\
 
 #define	LIST_NEXT(elm, field)	((elm)->field.le_next)
 
-#define	LIST_PREV(elm, head, type, field)			\
-	((elm)->field.le_prev == &LIST_FIRST((head)) ? NULL :	\
-	    __containerof((elm)->field.le_prev,			\
+#define	LIST_PREV(elm, head, type, field)				\
+	((elm)->field.le_prev == &LIST_FIRST((head)) ? NULL :		\
+	    __containerof((elm)->field.le_prev,				\
 	    QUEUE_TYPEOF(type), field.le_next))
 
-#define LIST_REMOVE_HEAD(head, field) 					\
+#define LIST_REMOVE_HEAD(head, field)					\
 	LIST_REMOVE(LIST_FIRST(head), field)
 
 #define	LIST_REMOVE(elm, field) do {					\
@@ -604,9 +651,24 @@ struct {								\
 	QMD_LIST_CHECK_NEXT(elm, field);				\
 	QMD_LIST_CHECK_PREV(elm, field);				\
 	if (LIST_NEXT((elm), field) != NULL)				\
-		LIST_NEXT((elm), field)->field.le_prev = 		\
+		LIST_NEXT((elm), field)->field.le_prev =		\
 		    (elm)->field.le_prev;				\
 	*(elm)->field.le_prev = LIST_NEXT((elm), field);		\
+	TRASHIT(*oldnext);						\
+	TRASHIT(*oldprev);						\
+} while (0)
+
+#define LIST_REPLACE(elm, elm2, field) do {				\
+	QMD_SAVELINK(oldnext, (elm)->field.le_next);			\
+	QMD_SAVELINK(oldprev, (elm)->field.le_prev);			\
+	QMD_LIST_CHECK_NEXT(elm, field);				\
+	QMD_LIST_CHECK_PREV(elm, field);				\
+	LIST_NEXT((elm2), field) = LIST_NEXT((elm), field);		\
+	if (LIST_NEXT((elm2), field) != NULL)				\
+		LIST_NEXT((elm2), field)->field.le_prev =		\
+		    &(elm2)->field.le_next;				\
+	(elm2)->field.le_prev = (elm)->field.le_prev;			\
+	*(elm2)->field.le_prev = (elm2);				\
 	TRASHIT(*oldnext);						\
 	TRASHIT(*oldprev);						\
 } while (0)
@@ -681,7 +743,7 @@ struct {								\
  */
 #define	QMD_TAILQ_CHECK_TAIL(head, field) do {				\
 	if (*(head)->tqh_last != NULL)					\
-	    	panic("Bad tailq NEXT(%p->tqh_last) != NULL", (head)); 	\
+		panic("Bad tailq NEXT(%p->tqh_last) != NULL", (head));	\
 } while (0)
 
 /*
@@ -726,6 +788,9 @@ struct {								\
 
 #define	TAILQ_EMPTY(head)	((head)->tqh_first == NULL)
 
+#define	TAILQ_EMPTY_ATOMIC(head)					\
+	(atomic_load_ptr(&(head)->tqh_first) == NULL)
+
 #define	TAILQ_FIRST(head)	((head)->tqh_first)
 
 #define	TAILQ_FOREACH(var, head, field)					\
@@ -763,7 +828,7 @@ struct {								\
 	    (var) && ((tvar) = TAILQ_PREV((var), headname, field), 1);	\
 	    (var) = (tvar))
 
-#define	TAILQ_FOREACH_REVERSE_FROM_SAFE(var, head, headname, field, tvar) \
+#define	TAILQ_FOREACH_REVERSE_FROM_SAFE(var, head, headname, field, tvar)\
 	for ((var) = ((var) ? (var) : TAILQ_LAST((head), headname));	\
 	    (var) && ((tvar) = TAILQ_PREV((var), headname, field), 1);	\
 	    (var) = (tvar))
@@ -777,7 +842,7 @@ struct {								\
 #define	TAILQ_INSERT_AFTER(head, listelm, elm, field) do {		\
 	QMD_TAILQ_CHECK_NEXT(listelm, field);				\
 	if ((TAILQ_NEXT((elm), field) = TAILQ_NEXT((listelm), field)) != NULL)\
-		TAILQ_NEXT((elm), field)->field.tqe_prev = 		\
+		TAILQ_NEXT((elm), field)->field.tqe_prev =		\
 		    &TAILQ_NEXT((elm), field);				\
 	else {								\
 		(head)->tqh_last = &TAILQ_NEXT((elm), field);		\
@@ -832,7 +897,7 @@ struct {								\
  * the previous element. FAST is very useful for instances when
  * you may want to prefetch the last data element.
  */
-#define	TAILQ_LAST_FAST(head, type, field)			\
+#define	TAILQ_LAST_FAST(head, type, field)				\
     (TAILQ_EMPTY(head) ? NULL : __containerof((head)->tqh_last, QUEUE_TYPEOF(type), field.tqe_next))
 
 #define	TAILQ_NEXT(elm, field) ((elm)->field.tqe_next)
@@ -844,7 +909,7 @@ struct {								\
     ((elm)->field.tqe_prev == &(head)->tqh_first ? NULL :		\
      __containerof((elm)->field.tqe_prev, QUEUE_TYPEOF(type), field.tqe_next))
 
-#define TAILQ_REMOVE_HEAD(head, field) 					\
+#define TAILQ_REMOVE_HEAD(head, field)					\
 	TAILQ_REMOVE(head, TAILQ_FIRST(head), field)
 
 #define	TAILQ_REMOVE(head, elm, field) do {				\
@@ -853,13 +918,31 @@ struct {								\
 	QMD_TAILQ_CHECK_NEXT(elm, field);				\
 	QMD_TAILQ_CHECK_PREV(elm, field);				\
 	if ((TAILQ_NEXT((elm), field)) != NULL)				\
-		TAILQ_NEXT((elm), field)->field.tqe_prev = 		\
+		TAILQ_NEXT((elm), field)->field.tqe_prev =		\
 		    (elm)->field.tqe_prev;				\
 	else {								\
 		(head)->tqh_last = (elm)->field.tqe_prev;		\
 		QMD_TRACE_HEAD(head);					\
 	}								\
 	*(elm)->field.tqe_prev = TAILQ_NEXT((elm), field);		\
+	TRASHIT(*oldnext);						\
+	TRASHIT(*oldprev);						\
+	QMD_TRACE_ELEM(&(elm)->field);					\
+} while (0)
+
+#define TAILQ_REPLACE(head, elm, elm2, field) do {			\
+	QMD_SAVELINK(oldnext, (elm)->field.tqe_next);			\
+	QMD_SAVELINK(oldprev, (elm)->field.tqe_prev);			\
+	QMD_TAILQ_CHECK_NEXT(elm, field);				\
+	QMD_TAILQ_CHECK_PREV(elm, field);				\
+	TAILQ_NEXT((elm2), field) = TAILQ_NEXT((elm), field);		\
+	if (TAILQ_NEXT((elm2), field) != TAILQ_END(head))		\
+                TAILQ_NEXT((elm2), field)->field.tqe_prev =		\
+                    &(elm2)->field.tqe_next;				\
+        else								\
+                (head)->tqh_last = &(elm2)->field.tqe_next;		\
+        (elm2)->field.tqe_prev = (elm)->field.tqe_prev;			\
+        *(elm2)->field.tqe_prev = (elm2);				\
 	TRASHIT(*oldnext);						\
 	TRASHIT(*oldprev);						\
 	QMD_TRACE_ELEM(&(elm)->field);					\

@@ -43,7 +43,6 @@
  * Author: Ken Merry <ken@FreeBSD.org>
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/callout.h>
 #include <sys/ioctl.h>
@@ -72,6 +71,7 @@
 #include <cam/ctl/ctl_ioctl.h>
 #include <cam/ctl/ctl_util.h>
 #include <cam/ctl/ctl_scsi_all.h>
+#include <dev/nvmf/nvmf_proto.h>
 #include <camlib.h>
 #include <libutil.h>
 #include "ctladm.h"
@@ -114,7 +114,9 @@ typedef enum {
 	CTLADM_CMD_ISLIST,
 	CTLADM_CMD_ISLOGOUT,
 	CTLADM_CMD_ISTERMINATE,
-	CTLADM_CMD_LUNMAP
+	CTLADM_CMD_LUNMAP,
+	CTLADM_CMD_NVLIST,
+	CTLADM_CMD_NVTERMINATE
 } ctladm_cmdfunction;
 
 typedef enum {
@@ -180,7 +182,13 @@ static struct ctladm_opts option_table[] = {
 	{"lunmap", CTLADM_CMD_LUNMAP, CTLADM_ARG_NONE, "p:l:L:"},
 	{"modesense", CTLADM_CMD_MODESENSE, CTLADM_ARG_NEED_TL, "P:S:dlm:c:"},
 	{"modify", CTLADM_CMD_MODIFY, CTLADM_ARG_NONE, "b:l:o:s:"},
+	{"nvlist", CTLADM_CMD_NVLIST, CTLADM_ARG_NONE, "vx"},
+	{"nvterminate", CTLADM_CMD_NVTERMINATE, CTLADM_ARG_NONE, "ac:h:"},
+#if (__FreeBSD_version < 1600000)
 	{"port", CTLADM_CMD_PORT, CTLADM_ARG_NONE, "lo:O:d:crp:qt:w:W:x"},
+#else
+	{"port", CTLADM_CMD_PORT, CTLADM_ARG_NONE, "o:O:d:crp:t:w:W:"},
+#endif
 	{"portlist", CTLADM_CMD_PORTLIST, CTLADM_ARG_NONE, "f:ilp:qvx"},
 	{"prin", CTLADM_CMD_PRES_IN, CTLADM_ARG_NEED_TL, "a:"},
 	{"prout", CTLADM_CMD_PRES_OUT, CTLADM_ARG_NEED_TL, "a:k:r:s:"},
@@ -384,6 +392,7 @@ static struct ctladm_opts cctl_fe_table[] = {
 	{"scsi", CTL_PORT_SCSI, CTLADM_ARG_NONE, NULL},
 	{"internal", CTL_PORT_INTERNAL, CTLADM_ARG_NONE, NULL},
 	{"iscsi", CTL_PORT_ISCSI, CTLADM_ARG_NONE, NULL},
+	{"nvmf", CTL_PORT_NVMF, CTLADM_ARG_NONE, NULL},
 	{"sas", CTL_PORT_SAS, CTLADM_ARG_NONE, NULL},
 	{"all", CTL_PORT_ALL, CTLADM_ARG_NONE, NULL},
 	{NULL, 0, 0, NULL}
@@ -392,7 +401,9 @@ static struct ctladm_opts cctl_fe_table[] = {
 static int
 cctl_port(int fd, int argc, char **argv, char *combinedopt)
 {
+	char result_buf[1024];
 	int c;
+	uint64_t created_port = -1;
 	int32_t targ_port = -1;
 	int retval = 0;
 	int wwnn_set = 0, wwpn_set = 0;
@@ -403,7 +414,9 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 	char *driver = NULL;
 	nvlist_t *option_list;
 	ctl_port_type port_type = CTL_PORT_NONE;
+#if (__FreeBSD_version < 1600000)
 	int quiet = 0, xml = 0;
+#endif
 
 	option_list = nvlist_create(0);
 	if (option_list == NULL)
@@ -411,12 +424,22 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 
 	while ((c = getopt(argc, argv, combinedopt)) != -1) {
 		switch (c) {
+#if (__FreeBSD_version < 1600000)
 		case 'l':
+			warnx("ctladm port -l is deprecated.  "
+			    "Use ctladm portlist instead");
 			if (port_mode != CCTL_PORT_MODE_NONE)
 				goto bailout_badarg;
 
 			port_mode = CCTL_PORT_MODE_LIST;
 			break;
+		case 'q':
+			quiet = 1;
+			break;
+		case 'x':
+			xml = 1;
+			break;
+#endif
 		case 'c':
 			port_mode = CCTL_PORT_MODE_CREATE;
 			break;
@@ -476,9 +499,6 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 		case 'p':
 			targ_port = strtol(optarg, NULL, 0);
 			break;
-		case 'q':
-			quiet = 1;
-			break;
 		case 't': {
 			ctladm_optret optret;
 			ctladm_cmdargs argnum;
@@ -522,9 +542,6 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 			wwpn = strtoull(optarg, NULL, 0);
 			wwpn_set = 1;
 			break;
-		case 'x':
-			xml = 1;
-			break;
 		}
 	}
 
@@ -541,7 +558,7 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 	 * we'll throw an error, since that only works on one port at a time.
 	 */
 	if ((port_type != CTL_PORT_NONE) && (targ_port != -1)) {
-		warnx("%s: can only specify one of -t or -n", __func__);
+		warnx("%s: can only specify one of -t or -p", __func__);
 		retval = 1;
 		goto bailout;
 	} else if ((targ_port == -1) && (port_type == CTL_PORT_NONE))
@@ -556,6 +573,7 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 	entry.targ_port = targ_port;
 
 	switch (port_mode) {
+#if (__FreeBSD_version < 1600000)
 	case CCTL_PORT_MODE_LIST: {
 		char opts[] = "xq";
 		char argx[] = "-x";
@@ -572,20 +590,19 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 		cctl_portlist(fd, argcx, argvx, opts);
 		break;
 	}
+#endif
 	case CCTL_PORT_MODE_REMOVE:
-		if (targ_port == -1) {
-			warnx("%s: -r require -p", __func__);
-			retval = 1;
-			goto bailout;
-		}
 	case CCTL_PORT_MODE_CREATE: {
 		bzero(&req, sizeof(req));
 		strlcpy(req.driver, driver, sizeof(req.driver));
+		req.result = result_buf;
+		req.result_len = sizeof(result_buf);
 
 		if (port_mode == CCTL_PORT_MODE_REMOVE) {
 			req.reqtype = CTL_REQ_REMOVE;
-			nvlist_add_stringf(option_list, "port_id", "%d",
-			    targ_port);
+			if (targ_port != -1)
+				nvlist_add_stringf(option_list, "port_id", "%d",
+				    targ_port);
 		} else
 			req.reqtype = CTL_REQ_CREATE;
 
@@ -613,6 +630,20 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 			warnx("warning: %s", req.error_str);
 			break;
 		case CTL_LUN_OK:
+			if (port_mode == CCTL_PORT_MODE_CREATE) {
+				req.result_nvl = nvlist_unpack(result_buf, req.result_len, 0);
+				if (req.result_nvl == NULL) {
+					warnx("error unpacking result nvlist");
+					break;
+				}
+				created_port = nvlist_get_number(req.result_nvl, "port_id");
+				printf("Port created successfully\n"
+				    "frontend: %s\n"
+				    "port:     %ju\n", driver,
+				    (uintmax_t) created_port);
+				nvlist_destroy(req.result_nvl);
+			} else
+				printf("Port destroyed successfully\n");
 			break;
 		default:
 			warnx("unknown status: %d", req.status);
@@ -624,7 +655,7 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 	}
 	case CCTL_PORT_MODE_SET:
 		if (targ_port == -1) {
-			warnx("%s: -w and -W require -n", __func__);
+			warnx("%s: -w and -W require -p", __func__);
 			retval = 1;
 			goto bailout;
 		}
@@ -661,7 +692,7 @@ cctl_port(int fd, int argc, char **argv, char *combinedopt)
 		fprintf(stdout, "Front End Ports disabled\n");
 		break;
 	default:
-		warnx("%s: one of -l, -o or -w/-W must be specified", __func__);
+		warnx("%s: one of -c, -r, -o or -w/-W must be specified", __func__);
 		retval = 1;
 		goto bailout;
 		break;
@@ -673,7 +704,8 @@ bailout:
 	return (retval);
 
 bailout_badarg:
-	warnx("%s: only one of -l, -o or -w/-W may be specified", __func__);
+	warnx("%s: only one of -c, -r, -l, -o or -w/-W may be specified",
+		__func__);
 	return (1);
 }
 
@@ -1245,7 +1277,7 @@ cctl_start_stop(int fd, int lun, int iid, int retries, int start,
 		goto bailout;
 	}
 
-	ctl_scsi_path_string(io, scsi_path, sizeof(scsi_path));
+	ctl_scsi_path_string(&io->io_hdr, scsi_path, sizeof(scsi_path));
 	if ((io->io_hdr.status & CTL_STATUS_MASK) == CTL_SUCCESS) {
 		fprintf(stdout, "%s LUN %s successfully\n", scsi_path,
 			(start) ?  "started" : "stopped");
@@ -1966,7 +1998,7 @@ cctl_get_inquiry(int fd, int lun, int iid, int retries,
 		retval = 1;
 		ctl_io_error_print(io, NULL, stderr);
 	} else if (path_str != NULL)
-		ctl_scsi_path_string(io, path_str, path_len);
+		ctl_scsi_path_string(&io->io_hdr, path_str, path_len);
 
 bailout:
 	ctl_scsi_free_io(io);
@@ -2364,7 +2396,7 @@ cctl_persistent_reserve_out(int fd, int lun, int iid,
 	}
 	if ((io->io_hdr.status & CTL_STATUS_MASK) == CTL_SUCCESS) {
 		char scsi_path[40];
-		ctl_scsi_path_string(io, scsi_path, sizeof(scsi_path));
+		ctl_scsi_path_string(&io->io_hdr, scsi_path, sizeof(scsi_path));
 		fprintf( stdout, "%sPERSISTENT RESERVE OUT executed "
 			"successfully\n", scsi_path);
 	} else
@@ -2806,10 +2838,9 @@ cctl_islist_start_element(void *user_data, const char *name, const char **attr)
 	islist = (struct cctl_islist_data *)user_data;
 	cur_conn = islist->cur_conn;
 	islist->level++;
-	if ((u_int)islist->level >= (sizeof(islist->cur_sb) /
-	    sizeof(islist->cur_sb[0])))
+	if ((u_int)islist->level >= nitems(islist->cur_sb))
 		errx(1, "%s: too many nesting levels, %zd max", __func__,
-		     sizeof(islist->cur_sb) / sizeof(islist->cur_sb[0]));
+		     nitems(islist->cur_sb));
 
 	islist->cur_sb[islist->level] = sbuf_new_auto();
 	if (islist->cur_sb[islist->level] == NULL)
@@ -3196,14 +3227,17 @@ bailout:
 	return (retval);
 }
 
-/*
- * Name/value pair used for per-LUN attributes.
- */
-struct cctl_lun_nv {
-	char *name;
-	char *value;
-	STAILQ_ENTRY(cctl_lun_nv) links;
-};
+/* Helper function to output values from an nvlist of strings. */
+static void
+print_nvlist(const nvlist_t *nvl, const char *fmt)
+{
+	const char *name;
+	void *cookie;
+
+	cookie = NULL;
+	while ((name = nvlist_next(nvl, NULL, &cookie)) != NULL)
+		printf(fmt, name, nvlist_get_string(nvl, name));
+}
 
 /*
  * Backend LUN information.
@@ -3215,7 +3249,7 @@ struct cctl_lun {
 	uint32_t blocksize;
 	char *serial_number;
 	char *device_id;
-	STAILQ_HEAD(,cctl_lun_nv) attr_list;
+	nvlist_t *attr_list;
 	STAILQ_ENTRY(cctl_lun) links;
 };
 
@@ -3237,10 +3271,9 @@ cctl_start_element(void *user_data, const char *name, const char **attr)
 	devlist = (struct cctl_devlist_data *)user_data;
 	cur_lun = devlist->cur_lun;
 	devlist->level++;
-	if ((u_int)devlist->level >= (sizeof(devlist->cur_sb) /
-	    sizeof(devlist->cur_sb[0])))
+	if ((u_int)devlist->level >= nitems(devlist->cur_sb))
 		errx(1, "%s: too many nesting levels, %zd max", __func__,
-		     sizeof(devlist->cur_sb) / sizeof(devlist->cur_sb[0]));
+		     nitems(devlist->cur_sb));
 
 	devlist->cur_sb[devlist->level] = sbuf_new_auto();
 	if (devlist->cur_sb[devlist->level] == NULL)
@@ -3258,7 +3291,7 @@ cctl_start_element(void *user_data, const char *name, const char **attr)
 		devlist->num_luns++;
 		devlist->cur_lun = cur_lun;
 
-		STAILQ_INIT(&cur_lun->attr_list);
+		cur_lun->attr_list = nvlist_create(NV_FLAG_NO_UNIQUE);
 		STAILQ_INSERT_TAIL(&devlist->lun_list, cur_lun, links);
 
 		for (i = 0; attr[i] != NULL; i += 2) {
@@ -3278,6 +3311,7 @@ cctl_end_element(void *user_data, const char *name)
 	struct cctl_devlist_data *devlist;
 	struct cctl_lun *cur_lun;
 	char *str;
+	int error;
 
 	devlist = (struct cctl_devlist_data *)user_data;
 	cur_lun = devlist->cur_lun;
@@ -3324,21 +3358,12 @@ cctl_end_element(void *user_data, const char *name)
 	} else if (strcmp(name, "ctllunlist") == 0) {
 		/* Nothing. */
 	} else {
-		struct cctl_lun_nv *nv;
-
-		nv = calloc(1, sizeof(*nv));
-		if (nv == NULL)
-			err(1, "%s: can't allocate %zd bytes for nv pair",
-			    __func__, sizeof(*nv));
-
-		nv->name = strdup(name);
-		if (nv->name == NULL)
-			err(1, "%s: can't allocated %zd bytes for string",
-			    __func__, strlen(name));
-
-		nv->value = str;
+		nvlist_move_string(cur_lun->attr_list, name, str);
+		error = nvlist_error(cur_lun->attr_list);
+		if (error != 0)
+			errc(1, error, "%s: can't add lun attribute nv pair",
+			    __func__);
 		str = NULL;
-		STAILQ_INSERT_TAIL(&cur_lun->attr_list, nv, links);
 	}
 
 	free(str);
@@ -3442,8 +3467,6 @@ retry:
 	printf("LUN Backend  %18s %4s %-16s %-16s\n", "Size (Blocks)", "BS",
 	       "Serial Number", "Device ID");
 	STAILQ_FOREACH(lun, &devlist.lun_list, links) {
-		struct cctl_lun_nv *nv;
-
 		if ((backend != NULL)
 		 && (strcmp(lun->backend_type, backend) != 0))
 			continue;
@@ -3456,9 +3479,7 @@ retry:
 		if (verbose == 0)
 			continue;
 
-		STAILQ_FOREACH(nv, &lun->attr_list, links) {
-			printf("      %s=%s\n", nv->name, nv->value);
-		}
+		print_nvlist(lun->attr_list, "      %s=%s\n");
 	}
 bailout:
 	free(lun_str);
@@ -3475,10 +3496,11 @@ struct cctl_port {
 	char *frontend_type;
 	char *name;
 	int pp, vp;
-	char *target, *port, *lun_map;
-	STAILQ_HEAD(,cctl_lun_nv) init_list;
-	STAILQ_HEAD(,cctl_lun_nv) lun_list;
-	STAILQ_HEAD(,cctl_lun_nv) attr_list;
+	char *controller, *target, *port, *lun_map;
+	nvlist_t *host_list;
+	nvlist_t *init_list;
+	nvlist_t *lun_list;
+	nvlist_t *attr_list;
 	STAILQ_ENTRY(cctl_port) links;
 };
 
@@ -3501,10 +3523,9 @@ cctl_start_pelement(void *user_data, const char *name, const char **attr)
 	portlist = (struct cctl_portlist_data *)user_data;
 	cur_port = portlist->cur_port;
 	portlist->level++;
-	if ((u_int)portlist->level >= (sizeof(portlist->cur_sb) /
-	    sizeof(portlist->cur_sb[0])))
+	if ((u_int)portlist->level >= nitems(portlist->cur_sb))
 		errx(1, "%s: too many nesting levels, %zd max", __func__,
-		     sizeof(portlist->cur_sb) / sizeof(portlist->cur_sb[0]));
+		     nitems(portlist->cur_sb));
 
 	portlist->cur_sb[portlist->level] = sbuf_new_auto();
 	if (portlist->cur_sb[portlist->level] == NULL)
@@ -3530,9 +3551,10 @@ cctl_start_pelement(void *user_data, const char *name, const char **attr)
 		portlist->num_ports++;
 		portlist->cur_port = cur_port;
 
-		STAILQ_INIT(&cur_port->init_list);
-		STAILQ_INIT(&cur_port->lun_list);
-		STAILQ_INIT(&cur_port->attr_list);
+		cur_port->host_list = nvlist_create(0);
+		cur_port->init_list = nvlist_create(0);
+		cur_port->lun_list = nvlist_create(0);
+		cur_port->attr_list = nvlist_create(NV_FLAG_NO_UNIQUE);
 		cur_port->port_id = portlist->cur_id;
 		STAILQ_INSERT_TAIL(&portlist->port_list, cur_port, links);
 	}
@@ -3543,7 +3565,9 @@ cctl_end_pelement(void *user_data, const char *name)
 {
 	struct cctl_portlist_data *portlist;
 	struct cctl_port *cur_port;
+	char idname[16];
 	char *str;
+	int error;
 
 	portlist = (struct cctl_portlist_data *)user_data;
 	cur_port = portlist->cur_port;
@@ -3588,6 +3612,9 @@ cctl_end_pelement(void *user_data, const char *name)
 	} else if (strcmp(name, "target") == 0) {
 		cur_port->target = str;
 		str = NULL;
+	} else if (strcmp(name, "subnqn") == 0) {
+		cur_port->controller = str;
+		str = NULL;
 	} else if (strcmp(name, "port") == 0) {
 		cur_port->port = str;
 		str = NULL;
@@ -3598,31 +3625,36 @@ cctl_end_pelement(void *user_data, const char *name)
 		portlist->cur_port = NULL;
 	} else if (strcmp(name, "ctlportlist") == 0) {
 		/* Nothing. */
-	} else {
-		struct cctl_lun_nv *nv;
-
-		nv = calloc(1, sizeof(*nv));
-		if (nv == NULL)
-			err(1, "%s: can't allocate %zd bytes for nv pair",
-			    __func__, sizeof(*nv));
-
-		if (strcmp(name, "initiator") == 0 ||
-		    strcmp(name, "lun") == 0)
-			asprintf(&nv->name, "%ju", portlist->cur_id);
-		else
-			nv->name = strdup(name);
-		if (nv->name == NULL)
-			err(1, "%s: can't allocated %zd bytes for string",
-			    __func__, strlen(name));
-
-		nv->value = str;
+	} else if (strcmp(name, "host") == 0) {
+		snprintf(idname, sizeof(idname), "%ju", portlist->cur_id);
+		nvlist_move_string(cur_port->host_list, idname, str);
+		error = nvlist_error(cur_port->host_list);
+		if (error != 0)
+			errc(1, error, "%s: can't add host nv pair",
+			    __func__);
 		str = NULL;
-		if (strcmp(name, "initiator") == 0)
-			STAILQ_INSERT_TAIL(&cur_port->init_list, nv, links);
-		else if (strcmp(name, "lun") == 0)
-			STAILQ_INSERT_TAIL(&cur_port->lun_list, nv, links);
-		else
-			STAILQ_INSERT_TAIL(&cur_port->attr_list, nv, links);
+	} else if (strcmp(name, "initiator") == 0) {
+		snprintf(idname, sizeof(idname), "%ju", portlist->cur_id);
+		nvlist_move_string(cur_port->init_list, idname, str);
+		error = nvlist_error(cur_port->init_list);
+		if (error != 0)
+			errc(1, error, "%s: can't add initiator nv pair",
+			    __func__);
+		str = NULL;
+	} else if (strcmp(name, "lun") == 0) {
+		snprintf(idname, sizeof(idname), "%ju", portlist->cur_id);
+		nvlist_move_string(cur_port->lun_list, idname, str);
+		error = nvlist_error(cur_port->lun_list);
+		if (error != 0)
+			errc(1, error, "%s: can't add LUN nv pair", __func__);
+		str = NULL;
+	} else {
+		nvlist_move_string(cur_port->attr_list, name, str);
+		error = nvlist_error(cur_port->attr_list);
+		if (error != 0)
+			errc(1, error, "%s: can't add lun attribute nv pair",
+			    __func__);
+		str = NULL;
 	}
 
 	free(str);
@@ -3739,8 +3771,6 @@ retry:
 	if (quiet == 0)
 		printf("Port Online Frontend Name     pp vp\n");
 	STAILQ_FOREACH(port, &portlist.port_list, links) {
-		struct cctl_lun_nv *nv;
-
 		if ((frontend != NULL)
 		 && (strcmp(port->frontend_type, frontend) != 0))
 			continue;
@@ -3754,29 +3784,27 @@ retry:
 		    port->port ? port->port : "");
 
 		if (init || verbose) {
+			if (port->controller)
+				printf("  Controller: %s\n", port->controller);
+			print_nvlist(port->host_list, "  Host %s: %s\n");
 			if (port->target)
 				printf("  Target: %s\n", port->target);
-			STAILQ_FOREACH(nv, &port->init_list, links) {
-				printf("  Initiator %s: %s\n",
-				    nv->name, nv->value);
-			}
+			print_nvlist(port->init_list, "  Initiator %s: %s\n");
 		}
 
 		if (lun || verbose) {
 			if (port->lun_map) {
-				STAILQ_FOREACH(nv, &port->lun_list, links)
-					printf("  LUN %s: %s\n",
-					    nv->name, nv->value);
-				if (STAILQ_EMPTY(&port->lun_list))
+				if (nvlist_empty(port->lun_list))
 					printf("  No LUNs mapped\n");
+				else
+					print_nvlist(port->lun_list,
+					    "  LUN %s: %s\n");
 			} else
 				printf("  All LUNs mapped\n");
 		}
 
 		if (verbose) {
-			STAILQ_FOREACH(nv, &port->attr_list, links) {
-				printf("      %s=%s\n", nv->name, nv->value);
-			}
+			print_nvlist(port->attr_list, "      %s=%s\n");
 		}
 	}
 bailout:
@@ -3817,6 +3845,314 @@ cctl_lunmap(int fd, int argc, char **argv, char *combinedopt)
 		retval = 1;
 	}
 
+	return (retval);
+}
+
+struct cctl_nvlist_conn {
+	int connection_id;
+	char *hostnqn;
+	char *subnqn;
+	int trtype;
+	STAILQ_ENTRY(cctl_nvlist_conn) links;
+};
+
+struct cctl_nvlist_data {
+	int num_conns;
+	STAILQ_HEAD(,cctl_nvlist_conn) conn_list;
+	struct cctl_nvlist_conn *cur_conn;
+	u_int level;
+	struct sbuf *cur_sb[32];
+};
+
+static void
+cctl_nvlist_start_element(void *user_data, const char *name, const char **attr)
+{
+	int i;
+	struct cctl_nvlist_data *nvlist;
+	struct cctl_nvlist_conn *cur_conn;
+
+	nvlist = (struct cctl_nvlist_data *)user_data;
+	cur_conn = nvlist->cur_conn;
+	nvlist->level++;
+	if ((u_int)nvlist->level >= nitems(nvlist->cur_sb))
+		errx(1, "%s: too many nesting levels, %zd max", __func__,
+		    nitems(nvlist->cur_sb));
+
+	nvlist->cur_sb[nvlist->level] = sbuf_new_auto();
+	if (nvlist->cur_sb[nvlist->level] == NULL)
+		err(1, "%s: Unable to allocate sbuf", __func__);
+
+	if (strcmp(name, "connection") == 0) {
+		if (cur_conn != NULL)
+			errx(1, "%s: improper connection element nesting",
+			    __func__);
+
+		cur_conn = calloc(1, sizeof(*cur_conn));
+		if (cur_conn == NULL)
+			err(1, "%s: cannot allocate %zd bytes", __func__,
+			    sizeof(*cur_conn));
+
+		nvlist->num_conns++;
+		nvlist->cur_conn = cur_conn;
+
+		STAILQ_INSERT_TAIL(&nvlist->conn_list, cur_conn, links);
+
+		for (i = 0; attr[i] != NULL; i += 2) {
+			if (strcmp(attr[i], "id") == 0) {
+				cur_conn->connection_id =
+				    strtoull(attr[i+1], NULL, 0);
+			} else {
+				errx(1,
+				    "%s: invalid connection attribute %s = %s",
+				     __func__, attr[i], attr[i+1]);
+			}
+		}
+	}
+}
+
+static void
+cctl_nvlist_end_element(void *user_data, const char *name)
+{
+	struct cctl_nvlist_data *nvlist;
+	struct cctl_nvlist_conn *cur_conn;
+	char *str;
+
+	nvlist = (struct cctl_nvlist_data *)user_data;
+	cur_conn = nvlist->cur_conn;
+
+	if ((cur_conn == NULL) && (strcmp(name, "ctlnvmflist") != 0))
+		errx(1, "%s: cur_conn == NULL! (name = %s)", __func__, name);
+
+	if (nvlist->cur_sb[nvlist->level] == NULL)
+		errx(1, "%s: no valid sbuf at level %d (name %s)", __func__,
+		     nvlist->level, name);
+
+	sbuf_finish(nvlist->cur_sb[nvlist->level]);
+	str = strdup(sbuf_data(nvlist->cur_sb[nvlist->level]));
+	if (str == NULL)
+		err(1, "%s can't allocate %zd bytes for string", __func__,
+		    sbuf_len(nvlist->cur_sb[nvlist->level]));
+
+	sbuf_delete(nvlist->cur_sb[nvlist->level]);
+	nvlist->cur_sb[nvlist->level] = NULL;
+	nvlist->level--;
+
+	if (strcmp(name, "hostnqn") == 0) {
+		cur_conn->hostnqn = str;
+		str = NULL;
+	} else if (strcmp(name, "subnqn") == 0) {
+		cur_conn->subnqn = str;
+		str = NULL;
+	} else if (strcmp(name, "trtype") == 0) {
+		cur_conn->trtype = atoi(str);
+	} else if (strcmp(name, "connection") == 0) {
+		nvlist->cur_conn = NULL;
+	} else if (strcmp(name, "ctlnvmflist") == 0) {
+		/* Nothing. */
+	} else {
+		/*
+		 * Unknown element; ignore it for forward compatibility.
+		 */
+	}
+
+	free(str);
+}
+
+static void
+cctl_nvlist_char_handler(void *user_data, const XML_Char *str, int len)
+{
+	struct cctl_nvlist_data *nvlist;
+
+	nvlist = (struct cctl_nvlist_data *)user_data;
+
+	sbuf_bcat(nvlist->cur_sb[nvlist->level], str, len);
+}
+
+static const char *
+nvmf_transport_descr(u_int trtype)
+{
+	static char buf[16];
+
+	switch (trtype) {
+	case NVMF_TRTYPE_RDMA:
+		return ("RDMA");
+	case NVMF_TRTYPE_FC:
+		return ("Fibre Channel");
+	case NVMF_TRTYPE_TCP:
+		return ("TCP");
+	default:
+		snprintf(buf, sizeof(buf), "%#x", trtype);
+		return (buf);
+	}
+}
+
+static int
+cctl_nvlist(int fd, int argc, char **argv, char *combinedopt)
+{
+	struct ctl_nvmf req;
+	struct cctl_nvlist_data nvlist;
+	struct cctl_nvlist_conn *conn;
+	XML_Parser parser;
+	char *conn_str;
+	int conn_len;
+	int dump_xml = 0;
+	int c, retval, verbose = 0;
+
+	retval = 0;
+	conn_len = 4096;
+
+	bzero(&nvlist, sizeof(nvlist));
+	STAILQ_INIT(&nvlist.conn_list);
+
+	while ((c = getopt(argc, argv, combinedopt)) != -1) {
+		switch (c) {
+		case 'v':
+			verbose = 1;
+			break;
+		case 'x':
+			dump_xml = 1;
+			break;
+		default:
+			break;
+		}
+	}
+
+retry:
+	conn_str = malloc(conn_len);
+
+	bzero(&req, sizeof(req));
+	req.type = CTL_NVMF_LIST;
+	req.data.list.alloc_len = conn_len;
+	req.data.list.conn_xml = conn_str;
+
+	if (ioctl(fd, CTL_NVMF, &req) == -1) {
+		warn("%s: error issuing CTL_NVMF ioctl", __func__);
+		retval = 1;
+		goto bailout;
+	}
+
+	if (req.status == CTL_NVMF_ERROR) {
+		warnx("%s: error returned from CTL_NVMF ioctl:\n%s",
+		      __func__, req.error_str);
+	} else if (req.status == CTL_NVMF_LIST_NEED_MORE_SPACE) {
+		conn_len = conn_len << 1;
+		goto retry;
+	}
+
+	if (dump_xml != 0) {
+		printf("%s", conn_str);
+		goto bailout;
+	}
+
+	parser = XML_ParserCreate(NULL);
+	if (parser == NULL) {
+		warn("%s: Unable to create XML parser", __func__);
+		retval = 1;
+		goto bailout;
+	}
+
+	XML_SetUserData(parser, &nvlist);
+	XML_SetElementHandler(parser, cctl_nvlist_start_element,
+	    cctl_nvlist_end_element);
+	XML_SetCharacterDataHandler(parser, cctl_nvlist_char_handler);
+
+	retval = XML_Parse(parser, conn_str, strlen(conn_str), 1);
+	if (retval != 1) {
+		warnx("%s: Unable to parse XML: Error %d", __func__,
+		    XML_GetErrorCode(parser));
+		XML_ParserFree(parser);
+		retval = 1;
+		goto bailout;
+	}
+	retval = 0;
+	XML_ParserFree(parser);
+
+	if (verbose != 0) {
+		STAILQ_FOREACH(conn, &nvlist.conn_list, links) {
+			printf("%-25s %d\n", "Controller ID:", conn->connection_id);
+			printf("%-25s %s\n", "Host NQN:", conn->hostnqn);
+			printf("%-25s %s\n", "Subsystem NQN:", conn->subnqn);
+			printf("%-25s %s\n", "Transport:",
+			    nvmf_transport_descr(conn->trtype));
+			printf("\n");
+		}
+	} else {
+		printf("%4s %-16s %-36s %-36s\n", "ID", "Transport", "HostNQN",
+		    "SubNQN");
+		STAILQ_FOREACH(conn, &nvlist.conn_list, links) {
+			printf("%4u %-16s %-36s %-36s\n",
+			    conn->connection_id,
+			    nvmf_transport_descr(conn->trtype),
+			    conn->hostnqn, conn->subnqn);
+		}
+	}
+bailout:
+	free(conn_str);
+
+	return (retval);
+}
+
+static int
+cctl_nvterminate(int fd, int argc, char **argv, char *combinedopt)
+{
+	struct ctl_nvmf req;
+	int retval = 0, c;
+	int all = 0, cntlid = -1, nargs = 0;
+	char *hostnqn = NULL;
+
+	while ((c = getopt(argc, argv, combinedopt)) != -1) {
+		switch (c) {
+		case 'a':
+			all = 1;
+			nargs++;
+			break;
+		case 'c':
+			cntlid = strtoul(optarg, NULL, 0);
+			nargs++;
+			break;
+		case 'h':
+			hostnqn = strdup(optarg);
+			if (hostnqn == NULL)
+				err(1, "%s: strdup", __func__);
+			nargs++;
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (nargs == 0)
+		errx(1, "%s: either -a, -c, or -h must be specified",
+		    __func__);
+	if (nargs > 1)
+		errx(1, "%s: only one of -a, -c, or -h may be specified",
+		    __func__);
+
+	bzero(&req, sizeof(req));
+	req.type = CTL_NVMF_TERMINATE;
+	req.data.terminate.cntlid = cntlid;
+	if (hostnqn != NULL)
+		strlcpy(req.data.terminate.hostnqn,
+		    hostnqn, sizeof(req.data.terminate.hostnqn));
+	if (all != 0)
+		req.data.terminate.all = 1;
+
+	if (ioctl(fd, CTL_NVMF, &req) == -1) {
+		warn("%s: error issuing CTL_NVMF ioctl", __func__);
+		retval = 1;
+		goto bailout;
+	}
+
+	if (req.status != CTL_NVMF_OK) {
+		warnx("%s: error returned from CTL NVMeoF connection "
+		    "termination request:\n%s", __func__, req.error_str);
+		retval = 1;
+		goto bailout;
+	}
+
+	printf("NVMeoF connections terminated\n");
+
+bailout:
 	return (retval);
 }
 
@@ -3866,11 +4202,13 @@ usage(int error)
 "         ctladm islist      [-v | -x]\n"
 "         ctladm islogout    <-a | -c connection-id | -i name | -p portal>\n"
 "         ctladm isterminate <-a | -c connection-id | -i name | -p portal>\n"
+"         ctladm nvlist      [-v | -x]\n"
+"         ctladm nvterminate <-a | -c controller-id | -h name>\n"
 "         ctladm dumpooa\n"
 "         ctladm dumpstructs\n"
 "         ctladm help\n"
 "General Options:\n"
-"-I intiator_id           : defaults to 7, used to change the initiator id\n"
+"-I initiator_id          : defaults to 7, used to change the initiator id\n"
 "-C retries               : specify the number of times to retry this command\n"
 "-D devicename            : specify the device to operate on\n"
 "                         : (default is %s)\n"
@@ -3942,7 +4280,6 @@ usage(int error)
 "port options:\n"
 "-c                       : create new ioctl or iscsi frontend port\n"
 "-d                       : specify ioctl or iscsi frontend type\n"
-"-l                       : list frontend ports\n"
 "-o on|off                : turn frontend ports on or off\n"
 "-O pp|vp                 : create new frontend port using pp and/or vp\n"
 "-w wwnn                  : set WWNN for one frontend\n"
@@ -3950,11 +4287,9 @@ usage(int error)
 "-t port_type             : specify fc, scsi, ioctl, internal frontend type\n"
 "-p targ_port             : specify target port number\n"
 "-r                       : remove frontend port\n" 
-"-q                       : omit header in list output\n"
-"-x                       : output port list in XML format\n"
 "portlist options:\n"
 "-f frontend              : specify frontend type\n"
-"-i                       : report target and initiators addresses\n"
+"-i                       : report target and connected initiator names\n"
 "-l                       : report LUN mapping\n"
 "-p targ_port             : specify target port number\n"
 "-q                       : omit header in list output\n"
@@ -4132,7 +4467,7 @@ main(int argc, char **argv)
 		if (fd == -1 && errno == ENOENT) {
 			saved_errno = errno;
 			retval = kldload("ctl");
-			if (retval != -1)
+			if (retval != -1 || errno == EEXIST)
 				fd = open(device, O_RDWR);
 			else
 				errno = saved_errno;
@@ -4144,10 +4479,16 @@ main(int argc, char **argv)
 			goto bailout;
 		}
 #ifdef	WANT_ISCSI
-		else {
+		switch (command) {
+		case CTLADM_CMD_ISLIST:
+		case CTLADM_CMD_ISLOGOUT:
+		case CTLADM_CMD_ISTERMINATE:
 			if (modfind("cfiscsi") == -1 &&
 			    kldload("cfiscsi") == -1)
 				warn("couldn't load cfiscsi");
+			break;
+		default:
+			break;
 		}
 #endif
 	} else if ((command != CTLADM_CMD_HELP)
@@ -4255,6 +4596,12 @@ main(int argc, char **argv)
 		break;
 	case CTLADM_CMD_ISTERMINATE:
 	        retval = cctl_isterminate(fd, argc, argv, combinedopt);
+		break;
+	case CTLADM_CMD_NVLIST:
+	        retval = cctl_nvlist(fd, argc, argv, combinedopt);
+		break;
+	case CTLADM_CMD_NVTERMINATE:
+	        retval = cctl_nvterminate(fd, argc, argv, combinedopt);
 		break;
 	case CTLADM_CMD_HELP:
 	default:

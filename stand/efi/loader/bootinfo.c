@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <stand.h>
 #include <string.h>
 #include <sys/param.h>
@@ -64,9 +63,6 @@
 #ifdef LOADER_GELI_SUPPORT
 #include "geliboot.h"
 #endif
-
-int bi_load(char *args, vm_offset_t *modulep, vm_offset_t *kernendp,
-    bool exit_bs);
 
 static int
 bi_getboothowto(char *kargs)
@@ -186,7 +182,7 @@ bi_load_efi_data(struct preloaded_file *kfp, bool exit_bs)
 	struct efi_map_header *efihdr;
 	bool do_vmap;
 
-#if defined(__amd64__) || defined(__aarch64__)
+#ifdef MODINFOMD_EFI_FB
 	struct efi_fb efifb;
 
 	efifb.fb_addr = gfx_state.tg_fb.fb_addr;
@@ -340,7 +336,16 @@ bi_load(char *args, vm_offset_t *modulep, vm_offset_t *kernendp, bool exit_bs)
 	vm_offset_t size;
 	char *rootdevname;
 	int howto;
+#ifdef __i386__
+	/*
+	 * The 32-bit UEFI loader is used to
+	 * boot the 64-bit kernel on machines
+	 * that support it.
+	 */
+	bool is64 = true;
+#else
 	bool is64 = sizeof(long) == 8;
+#endif
 #if defined(LOADER_FDT_SUPPORT)
 	vm_offset_t dtbp;
 	int dtb_size;
@@ -386,10 +391,17 @@ bi_load(char *args, vm_offset_t *modulep, vm_offset_t *kernendp, bool exit_bs)
 	/* Pad to a page boundary. */
 	addr = roundup(addr, PAGE_SIZE);
 
+#ifdef EFI
 	addr = build_font_module(addr);
 
 	/* Pad to a page boundary. */
 	addr = roundup(addr, PAGE_SIZE);
+
+	addr = build_splash_module(addr);
+
+	/* Pad to a page boundary. */
+	addr = roundup(addr, PAGE_SIZE);
+#endif
 
 	/* Copy our environment. */
 	envp = addr;
@@ -408,9 +420,7 @@ bi_load(char *args, vm_offset_t *modulep, vm_offset_t *kernendp, bool exit_bs)
 		addr += roundup(dtb_size, PAGE_SIZE);
 #endif
 
-	kfp = file_findfile(NULL, "elf kernel");
-	if (kfp == NULL)
-		kfp = file_findfile(NULL, "elf64 kernel");
+	kfp = file_findfile(NULL, md_kerntype);
 	if (kfp == NULL)
 		panic("can't find kernel file");
 	kernend = 0;	/* fill it in later */
@@ -433,7 +443,13 @@ bi_load(char *args, vm_offset_t *modulep, vm_offset_t *kernendp, bool exit_bs)
 	file_addmetadata(kfp, MODINFOMD_MODULEP, sizeof(module), &module);
 #endif
 #ifdef EFI
+#ifndef __i386__
 	file_addmetadata(kfp, MODINFOMD_FW_HANDLE, sizeof(ST), &ST);
+#endif
+#if defined(__amd64__) || defined(__i386__)
+	file_addmetadata(kfp, MODINFOMD_EFI_ARCH, sizeof(MACHINE_ARCH),
+	    MACHINE_ARCH);
+#endif
 #endif
 #ifdef LOADER_GELI_SUPPORT
 	geli_export_key_metadata(kfp);

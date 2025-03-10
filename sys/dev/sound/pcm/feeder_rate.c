@@ -268,7 +268,7 @@ sysctl_hw_snd_feeder_rate_quality(SYSCTL_HANDLER_ARGS)
 		PCM_ACQUIRE(d);
 		CHN_FOREACH(c, d, channels.pcm) {
 			CHN_LOCK(c);
-			f = chn_findfeeder(c, FEEDER_RATE);
+			f = feeder_find(c, FEEDER_RATE);
 			if (f == NULL || f->data == NULL || CHN_STARTED(c)) {
 				CHN_UNLOCK(c);
 				continue;
@@ -431,11 +431,6 @@ z_roundpow2(int32_t v)
 static void
 z_feed_zoh(struct z_info *info, uint8_t *dst)
 {
-#if 0
-	z_copy(info->z_delay +
-	    (info->z_start * info->channels * info->bps), dst,
-	    info->channels * info->bps);
-#else
 	uint32_t cnt;
 	uint8_t *src;
 
@@ -449,7 +444,6 @@ z_feed_zoh(struct z_info *info, uint8_t *dst)
 	do {
 		*dst++ = *src++;
 	} while (--cnt != 0);
-#endif
 }
 
 /*
@@ -477,10 +471,10 @@ z_feed_linear_##SIGN##BIT##ENDIAN(struct z_info *info, uint8_t *dst)		\
 	ch = info->channels;							\
 										\
 	do {									\
-		x = _PCM_READ_##SIGN##BIT##_##ENDIAN(sx);			\
-		y = _PCM_READ_##SIGN##BIT##_##ENDIAN(sy);			\
+		x = pcm_sample_read(sx, AFMT_##SIGN##BIT##_##ENDIAN);		\
+		y = pcm_sample_read(sy, AFMT_##SIGN##BIT##_##ENDIAN);		\
 		x = Z_LINEAR_INTERPOLATE_##BIT(z, x, y);			\
-		_PCM_WRITE_##SIGN##BIT##_##ENDIAN(dst, x);			\
+		pcm_sample_write(dst, x, AFMT_##SIGN##BIT##_##ENDIAN);		\
 		sx += PCM_##BIT##_BPS;						\
 		sy += PCM_##BIT##_BPS;						\
 		dst += PCM_##BIT##_BPS;						\
@@ -508,10 +502,6 @@ z_feed_linear_##SIGN##BIT##ENDIAN(struct z_info *info, uint8_t *dst)		\
 #define Z_CLIP_CHECK(...)
 #endif
 
-#define Z_CLAMP(v, BIT)							\
-	(((v) > PCM_S##BIT##_MAX) ? PCM_S##BIT##_MAX :			\
-	(((v) < PCM_S##BIT##_MIN) ? PCM_S##BIT##_MIN : (v)))
-
 /*
  * Sine Cardinal (SINC) Interpolation. Scaling is done in 64 bit, so
  * there's no point to hold the plate any longer. All samples will be
@@ -522,7 +512,7 @@ z_feed_linear_##SIGN##BIT##ENDIAN(struct z_info *info, uint8_t *dst)		\
 	c += z >> Z_SHIFT;						\
 	z &= Z_MASK;							\
 	coeff = Z_COEFF_INTERPOLATE(z, z_coeff[c], z_dcoeff[c]);	\
-	x = _PCM_READ_##SIGN##BIT##_##ENDIAN(p);			\
+	x = pcm_sample_read(p, AFMT_##SIGN##BIT##_##ENDIAN);		\
 	v += Z_NORM_##BIT((intpcm64_t)x * coeff);			\
 	z += info->z_dy;						\
 	p adv##= info->channels * PCM_##BIT##_BPS
@@ -580,7 +570,8 @@ z_feed_sinc_##SIGN##BIT##ENDIAN(struct z_info *info, uint8_t *dst)		\
 		else								\
 			v >>= Z_COEFF_SHIFT - Z_GUARD_BIT_##BIT;		\
 		Z_CLIP_CHECK(v, BIT);						\
-		_PCM_WRITE_##SIGN##BIT##_##ENDIAN(dst, Z_CLAMP(v, BIT));	\
+		pcm_sample_write(dst, pcm_clamp(v, AFMT_##SIGN##BIT##_##ENDIAN),\
+		    AFMT_##SIGN##BIT##_##ENDIAN);				\
 	} while (ch != 0);							\
 }
 
@@ -605,11 +596,11 @@ z_feed_sinc_polyphase_##SIGN##BIT##ENDIAN(struct z_info *info, uint8_t *dst)	\
 		z_pcoeff = info->z_pcoeff +					\
 		    ((info->z_alpha * info->z_size) << 1);			\
 		for (i = info->z_size; i != 0; i--) {				\
-			x = _PCM_READ_##SIGN##BIT##_##ENDIAN(p);		\
+			x = pcm_sample_read(p, AFMT_##SIGN##BIT##_##ENDIAN);	\
 			v += Z_NORM_##BIT((intpcm64_t)x * *z_pcoeff);		\
 			z_pcoeff++;						\
 			p += info->channels * PCM_##BIT##_BPS;			\
-			x = _PCM_READ_##SIGN##BIT##_##ENDIAN(p);		\
+			x = pcm_sample_read(p, AFMT_##SIGN##BIT##_##ENDIAN);	\
 			v += Z_NORM_##BIT((intpcm64_t)x * *z_pcoeff);		\
 			z_pcoeff++;						\
 			p += info->channels * PCM_##BIT##_BPS;			\
@@ -619,7 +610,8 @@ z_feed_sinc_polyphase_##SIGN##BIT##ENDIAN(struct z_info *info, uint8_t *dst)	\
 		else								\
 			v >>= Z_COEFF_SHIFT - Z_GUARD_BIT_##BIT;		\
 		Z_CLIP_CHECK(v, BIT);						\
-		_PCM_WRITE_##SIGN##BIT##_##ENDIAN(dst, Z_CLAMP(v, BIT));	\
+		pcm_sample_write(dst, pcm_clamp(v, AFMT_##SIGN##BIT##_##ENDIAN),\
+		    AFMT_##SIGN##BIT##_##ENDIAN);				\
 	} while (ch != 0);							\
 }
 
@@ -1171,14 +1163,6 @@ z_setup_adaptive_sinc:
 			info->z_scale = Z_ONE;
 		}
 
-#if 0
-#define Z_SCALE_DIV	10000
-#define Z_SCALE_LIMIT(s, v)						\
-	((((uint64_t)(s) * (v)) + (Z_SCALE_DIV >> 1)) / Z_SCALE_DIV)
-
-		info->z_scale = Z_SCALE_LIMIT(info->z_scale, 9780);
-#endif
-
 		/* Smallest drift increment. */
 		info->z_dx = info->z_dy / info->z_gy;
 
@@ -1672,12 +1656,6 @@ z_resampler_feed_internal(struct pcm_feeder *f, struct pcm_channel *c,
 			 */
 			do {
 				info->z_resample(info, dst);
-#if 0
-				startdrift = z_gy2gx(info, 1);
-				alphadrift = z_drift(info, startdrift, 1);
-				info->z_start += startdrift;
-				info->z_alpha += alphadrift;
-#else
 				info->z_alpha += alphadrift;
 				if (info->z_alpha < info->z_gy)
 					info->z_start += startdrift;
@@ -1685,7 +1663,6 @@ z_resampler_feed_internal(struct pcm_feeder *f, struct pcm_channel *c,
 					info->z_start += startdrift - 1;
 					info->z_alpha -= info->z_gy;
 				}
-#endif
 				dst += align;
 #ifdef Z_DIAGNOSTIC
 				info->z_cycle++;

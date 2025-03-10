@@ -27,38 +27,38 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)netstat.h	8.2 (Berkeley) 1/4/94
  */
 
 #include <sys/cdefs.h>
+
+#define NETSTAT_XO_VERSION "1"
 
 #define	satosin(sa)	((struct sockaddr_in *)(sa))
 #define	satosin6(sa)	((struct sockaddr_in6 *)(sa))
 #define	sin6tosa(sin6)	((struct sockaddr *)(sin6))
 
-extern int	Aflag;	/* show addresses of protocol control block */
-extern int	aflag;	/* show all sockets (including servers) */
-extern int	bflag;	/* show i/f total bytes in/out */
-extern int	cflag;	/* show congestion control stats */
-extern int	Cflag;	/* show congestion control algo and stack */
-extern int	dflag;	/* show i/f dropped packets */
-extern int	gflag;	/* show group (multicast) routing or stats */
-extern int	hflag;	/* show counters in human readable format */
-extern int	iflag;	/* show interfaces */
-extern int	Lflag;	/* show size of listen queues */
-extern int	mflag;	/* show memory stats */
+extern bool	Aflag;	/* show addresses of protocol control block */
+extern bool	aflag;	/* show all sockets (including servers) */
+extern bool	bflag;	/* show i/f total bytes in/out */
+extern bool	cflag;	/* show congestion control stats */
+extern bool	Cflag;	/* show congestion control algo and stack */
+extern bool	dflag;	/* show i/f dropped packets */
+extern bool	gflag;	/* show group (multicast) routing or stats */
+extern bool	hflag;	/* show counters in human readable format */
+extern bool	iflag;	/* show interfaces */
+extern bool	Lflag;	/* show size of listen queues */
+extern bool	mflag;	/* show memory stats */
 extern int	noutputs;	/* how much outputs before we exit */
-extern int	numeric_addr;	/* show addresses numerically */
-extern int	numeric_port;	/* show ports numerically */
-extern int	Pflag;	/* show TCP log ID */
-extern int	rflag;	/* show routing tables (or routing stats) */
-extern int	Rflag;	/* show flowid / RSS information */
+extern u_int	numeric_addr;	/* show addresses numerically */
+extern bool	numeric_port;	/* show ports numerically */
+extern bool	Pflag;	/* show TCP log ID */
+extern bool	rflag;	/* show routing tables (or routing stats) */
+extern bool	Rflag;	/* show flowid / RSS information */
 extern int	sflag;	/* show protocol statistics */
-extern int	Tflag;  /* show TCP control block info */
-extern int	Wflag;	/* wide display */
-extern int	xflag;	/* extended display, includes all socket buffer info */
-extern int	zflag;	/* zero stats */
+extern bool	Tflag;  /* show TCP control block info */
+extern bool	Wflag;	/* wide display */
+extern bool	xflag;	/* extended display, includes all socket buffer info */
+extern bool	zflag;	/* zero stats */
 
 extern int	interval; /* repeat interval for i/f stats */
 
@@ -98,6 +98,7 @@ void	igmp_stats(u_long, const char *, int, int);
 void	pim_stats(u_long, const char *, int, int);
 void	carp_stats(u_long, const char *, int, int);
 void	pfsync_stats(u_long, const char *, int, int);
+void	pflow_stats(u_long, const char *, int, int);
 #ifdef IPSEC
 void	ipsec_stats(u_long, const char *, int, int);
 void	esp_stats(u_long, const char *, int, int);

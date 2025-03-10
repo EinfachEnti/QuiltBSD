@@ -1,3 +1,6 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
 .\" Copyright (c) 2000
 .\"	Mike W. Meyer
 .\"
@@ -22,12 +25,14 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd August 1, 2023
+.Dd March 8, 2025
 .Dt BUILD 7
 .Os
 .Sh NAME
 .Nm build
-.Nd General instructions on how to build the system
+.Nd general instructions on how to build the
+.Fx
+system
 .Sh DESCRIPTION
 The sources for the
 .Fx
@@ -396,6 +401,19 @@ Install the kernel to the directory
 .Pa ${DISTDIR}/kernel/boot/kernel .
 This target is used while building a release; see
 .Xr release 7 .
+.It Cm packages
+Create a
+.Xr pkg 7
+repository containing packages that can be used to create or upgrade an
+installation of the base system.
+The output repository is placed in the object directory, under
+.Pa repo/${PKG_ABI}
+where
+.Va PKG_ABI
+is the
+.Xr pkg 7
+ABI for the build target, for example,
+.Pa /usr/obj/${SRCDIR}/repo/FreeBSD:15:amd64 .
 .It Cm packagekernel
 Archive the results of
 .Cm distributekernel ,
@@ -431,6 +449,8 @@ include:
 .Bl -tag -width ".Cm delete-old-libs"
 .It Cm check-old
 Print a list of old files and directories in the system.
+.It Cm check-old-libs
+Print a list of obsolete base system libraries.
 .It Cm delete-old
 Delete obsolete base system files and directories interactively.
 When
@@ -482,6 +502,9 @@ The directory hierarchy prefix where built objects will be installed.
 If not set,
 .Va DESTDIR
 defaults to the empty string.
+If set,
+.Va DESTDIR
+must specify an absolute path.
 .It Va MAKEOBJDIRPREFIX
 Defines the prefix for directory names in the tree of built objects.
 Defaults to
@@ -494,6 +517,8 @@ and not via
 or
 .Pa /etc/src.conf
 or the command line.
+.Va MAKEOBJDIRPREFIX
+must specify an absolute path.
 .It Va WITHOUT_WERROR
 If defined, compiler warnings will not cause the build to halt,
 even if the makefile says otherwise.
@@ -529,6 +554,13 @@ Overrides which kernel to build and install for the various kernel
 make targets.
 It defaults to
 .Cm GENERIC .
+.It Va KERNBUILDDIR
+Overrides the default directory to get all the opt_*.h files for
+building a kernel module.
+Useful for stand-alone modules that depend on
+.Xr config 8
+options.
+Automatically set for modules built with a kernel.
 .It Va KERNCONFDIR
 Overrides the directory in which
 .Va KERNCONF
@@ -670,7 +702,7 @@ and
 will only build the specified directory as was done historically.
 When combined with
 .Cm buildworld
-it is necesarry to override
+it is necessary to override
 .Va LOCAL_LIB_DIRS
 with any custom directories containing libraries.
 This allows building a subset of the system in the same way as
@@ -856,6 +888,11 @@ This variable implies
 Use external GCC toolchains to build the requested targets.
 If the required toolchain package for a supported architecture is not installed,
 the build for that architecture is skipped.
+.Pp
+A specific version of GCC can be used by setting the value of this variable
+to the desired version
+.Pq for example, Dq gcc14 ;
+otherwise a default version of GCC is used.
 .It Va TARGETS
 Only build the listed targets instead of each supported architecture.
 .It Va EXTRA_TARGETS
@@ -884,18 +921,14 @@ method of updating your system from the latest sources, please see the
 section in
 .Pa src/UPDATING .
 .Pp
-The following sequence of commands can be used to cross-build the
-system for the armv6 architecture on an amd64 host:
+The following sequence of commands can be used to cross-build the system for
+the arm64 (aarch64) architecture on a different host architecture, such as
+amd64:
 .Bd -literal -offset indent
 cd /usr/src
-make TARGET_ARCH=armv6 buildworld buildkernel
-make TARGET_ARCH=armv6 DESTDIR=/clients/arm installworld installkernel
+make TARGET=arm64 buildworld buildkernel
+make TARGET=arm64 DESTDIR=/clients/arm64 installworld installkernel
 .Ed
-.Sh HISTORY
-The
-.Nm
-manpage first appeared in
-.Fx 4.3 .
 .Sh SEE ALSO
 .Xr cc 1 ,
 .Xr install 1 ,
@@ -903,6 +936,7 @@ manpage first appeared in
 .Xr make.conf 5 ,
 .Xr src.conf 5 ,
 .Xr arch 7 ,
+.Xr development 7 ,
 .Xr pkg 7 ,
 .Xr ports 7 ,
 .Xr release 7 ,
@@ -911,5 +945,10 @@ manpage first appeared in
 .Xr etcupdate 8 ,
 .Xr reboot 8 ,
 .Xr shutdown 8
+.Sh HISTORY
+The
+.Nm
+manpage first appeared in
+.Fx 4.3 .
 .Sh AUTHORS
 .An Mike W. Meyer Aq Mt mwm@mired.org

@@ -114,7 +114,7 @@ dpaa2_rc_detach(device_t dev)
 	if (dinfo)
 		free(dinfo, M_DPAA2_RC);
 
-	return (device_delete_children(dev));
+	return (0);
 }
 
 static int
@@ -263,19 +263,18 @@ dpaa2_rc_alloc_resource(device_t rcdev, device_t child, int type, int *rid,
 }
 
 static int
-dpaa2_rc_release_resource(device_t rcdev, device_t child, int type, int rid,
-    struct resource *r)
+dpaa2_rc_release_resource(device_t rcdev, device_t child, struct resource *r)
 {
 	struct resource_list *rl;
 	struct dpaa2_devinfo *dinfo;
 
 	if (device_get_parent(child) != rcdev)
 		return (BUS_RELEASE_RESOURCE(device_get_parent(rcdev), child,
-		    type, rid, r));
+		    r));
 
 	dinfo = device_get_ivars(child);
 	rl = &dinfo->resources;
-	return (resource_list_release(rl, rcdev, child, type, rid, r));
+	return (resource_list_release(rl, rcdev, child, r));
 }
 
 static void
@@ -2827,12 +2826,8 @@ dpaa2_rc_discover(struct dpaa2_rc_softc *sc)
 		dpaa2_rc_add_managed_child(sc, &cmd, &obj);
 	}
 	/* Probe and attach MC portals. */
-	bus_generic_probe(rcdev);
-	rc = bus_generic_attach(rcdev);
-	if (rc) {
-		DPAA2_CMD_RC_CLOSE(rcdev, child, &cmd);
-		return (rc);
-	}
+	bus_identify_children(rcdev);
+	bus_attach_children(rcdev);
 
 	/* Add managed devices (except DPMCPs) to the resource container. */
 	for (uint32_t i = 0; i < obj_count; i++) {
@@ -2855,12 +2850,8 @@ dpaa2_rc_discover(struct dpaa2_rc_softc *sc)
 		dpaa2_rc_add_managed_child(sc, &cmd, &obj);
 	}
 	/* Probe and attach managed devices properly. */
-	bus_generic_probe(rcdev);
-	rc = bus_generic_attach(rcdev);
-	if (rc) {
-		DPAA2_CMD_RC_CLOSE(rcdev, child, &cmd);
-		return (rc);
-	}
+	bus_identify_children(rcdev);
+	bus_attach_children(rcdev);
 
 	/* Add other devices to the resource container. */
 	for (uint32_t i = 0; i < obj_count; i++) {
@@ -2880,8 +2871,9 @@ dpaa2_rc_discover(struct dpaa2_rc_softc *sc)
 	DPAA2_CMD_RC_CLOSE(rcdev, child, &cmd);
 
 	/* Probe and attach the rest of devices. */
-	bus_generic_probe(rcdev);
-	return (bus_generic_attach(rcdev));
+	bus_identify_children(rcdev);
+	bus_attach_children(rcdev);
+	return (0);
 }
 
 /**
@@ -2987,8 +2979,8 @@ dpaa2_rc_add_child(struct dpaa2_rc_softc *sc, struct dpaa2_cmd *cmd,
  * function is supposed to discover such managed objects in the resource
  * container and add them as children to perform a proper initialization.
  *
- * NOTE: It must be called together with bus_generic_probe() and
- *       bus_generic_attach() before dpaa2_rc_add_child().
+ * NOTE: It must be called together with bus_identify_children() and
+ *       bus_attach_children() before dpaa2_rc_add_child().
  */
 static int
 dpaa2_rc_add_managed_child(struct dpaa2_rc_softc *sc, struct dpaa2_cmd *cmd,

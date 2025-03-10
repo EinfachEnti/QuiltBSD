@@ -1,5 +1,3 @@
-#	@(#)Makefile	8.2 (Berkeley) 12/13/93
-
 .include <src.opts.mk>
 
 MAN=		arb.3 \
@@ -216,6 +214,7 @@ MLINKS+=	queue.3 LIST_CLASS_ENTRY.3 \
 		queue.3 LIST_NEXT.3 \
 		queue.3 LIST_PREV.3 \
 		queue.3 LIST_REMOVE.3 \
+		queue.3 LIST_REPLACE.3 \
 		queue.3 LIST_SWAP.3 \
 		queue.3 SLIST_CLASS_ENTRY.3 \
 		queue.3 SLIST_CLASS_HEAD.3 \
@@ -284,6 +283,7 @@ MLINKS+=	queue.3 LIST_CLASS_ENTRY.3 \
 		queue.3 TAILQ_NEXT.3 \
 		queue.3 TAILQ_PREV.3 \
 		queue.3 TAILQ_REMOVE.3 \
+		queue.3 TAILQ_REPLACE.3 \
 		queue.3 TAILQ_SWAP.3
 MLINKS+=	stats.3 stats_tpl_alloc.3 \
 		stats.3 stats_tpl_fetch_allocid.3 \
@@ -451,6 +451,7 @@ PTHREAD_MAN=	pthread.3 \
 		pthread_set_name_np.3 \
 		pthread_setspecific.3 \
 		pthread_sigmask.3 \
+		pthread_sigqueue.3 \
 		pthread_spin_init.3 \
 		pthread_spin_lock.3 \
 		pthread_suspend_all_np.3 \

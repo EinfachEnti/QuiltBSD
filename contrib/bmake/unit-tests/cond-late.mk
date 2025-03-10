@@ -1,6 +1,6 @@
-# $NetBSD: cond-late.mk,v 1.4 2023/05/10 15:53:32 rillig Exp $
+# $NetBSD: cond-late.mk,v 1.9 2024/08/29 20:20:35 rillig Exp $
 #
-# Using the :? modifier, variable expressions can contain conditional
+# Using the :? modifier, expressions can contain conditional
 # expressions that are evaluated late, at expansion time.
 #
 # Any expressions appearing in these conditions are expanded before parsing
@@ -15,7 +15,10 @@
 # actually interpreted as these operators. This is demonstrated below.
 #
 
-all: cond-literal
+all: parse-time cond-literal
+
+parse-time: .PHONY
+	@${MAKE} -f ${MAKEFILE} do-parse-time || true
 
 COND.true=	"yes" == "yes"
 COND.false=	"yes" != "yes"
@@ -29,8 +32,9 @@ cond-literal:
 	@echo ${ ${COND.true} :?yes:no}
 	@echo ${ ${COND.false} :?yes:no}
 
+.if make(do-parse-time)
 VAR=	${${UNDEF} != "no":?:}
-# expect-reset
-# expect: make: Bad conditional expression ' != "no"' in ' != "no"?:'
-.if empty(VAR:Mpattern)
+# expect+1: Bad condition
+.  if empty(VAR:Mpattern)
+.  endif
 .endif

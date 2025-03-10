@@ -27,8 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)vnode.h	8.7 (Berkeley) 2/4/94
  */
 
 #ifndef _SYS_VNODE_H_
@@ -134,7 +132,7 @@ struct vnode {
 	seqc_t	v_seqc;				/* i modification count */
 	uint32_t v_nchash;			/* u namecache hash */
 	u_int	v_hash;
-	struct	vop_vector *v_op;		/* u vnode operations vector */
+	const struct vop_vector *v_op;		/* u vnode operations vector */
 	void	*v_data;			/* u private data for fs */
 
 	/*
@@ -233,6 +231,7 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
 /*
  * Vnode flags.
  *	VI flags are protected by interlock and live in v_iflag
+ *	VIRF flags are protected by interlock and live in v_irflag
  *	VV flags are protected by the vnode lock and live in v_vflag
  *
  *	VIRF_DOOMED is doubly protected by the interlock and vnode lock.  Both
@@ -820,6 +819,7 @@ int	vn_vget_ino_gen(struct vnode *vp, vn_get_ino_t alloc,
 	    void *alloc_arg, int lkflags, struct vnode **rvp);
 int	vn_utimes_perm(struct vnode *vp, struct vattr *vap,
 	    struct ucred *cred, struct thread *td);
+int	vn_cmp(struct file *, struct file *, struct thread *td);
 
 int	vn_io_fault_uiomove(char *data, int xfersize, struct uio *uio);
 int	vn_io_fault_pgmove(vm_page_t ma[], vm_offset_t offset, int xfersize,
@@ -834,18 +834,15 @@ void	vn_seqc_write_end(struct vnode *vp);
 #define	vn_seqc_consistent(vp, seq)	seqc_consistent(&(vp)->v_seqc, seq)
 
 #define	vn_rangelock_unlock(vp, cookie)					\
-	rangelock_unlock(&(vp)->v_rl, (cookie), VI_MTX(vp))
-#define	vn_rangelock_unlock_range(vp, cookie, start, end)		\
-	rangelock_unlock_range(&(vp)->v_rl, (cookie), (start), (end), 	\
-	    VI_MTX(vp))
+	rangelock_unlock(&(vp)->v_rl, (cookie))
 #define	vn_rangelock_rlock(vp, start, end)				\
-	rangelock_rlock(&(vp)->v_rl, (start), (end), VI_MTX(vp))
+	rangelock_rlock(&(vp)->v_rl, (start), (end))
 #define	vn_rangelock_tryrlock(vp, start, end)				\
-	rangelock_tryrlock(&(vp)->v_rl, (start), (end), VI_MTX(vp))
+	rangelock_tryrlock(&(vp)->v_rl, (start), (end))
 #define	vn_rangelock_wlock(vp, start, end)				\
-	rangelock_wlock(&(vp)->v_rl, (start), (end), VI_MTX(vp))
+	rangelock_wlock(&(vp)->v_rl, (start), (end))
 #define	vn_rangelock_trywlock(vp, start, end)				\
-	rangelock_trywlock(&(vp)->v_rl, (start), (end), VI_MTX(vp))
+	rangelock_trywlock(&(vp)->v_rl, (start), (end))
 
 #define	vn_irflag_read(vp)	atomic_load_short(&(vp)->v_irflag)
 void	vn_irflag_set_locked(struct vnode *vp, short toset);
@@ -992,6 +989,7 @@ void	vop_rename_fail(struct vop_rename_args *ap);
 		ap->a_sb->st_padding0 = 0;					\
 		ap->a_sb->st_padding1 = 0;					\
 		bzero(_ap->a_sb->st_spare, sizeof(_ap->a_sb->st_spare));	\
+		ap->a_sb->st_filerev = 0;					\
 	}									\
 	_error;									\
 })
@@ -1082,7 +1080,14 @@ vrefcnt(struct vnode *vp)
 	vref(vp);							\
 } while (0)
 
+/*
+ * The caller doesn't know the file size and vnode_create_vobject() should
+ * determine the size on its own.
+ */
+#define	VNODE_NO_SIZE	((off_t)-1)
+
 int vnode_create_vobject(struct vnode *vp, off_t size, struct thread *td);
+int vnode_create_disk_vobject(struct vnode *vp, off_t size, struct thread *td);
 void vnode_destroy_vobject(struct vnode *vp);
 
 extern struct vop_vector fifo_specops;

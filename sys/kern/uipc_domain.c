@@ -27,11 +27,8 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)uipc_domain.c	8.2 (Berkeley) 10/18/93
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/protosw.h>
@@ -56,13 +53,7 @@ static struct mtx dom_mtx;		/* domain list lock */
 MTX_SYSINIT(domain, &dom_mtx, "domain list", MTX_DEF);
 
 static int
-pr_accept_notsupp(struct socket *so, struct sockaddr **nam)
-{
-	return (EOPNOTSUPP);
-}
-
-static int
-pr_aio_queue_notsupp(struct socket *so, struct kaiocb *job)
+pr_accept_notsupp(struct socket *so, struct sockaddr *sa)
 {
 	return (EOPNOTSUPP);
 }
@@ -112,14 +103,14 @@ pr_disconnect_notsupp(struct socket *so)
 	return (EOPNOTSUPP);
 }
 
-static int
+int
 pr_listen_notsupp(struct socket *so, int backlog, struct thread *td)
 {
 	return (EOPNOTSUPP);
 }
 
 static int
-pr_peeraddr_notsupp(struct socket *so, struct sockaddr **nam)
+pr_peeraddr_notsupp(struct socket *so, struct sockaddr *nam)
 {
 	return (EOPNOTSUPP);
 }
@@ -154,13 +145,13 @@ pr_ready_notsupp(struct socket *so, struct mbuf *m, int count)
 }
 
 static int
-pr_shutdown_notsupp(struct socket *so)
+pr_shutdown_notsupp(struct socket *so, enum shutdown_how how)
 {
 	return (EOPNOTSUPP);
 }
 
 static int
-pr_sockaddr_notsupp(struct socket *so, struct sockaddr **nam)
+pr_sockaddr_notsupp(struct socket *so, struct sockaddr *nam)
 {
 	return (EOPNOTSUPP);
 }
@@ -179,13 +170,6 @@ pr_soreceive_notsupp(struct socket *so, struct sockaddr **paddr,
 	return (EOPNOTSUPP);
 }
 
-static int
-pr_sopoll_notsupp(struct socket *so, int events, struct ucred *cred,
-    struct thread *td)
-{
-	return (EOPNOTSUPP);
-}
-
 static void
 pr_init(struct domain *dom, struct protosw *pr)
 {
@@ -200,10 +184,10 @@ pr_init(struct domain *dom, struct protosw *pr)
 	DEFAULT(pr_soreceive, soreceive_generic);
 	DEFAULT(pr_sopoll, sopoll_generic);
 	DEFAULT(pr_setsbopt, sbsetopt);
+	DEFAULT(pr_aio_queue, soaio_queue_generic);
 
 #define NOTSUPP(foo)	if (pr->foo == NULL)  pr->foo = foo ## _notsupp
 	NOTSUPP(pr_accept);
-	NOTSUPP(pr_aio_queue);
 	NOTSUPP(pr_bind);
 	NOTSUPP(pr_bindat);
 	NOTSUPP(pr_connect);
@@ -220,13 +204,12 @@ pr_init(struct domain *dom, struct protosw *pr)
 	NOTSUPP(pr_sockaddr);
 	NOTSUPP(pr_sosend);
 	NOTSUPP(pr_soreceive);
-	NOTSUPP(pr_sopoll);
 	NOTSUPP(pr_ready);
 }
 
 /*
  * Add a new protocol domain to the list of supported domains
- * Note: you cant unload it again because a socket may be using it.
+ * Note: you can't unload it again because a socket may be using it.
  * XXX can't fail at this time.
  */
 void

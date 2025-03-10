@@ -59,6 +59,7 @@
 #include <dt_printf.h>
 #include <dt_string.h>
 #include <dt_provider.h>
+#include <dt_oformat.h>
 #ifndef illumos
 #include <sys/sysctl.h>
 #include <string.h>
@@ -1072,8 +1073,14 @@ dt_vopen(int version, int flags, int *errp,
 	if (flags & ~DTRACE_O_MASK)
 		return (set_open_errno(dtp, errp, EINVAL));
 
-	if ((flags & DTRACE_O_LP64) && (flags & DTRACE_O_ILP32))
+	switch (flags & DTRACE_O_MODEL_MASK) {
+	case 0: /* native model */
+	case DTRACE_O_ILP32:
+	case DTRACE_O_LP64:
+		break;
+	default:
 		return (set_open_errno(dtp, errp, EINVAL));
+	}
 
 	if (vector == NULL && arg != NULL)
 		return (set_open_errno(dtp, errp, EINVAL));
@@ -1736,6 +1743,8 @@ dtrace_close(dtrace_hdl_t *dtp)
 	free(dtp->dt_kmods);
 #endif
 	free(dtp->dt_provs);
+
+	xo_finish();
 	free(dtp);
 }
 

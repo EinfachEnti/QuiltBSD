@@ -95,7 +95,7 @@ arswitch_probe(device_t dev)
 {
 	struct arswitch_softc *sc;
 	uint32_t id;
-	char *chipname, desc[256];
+	char *chipname;
 
 	sc = device_get_softc(dev);
 	bzero(sc, sizeof(*sc));
@@ -132,12 +132,9 @@ arswitch_probe(device_t dev)
 
 	DPRINTF(sc, ARSWITCH_DBG_ANY, "chipname=%s, id=%08x\n", chipname, id);
 	if (chipname != NULL) {
-		snprintf(desc, sizeof(desc),
+		device_set_descf(dev,
 		    "Atheros %s Ethernet Switch (ver %d rev %d)",
-		    chipname,
-		    sc->chip_ver,
-		    sc->chip_rev);
-		device_set_desc_copy(dev, desc);
+		    chipname, sc->chip_ver, sc->chip_rev);
 		return (BUS_PROBE_DEFAULT);
 	}
 	return (ENXIO);
@@ -153,12 +150,6 @@ arswitch_attach_phys(struct arswitch_softc *sc)
 	snprintf(name, IFNAMSIZ, "%sport", device_get_nameunit(sc->sc_dev));
 	for (phy = 0; phy < sc->numphys; phy++) {
 		sc->ifp[phy] = if_alloc(IFT_ETHER);
-		if (sc->ifp[phy] == NULL) {
-			device_printf(sc->sc_dev, "couldn't allocate ifnet structure\n");
-			err = ENOMEM;
-			break;
-		}
-
 		if_setsoftc(sc->ifp[phy], sc);
 		if_setflagbits(sc->ifp[phy], IFF_UP | IFF_BROADCAST |
 		    IFF_DRV_RUNNING | IFF_SIMPLEX, 0);
@@ -658,14 +649,9 @@ arswitch_attach(device_t dev)
 		return (err);
 	}
 
-	bus_generic_probe(dev);
+	bus_identify_children(dev);
 	bus_enumerate_hinted_children(dev);
-	err = bus_generic_attach(dev);
-	if (err != 0) {
-		DPRINTF(sc, ARSWITCH_DBG_ANY,
-		    "%s: bus_generic_attach: err=%d\n", __func__, err);
-		return (err);
-	}
+	bus_attach_children(dev);
 	
 	callout_init_mtx(&sc->callout_tick, &sc->sc_mtx, 0);
 
@@ -680,13 +666,15 @@ static int
 arswitch_detach(device_t dev)
 {
 	struct arswitch_softc *sc = device_get_softc(dev);
-	int i;
+	int error, i;
 
 	callout_drain(&sc->callout_tick);
 
+	error = bus_generic_detach(dev);
+	if (error != 0)
+		return (error);
+
 	for (i=0; i < sc->numphys; i++) {
-		if (sc->miibus[i] != NULL)
-			device_delete_child(dev, sc->miibus[i]);
 		if (sc->ifp[i] != NULL)
 			if_free(sc->ifp[i]);
 		free(sc->ifname[i], M_DEVBUF);
@@ -694,7 +682,6 @@ arswitch_detach(device_t dev)
 
 	free(sc->atu.entries, M_DEVBUF);
 
-	bus_generic_detach(dev);
 	mtx_destroy(&sc->sc_mtx);
 
 	return (0);

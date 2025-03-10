@@ -1,5 +1,4 @@
 
-;	@(#)syscalls.master	8.1 (Berkeley) 7/19/93
 ; System call name/number master file (or rather, slave, from LINUX).
 ; Processed to create linux32_sysent.c, linux32_proto.h and linux32_syscall.h.
 
@@ -1403,7 +1402,7 @@
 259	AUE_NULL	STD {
 		int linux_timer_create(
 		    clockid_t clock_id,
-		    struct sigevent *evp,
+		    struct l_sigevent *evp,
 		    l_timer_t *timerid
 		);
 	}
@@ -1539,7 +1538,7 @@
 281	AUE_NULL	STD {
 		int linux_mq_notify(
 		    l_mqd_t mqd,
-		    const struct l_timespec *abs_timeout
+		    const struct l_sigevent *sevp
 		);
 	}
 282	AUE_NULL	STD {

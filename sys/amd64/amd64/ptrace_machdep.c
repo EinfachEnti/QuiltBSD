@@ -27,7 +27,6 @@
  *
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/elf.h>
@@ -64,8 +63,6 @@ get_segbases(struct regset *rs, struct thread *td, void *buf,
 		reg = buf;
 
 		pcb = td->td_pcb;
-		if (td == curthread)
-			update_pcb_bases(pcb);
 		reg->r_fsbase = pcb->pcb_fsbase;
 		reg->r_gsbase = pcb->pcb_gsbase;
 	}
@@ -114,8 +111,6 @@ get_segbases32(struct regset *rs, struct thread *td, void *buf,
 		reg = buf;
 
 		pcb = td->td_pcb;
-		if (td == curthread)
-			update_pcb_bases(pcb);
 		reg->r_fsbase = (uint32_t)pcb->pcb_fsbase;
 		reg->r_gsbase = (uint32_t)pcb->pcb_gsbase;
 	}

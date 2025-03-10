@@ -38,7 +38,7 @@
 #define	DEFAULT_CONFIG_PATH		"/etc/iscsi.conf"
 #define	DEFAULT_IQN			"iqn.1994-09.org.freebsd:"
 
-#define	MAX_NAME_LEN			223
+#define	ISCSICTL_XO_VERSION		"1"
 
 #define	AUTH_METHOD_UNSPECIFIED		0
 #define	AUTH_METHOD_NONE		1
@@ -101,7 +101,6 @@ void		target_delete(struct target *ic);
 
 void		print_periphs(int session_id);
 
-bool		valid_iscsi_name(const char *name);
 int		parse_enable(const char *enable);
 
 #endif /* !ISCSICTL_H */

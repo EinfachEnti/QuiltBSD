@@ -32,18 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1980, 1990, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-static char sccsid[] = "@(#)quotacheck.c	8.3 (Berkeley) 1/29/94";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
 /*
  * Fix up / report on disk quotas & usage
  */
@@ -89,10 +77,6 @@ union {
 long dev_bsize = 1;
 ino_t maxino;
 
-union dinode {
-	struct ufs1_dinode dp1;
-	struct ufs2_dinode dp2;
-};
 #define	DIP(dp, field) \
 	((sblock.fs_magic == FS_UFS1_MAGIC) ? \
 	(dp)->dp1.field : (dp)->dp2.field)

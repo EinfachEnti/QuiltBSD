@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <dt_impl.h>
 #include <assert.h>
+#include <dt_oformat.h>
 #ifdef illumos
 #include <alloca.h>
 #else
@@ -471,9 +472,14 @@ dt_aggregate_snap_cpu(dtrace_hdl_t *dtp, processorid_t cpu)
 	}
 
 	if (buf->dtbd_drops != 0) {
+		xo_open_instance("probes");
+		dt_oformat_drop(dtp, cpu);
 		if (dt_handle_cpudrop(dtp, cpu,
-		    DTRACEDROP_AGGREGATION, buf->dtbd_drops) == -1)
+		    DTRACEDROP_AGGREGATION, buf->dtbd_drops) == -1) {
+			xo_close_instance("probes");
 			return (-1);
+		}
+		xo_close_instance("probes");
 	}
 
 	if (buf->dtbd_size == 0)
@@ -1086,8 +1092,10 @@ dt_aggregate_go(dtrace_hdl_t *dtp)
 	assert(agp->dtat_ncpu == 0);
 	assert(agp->dtat_cpus == NULL);
 
-	agp->dtat_maxcpu = dt_sysconf(dtp, _SC_CPUID_MAX) + 1;
-	agp->dtat_ncpu = dt_sysconf(dtp, _SC_NPROCESSORS_MAX);
+	agp->dtat_maxcpu = dt_cpu_maxid(dtp) + 1;
+	if (agp->dtat_maxcpu <= 0)
+		return (-1);
+	agp->dtat_ncpu = dt_sysconf(dtp, _SC_NPROCESSORS_CONF);
 	agp->dtat_cpus = malloc(agp->dtat_ncpu * sizeof (processorid_t));
 
 	if (agp->dtat_cpus == NULL)
@@ -2127,8 +2135,13 @@ dtrace_aggregate_print(dtrace_hdl_t *dtp, FILE *fp,
 	if (func == NULL)
 		func = dtrace_aggregate_walk_sorted;
 
-	if ((*func)(dtp, dt_print_agg, &pd) == -1)
-		return (dt_set_errno(dtp, dtp->dt_errno));
+	if (dtp->dt_oformat) {
+		if ((*func)(dtp, dt_format_agg, &pd) == -1)
+			return (dt_set_errno(dtp, dtp->dt_errno));
+	} else {
+		if ((*func)(dtp, dt_print_agg, &pd) == -1)
+			return (dt_set_errno(dtp, dtp->dt_errno));
+	}
 
 	return (0);
 }

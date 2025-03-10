@@ -353,7 +353,7 @@ ipsec_transmit(struct ifnet *ifp, struct mbuf *m)
 	IPSEC_RLOCK_TRACKER;
 	struct ipsec_softc *sc;
 	struct secpolicy *sp;
-	struct ip *ip;
+	struct ip *ip, iph;
 	uint32_t af;
 	int error;
 
@@ -375,7 +375,8 @@ ipsec_transmit(struct ifnet *ifp, struct mbuf *m)
 	}
 
 	/* Determine address family to correctly handle packet in BPF */
-	ip = mtod(m, struct ip *);
+	ip = &iph;
+	m_copydata(m, 0, sizeof(*ip), (char *)ip);
 	switch (ip->ip_v) {
 #ifdef INET
 	case IPVERSION:
@@ -415,12 +416,13 @@ ipsec_transmit(struct ifnet *ifp, struct mbuf *m)
 	switch (af) {
 #ifdef INET
 	case AF_INET:
-		error = ipsec4_process_packet(m, sp, NULL);
+		error = ipsec4_process_packet(ifp, m, ip, sp, NULL,
+		    ifp->if_mtu);
 		break;
 #endif
 #ifdef INET6
 	case AF_INET6:
-		error = ipsec6_process_packet(m, sp, NULL);
+		error = ipsec6_process_packet(ifp, m, sp, NULL, ifp->if_mtu);
 		break;
 #endif
 	default:
@@ -901,8 +903,10 @@ ipsec_newpolicies(struct ipsec_softc *sc, struct secpolicy *sp[IPSEC_SPCOUNT],
 	}
 	return (0);
 fail:
-	for (i = 0; i < IPSEC_SPCOUNT; i++)
-		key_freesp(&sp[i]);
+	for (i = 0; i < IPSEC_SPCOUNT; i++) {
+		if (sp[i] != NULL)
+			key_freesp(&sp[i]);
+	}
 	return (ENOMEM);
 }
 

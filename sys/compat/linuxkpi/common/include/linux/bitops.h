@@ -54,6 +54,7 @@
 #define	GENMASK_ULL(h, l)	(((~0ULL) >> (BITS_PER_LONG_LONG - (h) - 1)) & ((~0ULL) << (l)))
 #define	BITS_PER_BYTE		8
 #define	BITS_PER_TYPE(t)	(sizeof(t) * BITS_PER_BYTE)
+#define	BITS_TO_BYTES(n)	howmany((n), BITS_PER_BYTE)
 
 #define	hweight8(x)	bitcount((uint8_t)(x))
 #define	hweight16(x)	bitcount16(x)
@@ -286,6 +287,15 @@ find_next_zero_bit(const unsigned long *addr, unsigned long size,
 
 #define	test_bit(i, a)							\
     !!(READ_ONCE(((volatile const unsigned long *)(a))[BIT_WORD(i)]) & BIT_MASK(i))
+
+static inline void
+__assign_bit(long bit, volatile unsigned long *addr, bool value)
+{
+	if (value)
+		__set_bit(bit, addr);
+	else
+		__clear_bit(bit, addr);
+}
 
 static inline int
 test_and_clear_bit(long bit, volatile unsigned long *var)

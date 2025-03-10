@@ -39,7 +39,6 @@
  * Type-specific routines go into subr_acl_<type>.c.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/sysproto.h>
@@ -146,7 +145,7 @@ acl_copyin(const void *user_acl, struct acl *kernel_acl, acl_type_t type)
 		error = copyin(user_acl, &old, sizeof(old));
 		if (error != 0)
 			break;
-		acl_copy_oldacl_into_acl(&old, kernel_acl);
+		error = acl_copy_oldacl_into_acl(&old, kernel_acl);
 		break;
 
 	default:

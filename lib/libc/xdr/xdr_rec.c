@@ -33,11 +33,6 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint) 
-static char *sccsid2 = "@(#)xdr_rec.c 1.21 87/08/11 Copyr 1984 Sun Micro";
-static char *sccsid = "@(#)xdr_rec.c	2.2 88/08/01 4.0 RPCSRC";
-#endif
-#include <sys/cdefs.h>
 /*
  * xdr_rec.c, Implements TCP/IP based XDR streams with a "record marking"
  * layer above tcp (for rpc's use).
@@ -227,7 +222,7 @@ xdrrec_create(XDR *xdrs, u_int sendsize, u_int recvsize, void *tcp_handle,
 
 
 /*
- * The reoutines defined below are the xdr ops which will go into the
+ * The routines defined below are the xdr ops which will go into the
  * xdr handle filled in by xdrrec_create.
  */
 
@@ -323,27 +318,30 @@ xdrrec_putbytes(XDR *xdrs, const char *addr, u_int len)
 	return (TRUE);
 }
 
+/*
+ * XXX: xdrrec operates on a TCP stream and doesn't keep record of how many
+ * bytes were sent/received overall.  Thus, the XDR_GETPOS() and XDR_SETPOS()
+ * can operate only within small internal buffer.  So far, the limited set of
+ * consumers of this xdr are fine with that.  It also seems that methods are
+ * never called in the XDR_DECODE mode.
+ */
 static u_int
 xdrrec_getpos(XDR *xdrs)
 {
 	RECSTREAM *rstrm = (RECSTREAM *)xdrs->x_private;
-	off_t pos;
+	ptrdiff_t pos;
 
-	pos = lseek((int)(u_long)rstrm->tcp_handle, (off_t)0, 1);
-	if (pos == -1)
-		pos = 0;
 	switch (xdrs->x_op) {
-
 	case XDR_ENCODE:
-		pos += rstrm->out_finger - rstrm->out_base;
+		pos = rstrm->out_finger - rstrm->out_base;
 		break;
 
 	case XDR_DECODE:
-		pos -= rstrm->in_boundry - rstrm->in_finger;
+		pos = rstrm->in_finger - rstrm->in_base;
 		break;
 
-	default:
-		pos = (off_t) -1;
+	case XDR_FREE:
+		pos = -1;
 		break;
 	}
 	return ((u_int) pos);
@@ -357,32 +355,30 @@ xdrrec_setpos(XDR *xdrs, u_int pos)
 	int delta = currpos - pos;
 	char *newpos;
 
-	if ((int)currpos != -1)
-		switch (xdrs->x_op) {
-
-		case XDR_ENCODE:
-			newpos = rstrm->out_finger - delta;
-			if ((newpos > (char *)(void *)(rstrm->frag_header)) &&
-				(newpos < rstrm->out_boundry)) {
-				rstrm->out_finger = newpos;
-				return (TRUE);
-			}
-			break;
-
-		case XDR_DECODE:
-			newpos = rstrm->in_finger - delta;
-			if ((delta < (int)(rstrm->fbtbc)) &&
-				(newpos <= rstrm->in_boundry) &&
-				(newpos >= rstrm->in_base)) {
-				rstrm->in_finger = newpos;
-				rstrm->fbtbc -= delta;
-				return (TRUE);
-			}
-			break;
-
-		case XDR_FREE:
-			break;
+	switch (xdrs->x_op) {
+	case XDR_ENCODE:
+		newpos = rstrm->out_finger - delta;
+		if ((newpos > (char *)(void *)(rstrm->frag_header)) &&
+			(newpos < rstrm->out_boundry)) {
+			rstrm->out_finger = newpos;
+			return (TRUE);
 		}
+		break;
+
+	case XDR_DECODE:
+		newpos = rstrm->in_finger - delta;
+		if ((delta < (int)(rstrm->fbtbc)) &&
+			(newpos <= rstrm->in_boundry) &&
+			(newpos >= rstrm->in_base)) {
+			rstrm->in_finger = newpos;
+			rstrm->fbtbc -= delta;
+			return (TRUE);
+		}
+		break;
+
+	case XDR_FREE:
+		break;
+	}
 	return (FALSE);
 }
 
@@ -489,9 +485,9 @@ xdrrec_eof(XDR *xdrs)
 
 /*
  * The client must tell the package when an end-of-record has occurred.
- * The second paraemters tells whether the record should be flushed to the
+ * The second parameters tells whether the record should be flushed to the
  * (output) tcp stream.  (This let's the package support batched or
- * pipelined procedure calls.)  TRUE => immmediate flush to tcp connection.
+ * pipelined procedure calls.)  TRUE => immediate flush to tcp connection.
  */
 bool_t
 xdrrec_endofrecord(XDR *xdrs, bool_t sendnow)

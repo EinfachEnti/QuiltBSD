@@ -27,7 +27,6 @@
  * derived from ata_xpt.c: Copyright (c) 2009 Alexander Motin <mav@FreeBSD.org>
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/endian.h>
@@ -59,7 +58,6 @@
 #include <cam/scsi/scsi_message.h>
 #include <cam/nvme/nvme_all.h>
 #include <machine/stdarg.h>	/* for xpt_print below */
-#include "opt_cam.h"
 
 struct nvme_quirk_entry {
 	u_int quirks;
@@ -177,6 +175,7 @@ static struct xpt_xport nvme_xport_ ## x = {	\
 CAM_XPT_XPORT(nvme_xport_ ## x);
 
 NVME_XPT_XPORT(nvme, NVME);
+NVME_XPT_XPORT(nvmf, NVMF);
 
 #undef NVME_XPT_XPORT
 
@@ -205,16 +204,16 @@ nvme_probe_register(struct cam_periph *periph, void *arg)
 
 	request_ccb = (union ccb *)arg;
 	if (request_ccb == NULL) {
-		printf("nvme_probe_register: no probe CCB, "
-		       "can't register device\n");
+		printf(
+		    "nvme_probe_register: no probe CCB, can't register device\n");
 		return(CAM_REQ_CMP_ERR);
 	}
 
 	softc = (nvme_probe_softc *)malloc(sizeof(*softc), M_CAMXPT, M_ZERO | M_NOWAIT);
 
 	if (softc == NULL) {
-		printf("nvme_probe_register: Unable to probe new device. "
-		       "Unable to allocate softc\n");
+		printf(
+	"nvme_probe_register: Unable to probe new device. Unable to allocate softc\n");
 		return(CAM_REQ_CMP_ERR);
 	}
 	TAILQ_INIT(&softc->request_ccbs);
@@ -580,8 +579,8 @@ nvme_scan_lun(struct cam_periph *periph, struct cam_path *path,
 					  request_ccb);
 
 		if (status != CAM_REQ_CMP) {
-			xpt_print(path, "xpt_scan_lun: cam_alloc_periph "
-			    "returned an error, can't continue probe\n");
+			xpt_print(path,
+	"xpt_scan_lun: cam_alloc_periph returned an error, can't continue probe\n");
 			request_ccb->ccb_h.status = status;
 			xpt_done(request_ccb);
 		}
@@ -816,7 +815,7 @@ nvme_announce_periph_sbuf(struct cam_periph *periph, struct sbuf *sb)
 			    nvmex->lanes, nvmex->max_lanes,
 			    nvmex->speed, nvmex->max_speed);
 	}
-	sbuf_printf(sb, "\n");
+	sbuf_putc(sb, '\n');
 }
 
 static void

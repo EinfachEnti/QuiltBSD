@@ -33,8 +33,6 @@
  * Copyright (c) 1986-1991 by Sun Microsystems Inc. 
  */
 
-/* #pragma ident	"@(#)rpc_generic.c	1.17	94/04/24 SMI" */
-#include <sys/cdefs.h>
 /*
  * rpc_generic.c, Miscl routines for RPC.
  *
@@ -97,36 +95,14 @@ static const struct netid_af na_cvt[] = {
 	{ "udp6", AF_INET6, IPPROTO_UDP },
 	{ "tcp6", AF_INET6, IPPROTO_TCP },
 #endif
-	{ "local", AF_LOCAL, 0 }
+	{ "local", AF_LOCAL, 0 },
+	{ "netlink", AF_NETLINK, 0 },
 };
 
 #if 0
 static char *strlocase(char *);
 #endif
 static int getnettype(const char *);
-
-/*
- * Cache the result of getrlimit(), so we don't have to do an
- * expensive call every time.
- */
-int
-__rpc_dtbsize(void)
-{
-	static int tbsize;
-	struct rlimit rl;
-
-	if (tbsize) {
-		return (tbsize);
-	}
-	if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
-		return (tbsize = (int)rl.rlim_max);
-	}
-	/*
-	 * Something wrong.  I'll try to save face by returning a
-	 * pessimistic number.
-	 */
-	return (32);
-}
 
 
 /*

@@ -69,6 +69,12 @@ LDFLAGS+= -Wl,-zretpolineplt
 .endif
 # LLD sensibly defaults to -znoexecstack, so do the same for BFD
 LDFLAGS.bfd+= -Wl,-znoexecstack
+.if ${MK_BRANCH_PROTECTION} != "no"
+CFLAGS+=  -mbranch-protection=standard
+.if ${LINKER_FEATURES:Mbti-report} && defined(BTI_REPORT_ERROR)
+LDFLAGS+= -Wl,-zbti-report=error
+.endif
+.endif
 
 # Initialize stack variables on function entry
 .if ${OPT_INIT_ALL} != "none"
@@ -81,6 +87,15 @@ CXXFLAGS+= -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-cl
 .endif
 .else
 .warning INIT_ALL (${OPT_INIT_ALL}) requested but not supported by compiler
+.endif
+.endif
+
+# Zero used registers on return (mitigate some ROP)
+.if ${MK_ZEROREGS} != "no"
+.if ${COMPILER_FEATURES:Mzeroregs}
+ZEROREG_TYPE?= used
+CFLAGS+= -fzero-call-used-regs=${ZEROREG_TYPE}
+CXXFLAGS+= -fzero-call-used-regs=${ZEROREG_TYPE}
 .endif
 .endif
 

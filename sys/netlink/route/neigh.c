@@ -436,17 +436,18 @@ rtnl_handle_newneigh(struct nlmsghdr *hdr, struct nlpcb *nlp, struct nl_pstate *
 	struct llentry *lle_tmp = lla_lookup(llt, LLE_EXCLUSIVE, attrs.nda_dst);
 	if (lle_tmp != NULL) {
 		error = EEXIST;
-		if (hdr->nlmsg_flags & NLM_F_EXCL) {
-			LLE_WUNLOCK(lle_tmp);
-			lle_tmp = NULL;
-		} else if (hdr->nlmsg_flags & NLM_F_REPLACE) {
+		if (hdr->nlmsg_flags & NLM_F_REPLACE) {
+			error = EPERM;
 			if ((lle_tmp->la_flags & LLE_IFADDR) == 0) {
+				error = 0; /* success */
 				lltable_unlink_entry(llt, lle_tmp);
+				llentry_free(lle_tmp);
+				lle_tmp = NULL;
 				lltable_link_entry(llt, lle);
-				error = 0;
-			} else
-				error = EPERM;
+			}
 		}
+		if (lle_tmp)
+			LLE_WUNLOCK(lle_tmp);
 	} else {
 		if (hdr->nlmsg_flags & NLM_F_CREATE)
 			lltable_link_entry(llt, lle);
@@ -456,13 +457,10 @@ rtnl_handle_newneigh(struct nlmsghdr *hdr, struct nlpcb *nlp, struct nl_pstate *
 	IF_AFDATA_WUNLOCK(attrs.nda_ifp);
 
 	if (error != 0) {
-		if (lle != NULL)
-			llentry_free(lle);
+		/* throw away the newly allocated llentry */
+		llentry_free(lle);
 		return (error);
 	}
-
-	if (lle_tmp != NULL)
-		llentry_free(lle_tmp);
 
 	/* XXX: We're inside epoch */
 	EVENTHANDLER_INVOKE(lle_event, lle, LLENTRY_RESOLVED);
@@ -554,6 +552,7 @@ static const struct rtnl_cmd_handler cmd_handlers[] = {
 static void
 rtnl_lle_event(void *arg __unused, struct llentry *lle, int evt)
 {
+	struct nl_writer nw;
 	if_t ifp;
 	int family;
 
@@ -567,8 +566,8 @@ rtnl_lle_event(void *arg __unused, struct llentry *lle, int evt)
 
 	int nlmsgs_type = evt == LLENTRY_RESOLVED ? NL_RTM_NEWNEIGH : NL_RTM_DELNEIGH;
 
-	struct nl_writer nw = {};
-	if (!nlmsg_get_group_writer(&nw, NLMSG_SMALL, NETLINK_ROUTE, RTNLGRP_NEIGH)) {
+	if (!nl_writer_group(&nw, NLMSG_SMALL, NETLINK_ROUTE, RTNLGRP_NEIGH, 0,
+	    false)) {
 		NL_LOG(LOG_DEBUG, "error allocating group writer");
 		return;
 	}
@@ -590,7 +589,7 @@ void
 rtnl_neighs_init(void)
 {
 	NL_VERIFY_PARSERS(all_parsers);
-	rtnl_register_messages(cmd_handlers, NL_ARRAY_LEN(cmd_handlers));
+	rtnl_register_messages(cmd_handlers, nitems(cmd_handlers));
 	lle_event_p = EVENTHANDLER_REGISTER(lle_event, rtnl_lle_event, NULL,
 	    EVENTHANDLER_PRI_ANY);
 }

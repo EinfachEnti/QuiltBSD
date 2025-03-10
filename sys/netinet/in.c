@@ -28,8 +28,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)in.c	8.4 (Berkeley) 1/9/95
  */
 
 #include <sys/cdefs.h>
@@ -104,13 +102,13 @@ VNET_DEFINE(bool, ip_allow_net240) = false;
 #define	V_ip_allow_net240		VNET(ip_allow_net240)
 SYSCTL_BOOL(_net_inet_ip, OID_AUTO, allow_net240,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip_allow_net240), 0,
-	"Allow use of Experimental addresses, aka Class E (240/4)");
+	"Allow forwarding of and ICMP response to Experimental addresses, aka Class E (240/4)");
 /* see https://datatracker.ietf.org/doc/draft-schoen-intarea-unicast-240 */
 
 VNET_DEFINE(bool, ip_allow_net0) = false;
 SYSCTL_BOOL(_net_inet_ip, OID_AUTO, allow_net0,
 	CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip_allow_net0), 0,
-	"Allow use of addresses in network 0/8");
+	"Allow forwarding of and ICMP response to addresses in network 0/8");
 /* see https://datatracker.ietf.org/doc/draft-schoen-intarea-unicast-0 */
 
 VNET_DEFINE(uint32_t, in_loopback_mask) = IN_LOOPBACK_MASK_DFLT;
@@ -129,10 +127,10 @@ static struct sx in_control_sx;
 SX_SYSINIT(in_control_sx, &in_control_sx, "in_control");
 
 /*
- * Return 1 if an internet address is for a ``local'' host
+ * Return true if an internet address is for a ``local'' host
  * (one to which we have a connection).
  */
-int
+bool
 in_localaddr(struct in_addr in)
 {
 	u_long i = ntohl(in.s_addr);
@@ -142,14 +140,14 @@ in_localaddr(struct in_addr in)
 
 	CK_STAILQ_FOREACH(ia, &V_in_ifaddrhead, ia_link) {
 		if ((i & ia->ia_subnetmask) == ia->ia_subnet)
-			return (1);
+			return (true);
 	}
 
-	return (0);
+	return (false);
 }
 
 /*
- * Return 1 if an internet address is for the local host and configured
+ * Return true if an internet address is for the local host and configured
  * on one of its interfaces.
  */
 bool
@@ -167,7 +165,7 @@ in_localip(struct in_addr in)
 }
 
 /*
- * Like in_localip(), but FIB-aware.
+ * Like in_localip(), but FIB-aware and carp(4)-aware.
  */
 bool
 in_localip_fib(struct in_addr in, uint16_t fib)
@@ -178,6 +176,8 @@ in_localip_fib(struct in_addr in, uint16_t fib)
 
 	CK_LIST_FOREACH(ia, INADDR_HASH(in.s_addr), ia_hash)
 		if (IA_SIN(ia)->sin_addr.s_addr == in.s_addr &&
+		    (ia->ia_ifa.ifa_carp == NULL ||
+		    carp_master_p(&ia->ia_ifa)) &&
 		    ia->ia_ifa.ifa_ifp->if_fib == fib)
 			return (true);
 
@@ -185,9 +185,9 @@ in_localip_fib(struct in_addr in, uint16_t fib)
 }
 
 /*
- * Return 1 if an internet address is configured on an interface.
+ * Return true if an internet address is configured on an interface.
  */
-int
+bool
 in_ifhasaddr(struct ifnet *ifp, struct in_addr in)
 {
 	struct ifaddr *ifa;
@@ -200,10 +200,10 @@ in_ifhasaddr(struct ifnet *ifp, struct in_addr in)
 			continue;
 		ia = (struct in_ifaddr *)ifa;
 		if (ia->ia_addr.sin_addr.s_addr == in.s_addr)
-			return (1);
+			return (true);
 	}
 
-	return (0);
+	return (false);
 }
 
 /*
@@ -271,18 +271,19 @@ in_findlocal(uint32_t fibnum, bool loopback_ok)
  * that may not be forwarded, or whether datagrams to that destination
  * may be forwarded.
  */
-int
+bool
 in_canforward(struct in_addr in)
 {
 	u_long i = ntohl(in.s_addr);
 
-	if (IN_MULTICAST(i) || IN_LINKLOCAL(i) || IN_LOOPBACK(i))
-		return (0);
+	if (IN_MULTICAST(i) || IN_LINKLOCAL(i) || IN_LOOPBACK(i) ||
+	    in_nullhost(in))
+		return (false);
 	if (IN_EXPERIMENTAL(i) && !V_ip_allow_net240)
-		return (0);
+		return (false);
 	if (IN_ZERONET(i) && !V_ip_allow_net0)
-		return (0);
-	return (1);
+		return (false);
+	return (true);
 }
 
 /*
@@ -439,6 +440,27 @@ in_control_ioctl(u_long cmd, void *data, struct ifnet *ifp,
 	NET_EPOCH_EXIT(et);
 
 	return (error);
+}
+
+int
+in_mask2len(struct in_addr *mask)
+{
+	int x, y;
+	u_char *p;
+
+	p = (u_char *)mask;
+	for (x = 0; x < sizeof(*mask); x++) {
+		if (p[x] != 0xff)
+			break;
+	}
+	y = 0;
+	if (x < sizeof(*mask)) {
+		for (y = 0; y < 8; y++) {
+			if ((p[x] & (0x80 >> y)) == 0)
+				break;
+		}
+	}
+	return (x * 8 + y);
 }
 
 int
@@ -1222,7 +1244,7 @@ in_ifscrub_all(void)
 {
 	struct ifnet *ifp;
 	struct ifaddr *ifa, *nifa;
-	struct ifaliasreq ifr;
+	struct ifreq ifr;
 
 	IFNET_RLOCK();
 	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
@@ -1237,9 +1259,7 @@ in_ifscrub_all(void)
 			 * cleanly remove addresses and everything attached.
 			 */
 			bzero(&ifr, sizeof(ifr));
-			ifr.ifra_addr = *ifa->ifa_addr;
-			if (ifa->ifa_dstaddr)
-			ifr.ifra_broadaddr = *ifa->ifa_dstaddr;
+			ifr.ifr_addr = *ifa->ifa_addr;
 			(void)in_control(NULL, SIOCDIFADDR, (caddr_t)&ifr,
 			    ifp, NULL);
 		}
@@ -1250,7 +1270,7 @@ in_ifscrub_all(void)
 	IFNET_RUNLOCK();
 }
 
-int
+bool
 in_ifaddr_broadcast(struct in_addr in, struct in_ifaddr *ia)
 {
 
@@ -1259,7 +1279,8 @@ in_ifaddr_broadcast(struct in_addr in, struct in_ifaddr *ia)
 	      * Optionally check for old-style (host 0) broadcast, but
 	      * taking into account that RFC 3021 obsoletes it.
 	      */
-	    (V_broadcast_lowest && ia->ia_subnetmask != IN_RFC3021_MASK &&
+	    __predict_false(V_broadcast_lowest &&
+	    ia->ia_subnetmask != IN_RFC3021_MASK &&
 	    ntohl(in.s_addr) == ia->ia_subnet)) &&
 	     /*
 	      * Check for an all one subnetmask. These
@@ -1270,33 +1291,28 @@ in_ifaddr_broadcast(struct in_addr in, struct in_ifaddr *ia)
 }
 
 /*
- * Return 1 if the address might be a local broadcast address.
+ * Return true if the address might be a local broadcast address.
  */
-int
-in_broadcast(struct in_addr in, struct ifnet *ifp)
+bool
+in_ifnet_broadcast(struct in_addr in, struct ifnet *ifp)
 {
 	struct ifaddr *ifa;
-	int found;
 
 	NET_EPOCH_ASSERT();
 
-	if (in.s_addr == INADDR_BROADCAST ||
-	    in.s_addr == INADDR_ANY)
-		return (1);
+	if (in_broadcast(in))
+		return (true);
 	if ((ifp->if_flags & IFF_BROADCAST) == 0)
-		return (0);
-	found = 0;
+		return (false);
 	/*
 	 * Look through the list of addresses for a match
 	 * with a broadcast address.
 	 */
 	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link)
 		if (ifa->ifa_addr->sa_family == AF_INET &&
-		    in_ifaddr_broadcast(in, (struct in_ifaddr *)ifa)) {
-			found = 1;
-			break;
-		}
-	return (found);
+		    in_ifaddr_broadcast(in, (struct in_ifaddr *)ifa))
+			return (true);
+	return (false);
 }
 
 /*
@@ -1472,9 +1488,6 @@ in_lltable_new(struct in_addr addr4, u_int flags)
 
 	return (&lle->base);
 }
-
-#define IN_ARE_MASKED_ADDR_EQUAL(d, a, m)	(		\
-	((((d).s_addr ^ (a).s_addr) & (m).s_addr)) == 0 )
 
 static int
 in_lltable_match_prefix(const struct sockaddr *saddr,

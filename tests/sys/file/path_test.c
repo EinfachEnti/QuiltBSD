@@ -235,7 +235,7 @@ ATF_TC_BODY(path_capsicum_empty, tc)
 	/*
 	 * CAP_READ and CAP_LOOKUP should be sufficient to open a directory.
 	 */
-	cap_rights_init(&rights, CAP_READ | CAP_LOOKUP);
+	cap_rights_init(&rights, CAP_READ, CAP_LOOKUP);
 	ATF_REQUIRE(cap_rights_limit(pathdfd, &rights) == 0);
 	dfd = openat(pathdfd, "", O_DIRECTORY | O_EMPTY_PATH);
 	ATF_REQUIRE(dfd >= 0);
@@ -256,7 +256,7 @@ ATF_TC_BODY(path_capsicum_empty, tc)
 	ATF_REQUIRE(fd >= 0);
 	CHECKED_CLOSE(fd);
 
-	cap_rights_init(&rights, CAP_READ | CAP_LOOKUP | CAP_WRITE);
+	cap_rights_init(&rights, CAP_READ, CAP_LOOKUP, CAP_WRITE);
 	ATF_REQUIRE(cap_rights_limit(pathfd, &rights) == 0);
 	fd = openat(pathfd, "", O_RDWR | O_EMPTY_PATH | O_APPEND);
 	ATF_REQUIRE(fd >= 0);
@@ -265,7 +265,7 @@ ATF_TC_BODY(path_capsicum_empty, tc)
 	/*
 	 * CAP_SEEK is needed to open a file for writing without O_APPEND.
 	 */
-	cap_rights_init(&rights, CAP_READ | CAP_LOOKUP | CAP_WRITE);
+	cap_rights_init(&rights, CAP_READ, CAP_LOOKUP, CAP_WRITE);
 	ATF_REQUIRE(cap_rights_limit(pathfd, &rights) == 0);
 	fd = openat(pathfd, "", O_RDWR | O_EMPTY_PATH);
 	ATF_REQUIRE_ERRNO(ENOTCAPABLE, fd == -1);
@@ -684,10 +684,14 @@ ATF_TC_BODY(path_io, tc)
 	size_t page_size;
 	int error, fd, pathfd, sd[2];
 
-	/* It shouldn't be possible to create new files with O_PATH. */
+	/* It is allowed to create new files with O_PATH. */
 	snprintf(path, sizeof(path), "path_io.XXXXXX");
 	ATF_REQUIRE_MSG(mktemp(path) == path, FMT_ERR("mktemp"));
-	ATF_REQUIRE_ERRNO(ENOENT, open(path, O_PATH | O_CREAT, 0600) < 0);
+	pathfd = open(path, O_PATH | O_CREAT, 0600);
+	ATF_REQUIRE_MSG(pathfd >= 0, FMT_ERR("open(O_PATH|O_CREAT)"));
+	/* Ensure that this is indeed O_PATH fd */
+	ATF_REQUIRE_ERRNO(EBADF, write(pathfd, path, strlen(path)) == -1);
+	CHECKED_CLOSE(pathfd);
 
 	/* Create a non-empty file for use in the rest of the tests. */
 	mktfile(path, "path_io.XXXXXX");

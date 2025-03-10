@@ -1,9 +1,7 @@
-
 SYSDIR?=${SRCTOP}/sys
 .include "${SYSDIR}/conf/kern.opts.mk"
 
-SUBDIR=	geom_bde \
-	geom_cache \
+SUBDIR=	geom_cache \
 	geom_concat \
 	geom_eli \
 	geom_flashmap \
@@ -22,7 +20,6 @@ SUBDIR=	geom_bde \
 	geom_stripe \
 	geom_union \
 	geom_uzip \
-	geom_vinum \
 	geom_virstor \
 	geom_zero
 

@@ -24,7 +24,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd February 22, 2021
+.Dd February 10, 2025
 .Dt PFCTL 8
 .Os
 .Sh NAME
@@ -43,7 +43,7 @@
 .Op Fl K Ar host | network
 .Xo
 .Oo Fl k
-.Ar host | network | label | id | gateway
+.Ar host | network | label | id | gateway | nat
 .Oc Xc
 .Op Fl o Ar level
 .Op Fl p Ar device
@@ -104,9 +104,7 @@ to 1.
 Set them permanently in
 .Xr sysctl.conf 5 .
 .Pp
-The
-.Nm
-utility provides several commands.
+At least one option must be specified.
 The options are as follows:
 .Bl -tag -width Ds
 .It Fl A
@@ -256,15 +254,16 @@ option may be specified, which will kill all the source tracking
 entries from the first host/network to the second.
 .It Xo
 .Fl k
-.Ar host | network | label | id | gateway
+.Ar host | network | label | id | gateway | nat
 .Xc
 Kill all of the state entries matching the specified
 .Ar host ,
 .Ar network ,
 .Ar label ,
 .Ar id ,
+.Ar gateway,
 or
-.Ar gateway.
+.Ar nat.
 .Pp
 For example, to kill all of the state entries originating from
 .Dq host :
@@ -331,6 +330,10 @@ A network prefix length can also be specified.
 To kill all states using a gateway in 192.168.0.0/24:
 .Pp
 .Dl # pfctl -k gateway -k 192.168.0.0/24
+.Pp
+States can also be killed based on their pre-NAT address:
+.Pp
+.Dl # pfctl -k nat -k 192.168.0.1
 .Pp
 .It Fl M
 Kill matching states in the opposite direction (on other interfaces) when
@@ -471,6 +474,47 @@ can be used to select an interface or a group of interfaces.
 Show all of the above, except for the lists of interfaces and operating
 system fingerprints.
 .El
+.Pp
+Counters shown with
+.Fl s Cm info
+are:
+.Pp
+.Bl -tag -width xxxxxxxxxxxxxx -compact
+.It match
+explicit rule match
+.It bad-offset
+currently unused
+.It fragment
+invalid fragments dropped
+.It short
+short packets dropped
+.It normalize
+dropped by normalizer: illegal packets
+.It memory
+memory could not be allocated
+.It bad-timestamp
+bad TCP timestamp; RFC 1323
+.It congestion
+network interface queue congested
+.It ip-option
+bad IP/IPv6 options
+.It proto-cksum
+invalid protocol checksum
+.It state-mismatch
+packet was associated with a state entry, but sequence numbers did not match
+.It state-insert
+state insertion failure
+.It state-limit
+configured state limit was reached
+.It src-limit
+source node/connection limit
+.It synproxy
+dropped by synproxy
+.It map-failed
+address mapping failed
+.It translate
+no free ports in translation port range
+.El
 .It Fl T Ar command Op Ar address ...
 Specify the
 .Ar command
@@ -501,8 +545,13 @@ Automatically create a nonexisting table.
 Show the content (addresses) of a table.
 .It Fl T Cm test
 Test if the given addresses match a table.
-.It Fl T Cm zero
-Clear all the statistics of a table.
+.It Fl T Cm zero Op Ar address ...
+Clear all the statistics of a table, or only for specified addresses.
+.It Fl T Cm reset
+Clear statistics only for addresses with non-zero statistics. Addresses
+with counter values at zero and their
+.Dq Cleared
+timestamp are left untouched.
 .It Fl T Cm load
 Load only the table definitions from
 .Xr pf.conf 5 .
@@ -526,6 +575,8 @@ line and/or in an unformatted text file, using the
 flag.
 Comments starting with a
 .Sq #
+or
+.Sq \;
 are allowed in the text file.
 With these commands, the
 .Fl v

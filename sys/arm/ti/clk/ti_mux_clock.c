@@ -25,7 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/conf.h>
 #include <sys/bus.h>
@@ -39,7 +38,7 @@
 #include <machine/bus.h>
 #include <dev/fdt/simplebus.h>
 
-#include <dev/extres/clk/clk_mux.h>
+#include <dev/clk/clk_mux.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
@@ -168,7 +167,8 @@ ti_mux_attach(device_t dev)
 	if (err) {
 		/* free_clkdef will be called in ti_mux_new_pass */
 		DPRINTF(sc->sc_dev, "find_parent_clock_names failed\n");
-		return (bus_generic_attach(sc->sc_dev));
+		bus_attach_children(sc->dev);
+		return (0);
 	}
 
 	err = register_clk(sc);
@@ -176,14 +176,16 @@ ti_mux_attach(device_t dev)
 	if (err) {
 		/* free_clkdef will be called in ti_mux_new_pass */
 		DPRINTF(sc->sc_dev, "register_clk failed\n");
-		return (bus_generic_attach(sc->sc_dev));
+		bus_attach_children(sc->dev);
+		return (0);
 	}
 
 	sc->attach_done = true;
 
 	free_clkdef(&sc->mux_def.clkdef);
 
-	return (bus_generic_attach(sc->sc_dev));
+	bus_attach_children(sc->dev);
+	return (0);
 }
 
 static void

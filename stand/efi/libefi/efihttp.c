@@ -25,7 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 
 #include <netinet/in.h>
@@ -566,6 +565,8 @@ efihttp_fs_open(const char *path, struct open_file *f)
 
 	if (!efihttp_init_done)
 		return (ENXIO);
+	if (f->f_dev != &efihttp_dev)
+		return (EINVAL);
 	/*
 	 * If any path fails to open, try with a trailing slash in
 	 * case it's a directory.

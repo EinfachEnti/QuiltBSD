@@ -58,11 +58,29 @@ struct redis_moddata {
 	int server_port;	 /* server's TCP port */
 	const char* server_path; /* server's unix path, or "", NULL if unused */
 	const char* server_password; /* server's AUTH password, or "", NULL if unused */
-	struct timeval timeout;	 /* timeout for connection setup and commands */
+	struct timeval command_timeout;	 /* timeout for commands */
+	struct timeval connect_timeout;	 /* timeout for connect */
+	int logical_db;		/* the redis logical database to use */
 };
 
 static redisReply* redis_command(struct module_env*, struct cachedb_env*,
 	const char*, const uint8_t*, size_t);
+
+static void
+moddata_clean(struct redis_moddata** moddata) {
+	if(!moddata || !*moddata)
+		return;
+	if((*moddata)->ctxs) {
+		int i;
+		for(i = 0; i < (*moddata)->numctxs; i++) {
+			if((*moddata)->ctxs[i])
+				redisFree((*moddata)->ctxs[i]);
+		}
+		free((*moddata)->ctxs);
+	}
+	free(*moddata);
+	*moddata = NULL;
+}
 
 static redisContext*
 redis_connect(const struct redis_moddata* moddata)
@@ -71,10 +89,10 @@ redis_connect(const struct redis_moddata* moddata)
 
 	if(moddata->server_path && moddata->server_path[0]!=0) {
 		ctx = redisConnectUnixWithTimeout(moddata->server_path,
-			moddata->timeout);
+			moddata->connect_timeout);
 	} else {
 		ctx = redisConnectWithTimeout(moddata->server_host,
-			moddata->server_port, moddata->timeout);
+			moddata->server_port, moddata->connect_timeout);
 	}
 	if(!ctx || ctx->err) {
 		const char *errstr = "out of memory";
@@ -83,7 +101,7 @@ redis_connect(const struct redis_moddata* moddata)
 		log_err("failed to connect to redis server: %s", errstr);
 		goto fail;
 	}
-	if(redisSetTimeout(ctx, moddata->timeout) != REDIS_OK) {
+	if(redisSetTimeout(ctx, moddata->command_timeout) != REDIS_OK) {
 		log_err("failed to set redis timeout");
 		goto fail;
 	}
@@ -97,10 +115,21 @@ redis_connect(const struct redis_moddata* moddata)
 		}
 		freeReplyObject(rep);
 	}
+	if(moddata->logical_db > 0) {
+		redisReply* rep;
+		rep = redisCommand(ctx, "SELECT %d", moddata->logical_db);
+		if(!rep || rep->type == REDIS_REPLY_ERROR) {
+			log_err("failed to set logical database (%d)",
+				moddata->logical_db);
+			freeReplyObject(rep);
+			goto fail;
+		}
+		freeReplyObject(rep);
+	}
 	verbose(VERB_OPS, "Connection to Redis established");
 	return ctx;
 
-  fail:
+fail:
 	if(ctx)
 		redisFree(ctx);
 	return NULL;
@@ -117,14 +146,13 @@ redis_init(struct module_env* env, struct cachedb_env* cachedb_env)
 	moddata = calloc(1, sizeof(struct redis_moddata));
 	if(!moddata) {
 		log_err("out of memory");
-		return 0;
+		goto fail;
 	}
 	moddata->numctxs = env->cfg->num_threads;
 	moddata->ctxs = calloc(env->cfg->num_threads, sizeof(redisContext*));
 	if(!moddata->ctxs) {
 		log_err("out of memory");
-		free(moddata);
-		return 0;
+		goto fail;
 	}
 	/* note: server_host is a shallow reference to configured string.
 	 * we don't have to free it in this module. */
@@ -132,10 +160,33 @@ redis_init(struct module_env* env, struct cachedb_env* cachedb_env)
 	moddata->server_port = env->cfg->redis_server_port;
 	moddata->server_path = env->cfg->redis_server_path;
 	moddata->server_password = env->cfg->redis_server_password;
-	moddata->timeout.tv_sec = env->cfg->redis_timeout / 1000;
-	moddata->timeout.tv_usec = (env->cfg->redis_timeout % 1000) * 1000;
-	for(i = 0; i < moddata->numctxs; i++)
-		moddata->ctxs[i] = redis_connect(moddata);
+	moddata->command_timeout.tv_sec = env->cfg->redis_timeout / 1000;
+	moddata->command_timeout.tv_usec =
+		(env->cfg->redis_timeout % 1000) * 1000;
+	moddata->connect_timeout.tv_sec = env->cfg->redis_timeout / 1000;
+	moddata->connect_timeout.tv_usec =
+		(env->cfg->redis_timeout % 1000) * 1000;
+	if(env->cfg->redis_command_timeout != 0) {
+		moddata->command_timeout.tv_sec =
+			env->cfg->redis_command_timeout / 1000;
+		moddata->command_timeout.tv_usec =
+			(env->cfg->redis_command_timeout % 1000) * 1000;
+	}
+	if(env->cfg->redis_connect_timeout != 0) {
+		moddata->connect_timeout.tv_sec =
+			env->cfg->redis_connect_timeout / 1000;
+		moddata->connect_timeout.tv_usec =
+			(env->cfg->redis_connect_timeout % 1000) * 1000;
+	}
+	moddata->logical_db = env->cfg->redis_logical_db;
+	for(i = 0; i < moddata->numctxs; i++) {
+		redisContext* ctx = redis_connect(moddata);
+		if(!ctx) {
+			log_err("redis_init: failed to init redis");
+			goto fail;
+		}
+		moddata->ctxs[i] = ctx;
+	}
 	cachedb_env->backend_data = moddata;
 	if(env->cfg->redis_expire_records) {
 		redisReply* rep = NULL;
@@ -148,7 +199,7 @@ redis_init(struct module_env* env, struct cachedb_env* cachedb_env)
 			log_err("redis_init: failed to init redis, the "
 				"redis-expire-records option requires the SETEX command "
 				"(redis >= 2.0.0)");
-			return 0;
+			goto fail;
 		}
 		redis_reply_type = rep->type;
 		freeReplyObject(rep);
@@ -160,11 +211,14 @@ redis_init(struct module_env* env, struct cachedb_env* cachedb_env)
 			log_err("redis_init: failed to init redis, the "
 				"redis-expire-records option requires the SETEX command "
 				"(redis >= 2.0.0)");
-			return 0;
+			goto fail;
 		}
 	}
-
 	return 1;
+
+fail:
+	moddata_clean(&moddata);
+	return 0;
 }
 
 static void
@@ -175,18 +229,7 @@ redis_deinit(struct module_env* env, struct cachedb_env* cachedb_env)
 	(void)env;
 
 	verbose(VERB_OPS, "Redis deinitialization");
-
-	if(!moddata)
-		return;
-	if(moddata->ctxs) {
-		int i;
-		for(i = 0; i < moddata->numctxs; i++) {
-			if(moddata->ctxs[i])
-				redisFree(moddata->ctxs[i]);
-		}
-		free(moddata->ctxs);
-	}
-	free(moddata);
+	moddata_clean(&moddata);
 }
 
 /*

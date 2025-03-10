@@ -43,7 +43,7 @@
 #include <machine/intr.h>
 #include <machine/resource.h>
 
-#include <dev/extres/syscon/syscon.h>
+#include <dev/syscon/syscon.h>
 
 #include <dev/gpio/gpiobusvar.h>
 
@@ -810,7 +810,8 @@ mvebu_gpio_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	return (bus_generic_attach(dev));
+	bus_attach_children(dev);
+	return (0);
 }
 
 static int

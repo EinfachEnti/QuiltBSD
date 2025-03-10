@@ -28,7 +28,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -59,6 +58,7 @@ static struct vt_driver vt_vbefb_driver = {
 	.vd_bitblt_text = vt_fb_bitblt_text,
 	.vd_invalidate_text = vt_fb_invalidate_text,
 	.vd_bitblt_bmp = vt_fb_bitblt_bitmap,
+	.vd_bitblt_argb = vt_fb_bitblt_argb,
 	.vd_drawrect = vt_fb_drawrect,
 	.vd_setpixel = vt_fb_setpixel,
 	.vd_fb_ioctl = vt_fb_ioctl,
@@ -77,17 +77,13 @@ vt_vbefb_probe(struct vt_device *vd)
 {
 	int		disabled;
 	struct vbe_fb	*vbefb;
-	caddr_t		kmdp;
 
 	disabled = 0;
 	TUNABLE_INT_FETCH("hw.syscons.disable", &disabled);
 	if (disabled != 0)
 		return (CN_DEAD);
 
-	kmdp = preload_search_by_type("elf kernel");
-	if (kmdp == NULL)
-		kmdp = preload_search_by_type("elf64 kernel");
-	vbefb = (struct vbe_fb *)preload_search_info(kmdp,
+	vbefb = (struct vbe_fb *)preload_search_info(preload_kmdp,
 	    MODINFO_METADATA | MODINFOMD_VBE_FB);
 	if (vbefb == NULL)
 		return (CN_DEAD);
@@ -100,17 +96,13 @@ vt_vbefb_init(struct vt_device *vd)
 {
 	struct fb_info	*info;
 	struct vbe_fb	*vbefb;
-	caddr_t		kmdp;
 	int		format, roff, goff, boff;
 
 	info = vd->vd_softc;
 	if (info == NULL)
 		info = vd->vd_softc = (void *)&local_vbe_info;
 
-	kmdp = preload_search_by_type("elf kernel");
-	if (kmdp == NULL)
-		kmdp = preload_search_by_type("elf64 kernel");
-	vbefb = (struct vbe_fb *)preload_search_info(kmdp,
+	vbefb = (struct vbe_fb *)preload_search_info(preload_kmdp,
 	    MODINFO_METADATA | MODINFOMD_VBE_FB);
 	if (vbefb == NULL)
 		return (CN_DEAD);

@@ -25,7 +25,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/endian.h>
@@ -460,8 +459,7 @@ enetc_detach(if_ctx_t ctx)
 	for (i = 0; i < sc->rx_num_queues; i++)
 		iflib_irq_free(ctx, &sc->rx_queues[i].irq);
 
-	if (sc->miibus != NULL)
-		device_delete_child(sc->dev, sc->miibus);
+	bus_generic_detach(sc->dev);
 
 	if (sc->regs != NULL)
 		error = bus_release_resource(sc->dev, SYS_RES_MEMORY,

@@ -1,10 +1,10 @@
-
 .include <src.opts.mk>
 
 MAN=	accept_filter.9 \
 	accf_data.9 \
 	accf_dns.9 \
 	accf_http.9 \
+	accf_tls.9 \
 	acl.9 \
 	alq.9 \
 	altq.9 \
@@ -28,6 +28,7 @@ MAN=	accept_filter.9 \
 	BUS_ADD_CHILD.9 \
 	bus_adjust_resource.9 \
 	bus_alloc_resource.9 \
+	bus_attach_children.9 \
 	BUS_BIND_INTR.9 \
 	bus_child_present.9 \
 	BUS_CHILD_DELETED.9 \
@@ -35,10 +36,8 @@ MAN=	accept_filter.9 \
 	BUS_CHILD_LOCATION.9 \
 	BUS_CHILD_PNPINFO.9 \
 	BUS_CONFIG_INTR.9 \
-	bus_delayed_attach_children.9 \
 	BUS_DESCRIBE_INTR.9 \
 	bus_dma.9 \
-	bus_generic_attach.9 \
 	bus_generic_detach.9 \
 	bus_generic_new_pass.9 \
 	bus_generic_print_child.9 \
@@ -47,6 +46,7 @@ MAN=	accept_filter.9 \
 	BUS_GET_CPUS.9 \
 	BUS_GET_PROPERTY.9 \
 	bus_get_resource.9 \
+	BUS_HINTED_CHILD.9 \
 	bus_map_resource.9 \
 	BUS_NEW_PASS.9 \
 	BUS_PRINT_CHILD.9 \
@@ -61,12 +61,14 @@ MAN=	accept_filter.9 \
 	callout.9 \
 	casuword.9 \
 	cd.9 \
+	cdefs.9 \
 	cnv.9 \
 	condvar.9 \
 	config_intrhook.9 \
 	contigmalloc.9 \
 	copy.9 \
 	counter.9 \
+	cpu_machdep.9 \
 	cpuset.9 \
 	cr_bsd_visible.9 \
 	cr_cansee.9 \
@@ -217,7 +219,6 @@ MAN=	accept_filter.9 \
 	mbchain.9 \
 	mbuf.9 \
 	mbuf_tags.9 \
-	MD5.9 \
 	mdchain.9 \
 	memcchr.9 \
 	memguard.9 \
@@ -268,6 +269,7 @@ MAN=	accept_filter.9 \
 	pmap_copy.9 \
 	pmap_enter.9 \
 	pmap_extract.9 \
+	pmap_kextract.9 \
 	pmap_growkernel.9 \
 	pmap_init.9 \
 	pmap_is_modified.9 \
@@ -633,6 +635,8 @@ MLINKS+=bitset.9 BITSET_DEFINE.9 \
 	bitset.9 BIT_CMP.9 \
 	bitset.9 BIT_OR.9 \
 	bitset.9 BIT_OR2.9 \
+	bitset.9 BIT_ORNOT.9 \
+	bitset.9 BIT_ORNOT2.9 \
 	bitset.9 BIT_AND.9 \
 	bitset.9 BIT_AND2.9 \
 	bitset.9 BIT_ANDNOT.9 \
@@ -668,7 +672,12 @@ MLINKS+=buf_ring.9 buf_ring_alloc.9 \
 	buf_ring.9 buf_ring_peek.9
 MLINKS+=bus_activate_resource.9 bus_deactivate_resource.9
 MLINKS+=bus_alloc_resource.9 bus_alloc_resource_any.9
+MLINKS+=bus_attach_children.9 bus_delayed_attach_children.9 \
+	bus_attach_children.9 bus_detach_children.9 \
+	bus_attach_children.9 bus_enumerate_hinted_children.9 \
+	bus_attach_children.9 bus_identify_children.9
 MLINKS+=BUS_BIND_INTR.9 bus_bind_intr.9
+MLINKS+=BUS_CONFIG_INTR.9 bus_config_intr.9
 MLINKS+=BUS_DESCRIBE_INTR.9 bus_describe_intr.9
 MLINKS+=bus_dma.9 busdma.9 \
 	bus_dma.9 bus_dmamap_create.9 \
@@ -687,6 +696,9 @@ MLINKS+=bus_dma.9 busdma.9 \
 	bus_dma.9 bus_dmamem_free.9 \
 	bus_dma.9 bus_dma_tag_create.9 \
 	bus_dma.9 bus_dma_tag_destroy.9
+MLINKS+=bus_generic_print_child.9 bus_print_child_domain.9 \
+	bus_generic_print_child.9 bus_print_child_footer.9 \
+	bus_generic_print_child.9 bus_print_child_header.9
 MLINKS+=bus_generic_read_ivar.9 bus_generic_write_ivar.9
 MLINKS+=BUS_GET_CPUS.9 bus_get_cpus.9
 MLINKS+=bus_map_resource.9 bus_unmap_resource.9 \
@@ -809,7 +821,6 @@ MLINKS+=byteorder.9 be16dec.9 \
 	byteorder.9 le64enc.9 \
 	byteorder.9 le64toh.9
 MLINKS+=callout.9 callout_active.9 \
-	callout.9 callout_async_drain.9 \
 	callout.9 callout_deactivate.9 \
 	callout.9 callout_drain.9 \
 	callout.9 callout_init.9 \
@@ -882,8 +893,7 @@ MLINKS+=config_intrhook.9 config_intrhook_disestablish.9 \
 	config_intrhook.9 config_intrhook_drain.9 \
 	config_intrhook.9 config_intrhook_establish.9 \
 	config_intrhook.9 config_intrhook_oneshot.9
-MLINKS+=contigmalloc.9 contigmalloc_domainset.9 \
-	contigmalloc.9 contigfree.9
+MLINKS+=contigmalloc.9 contigmalloc_domainset.9
 MLINKS+=casuword.9 casueword.9 \
 	casuword.9 casueword32.9 \
 	casuword.9 casuword32.9
@@ -898,6 +908,7 @@ MLINKS+=counter.9 counter_u64_alloc.9 \
 	counter.9 counter_u64_add.9 \
 	counter.9 counter_enter.9 \
 	counter.9 counter_exit.9 \
+	counter.9 counter_ratecheck.9 \
 	counter.9 counter_u64_add_protected.9 \
 	counter.9 counter_u64_fetch.9 \
 	counter.9 counter_u64_zero.9 \
@@ -905,6 +916,27 @@ MLINKS+=counter.9 counter_u64_alloc.9 \
 	counter.9 SYSCTL_ADD_COUNTER_U64.9 \
 	counter.9 SYSCTL_COUNTER_U64_ARRAY.9 \
 	counter.9 SYSCTL_ADD_COUNTER_U64_ARRAY.9
+MLINKS+=cpu_machdep.9 cpu_copy_thread.9 \
+	cpu_machdep.9 cpu_exec_vmspace_reuse.9 \
+	cpu_machdep.9 cpu_exit.9 \
+	cpu_machdep.9 cpu_fetch_syscall_args.9 \
+	cpu_machdep.9 cpu_fork.9 \
+	cpu_machdep.9 cpu_fork_kthread_handler.9 \
+	cpu_machdep.9 cpu_idle.9 \
+	cpu_machdep.9 cpu_idle_wakeup.9 \
+	cpu_machdep.9 cpu_procctl.9 \
+	cpu_machdep.9 cpu_ptrace.9 \
+	cpu_machdep.9 cpu_set_syscall_retval.9 \
+	cpu_machdep.9 cpu_set_upcall.9 \
+	cpu_machdep.9 cpu_set_user_tls.9 \
+	cpu_machdep.9 cpu_switch.9 \
+	cpu_machdep.9 cpu_sync_core.9 \
+	cpu_machdep.9 cpu_thread_alloc.9 \
+	cpu_machdep.9 cpu_thread_clean.9 \
+	cpu_machdep.9 cpu_thread_exit.9 \
+	cpu_machdep.9 cpu_thread_free.9 \
+	cpu_machdep.9 cpu_throw.9 \
+	cpu_machdep.9 cpu_update_pcb.9
 MLINKS+=cpuset.9 CPUSET_T_INITIALIZER.9 \
 	cpuset.9 CPUSET_FSET.9 \
 	cpuset.9 CPU_CLR.9 \
@@ -922,6 +954,7 @@ MLINKS+=cpuset.9 CPUSET_T_INITIALIZER.9 \
 	cpuset.9 CPU_OVERLAP.9 \
 	cpuset.9 CPU_CMP.9 \
 	cpuset.9 CPU_OR.9 \
+	cpuset.9 CPU_ORNOT.9 \
 	cpuset.9 CPU_AND.9 \
 	cpuset.9 CPU_ANDNOT.9 \
 	cpuset.9 CPU_CLR_ATOMIC.9 \
@@ -996,7 +1029,8 @@ MLINKS+=dev_clone.9 drain_dev_clone_events.9
 MLINKS+=dev_refthread.9 devvn_refthread.9 \
 	dev_refthread.9 dev_relthread.9
 MLINKS+=devfs_set_cdevpriv.9 devfs_clear_cdevpriv.9 \
-	devfs_set_cdevpriv.9 devfs_get_cdevpriv.9
+	devfs_set_cdevpriv.9 devfs_get_cdevpriv.9 \
+	devfs_set_cdevpriv.9 devfs_foreach_cdevpriv.9
 MLINKS+=device_add_child.9 device_add_child_ordered.9
 MLINKS+=device_enable.9 device_disable.9 \
 	device_enable.9 device_is_enabled.9
@@ -1011,8 +1045,12 @@ MLINKS+=device_get_sysctl.9 device_get_sysctl_ctx.9 \
 MLINKS+=device_quiet.9 device_is_quiet.9 \
 	device_quiet.9 device_verbose.9
 MLINKS+=device_set_desc.9 device_get_desc.9 \
+	device_set_desc.9 device_set_descf.9 \
 	device_set_desc.9 device_set_desc_copy.9
 MLINKS+=device_set_flags.9 device_get_flags.9
+MLINKS+=device_probe_and_attach.9 device_attach.9 \
+	device_probe_and_attach.9 device_detach.9 \
+	device_probe_and_attach.9 device_probe.9
 MLINKS+=devstat.9 devicestat.9 \
 	devstat.9 devstat_new_entry.9 \
 	devstat.9 devstat_end_transaction.9 \
@@ -1329,13 +1367,15 @@ MLINKS+=ifnet.9 if_addmulti.9 \
 	ifnet.9 ifa_ifwithnet.9 \
 	ifnet.9 ifa_ref.9 \
 	ifnet.9 ifaddr.9 \
-	ifnet.9 ifaddr_byindex.9 \
 	ifnet.9 ifaof_ifpforaddr.9 \
 	ifnet.9 ifioctl.9 \
 	ifnet.9 ifpromisc.9 \
 	ifnet.9 ifqueue.9 \
 	ifnet.9 ifunit.9 \
 	ifnet.9 ifunit_ref.9
+# IfAPI
+MLINKS+=ifnet.9 ifapi.9
+
 MLINKS+=insmntque.9 insmntque1.9
 MLINKS+=intr_event.9 intr_event_add_handler.9 \
 	intr_event.9 intr_event_create.9 \
@@ -1369,6 +1409,7 @@ MLINKS+=kmsan.9 KMSAN.9 \
 	kmsan.9 kmsan_check_bio.9 \
 	kmsan.9 kmsan_check_ccb.9 \
 	kmsan.9 kmsan_check_mbuf.9 \
+	kmsan.9 kmsan_check_uio.9 \
 	kmsan.9 kmsan_mark.9 \
 	kmsan.9 kmsan_oirg.9
 MLINKS+=kobj.9 DEFINE_CLASS.9 \
@@ -1423,9 +1464,14 @@ MLINKS+=lock.9 lockdestroy.9 \
 	lock.9 lockmgr_args_rw.9 \
 	lock.9 lockmgr_assert.9 \
 	lock.9 lockmgr_disown.9 \
+	lock.9 lockmgr_disowned.9 \
+	lock.9 lockmgr_lock_flags.9 \
 	lock.9 lockmgr_printinfo.9 \
 	lock.9 lockmgr_recursed.9 \
 	lock.9 lockmgr_rw.9 \
+	lock.9 lockmgr_slock.9 \
+	lock.9 lockmgr_unlock.9 \
+	lock.9 lockmgr_xlock.9 \
 	lock.9 lockstatus.9
 MLINKS+=LOCK_PROFILING.9 MUTEX_PROFILING.9
 MLINKS+=make_dev.9 destroy_dev.9 \
@@ -1514,6 +1560,7 @@ MLINKS+=\
 	mbuf.9 m_pullup.9 \
 	mbuf.9 m_split.9 \
 	mbuf.9 mtod.9 \
+	mbuf.9 mtodo.9 \
 	mbuf.9 M_TRAILINGSPACE.9 \
 	mbuf.9 m_unshare.9 \
 	mbuf.9 M_WRITABLE.9
@@ -1533,8 +1580,6 @@ MLINKS+=\
 	mbuf_tags.9 m_tag_next.9 \
 	mbuf_tags.9 m_tag_prepend.9 \
 	mbuf_tags.9 m_tag_unlink.9
-MLINKS+=MD5.9 MD5Init.9 \
-	MD5.9 MD5Transform.9
 MLINKS+=mdchain.9 md_append_record.9 \
 	mdchain.9 md_done.9 \
 	mdchain.9 md_get_int64.9 \
@@ -1564,8 +1609,6 @@ MLINKS+=microuptime.9 binuptime.9 \
 	microuptime.9 getsbinuptime.9 \
 	microuptime.9 nanouptime.9 \
 	microuptime.9 sbinuptime.9
-MLINKS+=mi_switch.9 cpu_switch.9 \
-	mi_switch.9 cpu_throw.9
 MLINKS+=mod_cc.9 CCV.9 \
 	mod_cc.9 DECLARE_CC_MODULE.9
 MLINKS+=mtx_pool.9 mtx_pool_alloc.9 \
@@ -1807,10 +1850,9 @@ MLINKS+=PHOLD.9 PRELE.9 \
 	PHOLD.9 PROC_ASSERT_NOT_HELD.9
 MLINKS+=pmap_copy.9 pmap_copy_page.9
 MLINKS+=pmap_extract.9 pmap_extract_and_hold.9
-MLINKS+=pmap_init.9 pmap_init2.9
+MLINKS+=pmap_kextract.9 vtophys.9
 MLINKS+=pmap_is_modified.9 pmap_ts_referenced.9
-MLINKS+=pmap_pinit.9 pmap_pinit0.9 \
-	pmap_pinit.9 pmap_pinit2.9
+MLINKS+=pmap_pinit.9 pmap_pinit0.9
 MLINKS+=pmap_qenter.9 pmap_qremove.9
 MLINKS+=pmap_quick_enter_page.9 pmap_quick_remove_page.9
 MLINKS+=pmap_remove.9 pmap_remove_all.9 \
@@ -1867,6 +1909,7 @@ MLINKS+=rman.9 rman_activate_resource.9 \
 	rman.9 rman_get_rid.9 \
 	rman.9 rman_get_size.9 \
 	rman.9 rman_get_start.9 \
+	rman.9 rman_get_type.9 \
 	rman.9 rman_get_virtual.9 \
 	rman.9 rman_init.9 \
 	rman.9 rman_init_from_resource.9 \
@@ -1881,6 +1924,7 @@ MLINKS+=rman.9 rman_activate_resource.9 \
 	rman.9 rman_set_bustag.9 \
 	rman.9 rman_set_mapping.9 \
 	rman.9 rman_set_rid.9 \
+	rman.9 rman_set_type.9 \
 	rman.9 rman_set_virtual.9
 MLINKS+=rmlock.9 rm_assert.9 \
 	rmlock.9 rm_destroy.9 \
@@ -2155,6 +2199,7 @@ MLINKS+=syscall_helper_register.9 syscall_helper_unregister.9 \
 	syscall_helper_register.9 SYSCALL_INIT_HELPER_COMPAT_F.9 \
 	syscall_helper_register.9 SYSCALL_INIT_HELPER_F.9
 MLINKS+=sysctl.9 SYSCTL_DECL.9 \
+	sysctl.9 SYSCTL_ADD_CONST_STRING.9 \
 	sysctl.9 SYSCTL_ADD_INT.9 \
 	sysctl.9 SYSCTL_ADD_LONG.9 \
 	sysctl.9 SYSCTL_ADD_NODE.9 \
@@ -2233,6 +2278,7 @@ MLINKS+=taskqueue.9 TASK_INIT.9 \
 	taskqueue.9 taskqueue_drain_timeout.9 \
 	taskqueue.9 taskqueue_enqueue.9 \
 	taskqueue.9 taskqueue_enqueue_timeout.9 \
+	taskqueue.9 taskqueue_enqueue_timeout_sbt.9 \
 	taskqueue.9 TASKQUEUE_FAST_DEFINE.9 \
 	taskqueue.9 TASKQUEUE_FAST_DEFINE_THREAD.9 \
 	taskqueue.9 taskqueue_free.9 \
@@ -2367,8 +2413,6 @@ MLINKS+=vm_page_alloc.9 vm_page_alloc_after.9 \
 	vm_page_alloc.9 vm_page_alloc_contig_domain.9 \
 	vm_page_alloc.9 vm_page_alloc_domain.9 \
 	vm_page_alloc.9 vm_page_alloc_domain_after.9 \
-	vm_page_alloc.9 vm_page_alloc_freelist.9 \
-	vm_page_alloc.9 vm_page_alloc_freelist_domain.9 \
 	vm_page_alloc.9 vm_page_alloc_noobj.9 \
 	vm_page_alloc.9 vm_page_alloc_noobj_contig.9 \
 	vm_page_alloc.9 vm_page_alloc_noobj_contig_domain.9 \

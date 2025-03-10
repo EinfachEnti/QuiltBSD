@@ -27,7 +27,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -270,29 +269,17 @@ static int ips_diskdev_init(ips_softc_t *sc)
 			ips_diskdev_statename(sc->drives[i].state));
 		if(sc->drives[i].state == IPS_LD_OKAY ||
 		   sc->drives[i].state == IPS_LD_DEGRADED){
-			sc->diskdev[i] = device_add_child(sc->dev, NULL, -1);
+			sc->diskdev[i] = device_add_child(sc->dev, NULL, DEVICE_UNIT_ANY);
 			device_set_ivars(sc->diskdev[i],(void *)(uintptr_t) i);
 		}
 	}
-	if(bus_generic_attach(sc->dev)){
-		device_printf(sc->dev, "Attaching bus failed\n");
-	}
+	bus_attach_children(sc->dev);
 	return 0;
 }
 
 static int ips_diskdev_free(ips_softc_t *sc)
 {
-	int i;
-	int error = 0;
-	for(i = 0; i < IPS_MAX_NUM_DRIVES; i++){
-		if(sc->diskdev[i]) {
-			error = device_delete_child(sc->dev, sc->diskdev[i]);
-			if(error)
-				return error;
-		}
-	}
-	bus_generic_detach(sc->dev);
-	return 0;
+	return (bus_generic_detach(sc->dev));
 }
 
 /* ips_timeout is periodically called to make sure no commands sent

@@ -63,8 +63,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)mroute.c	8.2 (Berkeley) 4/28/95
  */
 
 #include <sys/cdefs.h>
@@ -72,9 +70,7 @@
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
-#include <sys/socketvar.h>
 #include <sys/sysctl.h>
-#include <sys/protosw.h>
 #include <sys/mbuf.h>
 #include <sys/time.h>
 
@@ -83,7 +79,6 @@
 
 #include <netinet/in.h>
 
-#include <err.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,6 +86,7 @@
 #include <libxo/xo.h>
 
 #define	KERNEL 1
+struct sockopt;
 #include <netinet6/ip6_mroute.h>
 #undef KERNEL
 

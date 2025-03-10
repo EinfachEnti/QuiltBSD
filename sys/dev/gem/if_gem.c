@@ -152,8 +152,6 @@ gem_attach(struct gem_softc *sc)
 
 	/* Set up ifnet structure. */
 	ifp = sc->sc_ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL)
-		return (ENOSPC);
 	sc->sc_csum_features = GEM_CSUM_FEATURES;
 	if_setsoftc(ifp, sc);
 	if_initname(ifp, device_get_name(sc->sc_dev),
@@ -415,7 +413,7 @@ gem_detach(struct gem_softc *sc)
 	callout_drain(&sc->sc_rx_ch);
 #endif
 	if_free(ifp);
-	device_delete_child(sc->sc_dev, sc->sc_miibus);
+	bus_generic_detach(sc->sc_dev);
 
 	for (i = 0; i < GEM_NRXDESC; i++)
 		if (sc->sc_rxsoft[i].rxs_dmamap != NULL)

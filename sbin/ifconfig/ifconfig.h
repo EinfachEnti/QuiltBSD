@@ -231,6 +231,7 @@ struct ifconfig_args {
 	bool supmedia;		/* Supported media */
 	bool printkeys;		/* Print security keys */
 	bool allfamilies;	/* Print all families */
+	bool drivername;	/* Print driver name */
 	int verbose;		/* verbosity level */
 	int argc;
 	char **argv;
@@ -259,6 +260,8 @@ void	setifcap(if_ctx *ctx, const char *, int value);
 void	setifcapnv(if_ctx *ctx, const char *vname, const char *arg);
 
 void	Perror(const char *cmd);
+void	print_bits(const char *btype, uint32_t *v, const int v_count,
+		const char **names, const int n_count);
 void	printb(const char *s, unsigned value, const char *bits);
 
 void	ifmaybeload(struct ifconfig_args *args, const char *name);

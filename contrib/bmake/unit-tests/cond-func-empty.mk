@@ -1,9 +1,9 @@
-# $NetBSD: cond-func-empty.mk,v 1.22 2023/08/11 05:01:12 rillig Exp $
+# $NetBSD: cond-func-empty.mk,v 1.28 2025/01/11 20:54:45 rillig Exp $
 #
-# Tests for the empty() function in .if conditions, which tests a variable
+# Tests for the empty() function in .if conditions, which tests an
 # expression for emptiness.
 #
-# Note that the argument in the parentheses is a variable name, not a variable
+# Note that the argument in the parentheses is a variable name, not an
 # expression.  That name may be followed by ':...' modifiers.
 #
 
@@ -104,10 +104,10 @@ WORD=	word
 
 # Now the variable named " " gets a non-empty value, which demonstrates that
 # neither leading nor trailing spaces are trimmed in the argument of the
-# function.  If the spaces were trimmed, the variable name would be "" and
-# that variable is indeed undefined.  Since CondParser_FuncCallEmpty calls
-# Var_Parse without VARE_UNDEFERR, the value of the undefined variable ""
-# would be returned as an empty string.
+# function.  If the spaces were trimmed, the variable name would be "", and
+# that variable is indeed undefined.  Since CondParser_FuncCallEmpty allows
+# subexpressions to be based on undefined variables, the value of the
+# undefined variable "" would be returned as an empty string.
 ${:U }=	space
 .if empty( )
 .  error
@@ -120,7 +120,7 @@ ${:U }=	space
 .  error
 .endif
 
-# The :L modifier creates a variable expression that has the same value as
+# The :L modifier creates an expression that has the same value as
 # its name, which both are "VAR" in this case.  The value is therefore not
 # empty.
 .if empty(VAR:L)
@@ -138,7 +138,7 @@ ${:U }=	space
 .  error
 .endif
 
-# Ensure that variable expressions that appear as part of the function call
+# Ensure that expressions that appear as part of the function call
 # argument are properly parsed.  Typical use cases for this are .for loops,
 # which are expanded to exactly these ${:U} expressions.
 #
@@ -163,8 +163,7 @@ ${:U WORD }=	variable name with spaces
 .  error
 .endif
 
-# expect+2: Unclosed variable "WORD"
-# expect+1: Malformed conditional (empty(WORD)
+# expect+1: Unclosed variable "WORD"
 .if empty(WORD
 .  error
 .else
@@ -188,25 +187,29 @@ ${:U WORD }=	variable name with spaces
 # side containing the '!empty' was evaluated though, as it had always been.
 #
 # When evaluating the !empty condition, the variable name was parsed as
-# "VARNAME${:U2}", but without expanding any nested variable expression, in
+# "VARNAME${:U2}", but without expanding any nested expression, in
 # this case the ${:U2}.  The expression '${:U2}' was replaced with an empty
 # string, the resulting variable name was thus "VARNAME".  This conceptually
 # wrong variable name should have been discarded quickly after parsing it, to
 # prevent it from doing any harm.
 #
-# The variable expression was expanded though, and this was wrong.  The
-# expansion was done without VARE_WANTRES (called VARF_WANTRES back then)
-# though.  This had the effect that the ${:U1} from the value of VARNAME
-# expanded to an empty string.  This in turn created the seemingly recursive
-# definition VARNAME=${VARNAME}, and that definition was never meant to be
-# expanded.
+# The expression was evaluated, and this was wrong.  The evaluation was done
+# without VARE_EVAL (called VARF_WANTRES back then) though.  This had the
+# effect that the ${:U1} from the value of VARNAME evaluated to an empty
+# string.  This in turn created the seemingly recursive definition
+# VARNAME=${VARNAME}, and that definition was evaluated even though it was
+# never meant to be evaluated.
 #
-# This was fixed by expanding nested variable expressions in the variable name
-# only if the flag VARE_WANTRES is given.
+# This was fixed by evaluating nested expressions in the variable name only
+# when the whole expression was evaluated as well.
 VARNAME=	${VARNAME${:U1}}
 .if defined(VARNAME${:U2}) && !empty(VARNAME${:U2})
 .endif
 
+# Expressions in the argument of a function call don't have to be defined.
+.if !empty(${UNDEF})
+.  error
+.endif
 
 # If the word 'empty' is not followed by '(', it is not a function call but an
 # ordinary bare word.  This bare word is interpreted as 'defined(empty)', and

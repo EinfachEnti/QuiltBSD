@@ -29,6 +29,8 @@
  *
  */
 
+#include <sys/elf_common.h>
+
 #include <machine/asm.h>
 #include <machine/setjmp.h>
 #include <machine/param.h>
@@ -376,8 +378,8 @@ END(pagezero_simple)
 ENTRY(pagezero_cache)
 	add	x1, x0, #PAGE_SIZE
 
-	ldr	x2, =dczva_line_size
-	ldr	x2, [x2]
+	adrp	x2, dczva_line_size
+	ldr	x2, [x2, :lo12:dczva_line_size]
 
 1:
 	dc	zva, x0
@@ -387,3 +389,5 @@ ENTRY(pagezero_cache)
 	ret
 
 END(pagezero_cache)
+
+GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)

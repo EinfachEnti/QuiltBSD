@@ -927,8 +927,8 @@ iwi_media_status(if_t ifp, struct ifmediareq *imr)
 
 	/* read current transmission rate from adapter */
 	ni = ieee80211_ref_node(vap->iv_bss);
-	ni->ni_txrate =
-	    iwi_cvtrate(CSR_READ_4(sc, IWI_CSR_CURRENT_TX_RATE));
+	ieee80211_node_set_txrate_dot11rate(ni,
+	    iwi_cvtrate(CSR_READ_4(sc, IWI_CSR_CURRENT_TX_RATE)));
 	ieee80211_free_node(ni);
 	ieee80211_media_status(ifp, imr);
 }
@@ -1177,7 +1177,6 @@ static void
 iwi_frame_intr(struct iwi_softc *sc, struct iwi_rx_data *data, int i,
     struct iwi_frame *frame)
 {
-	struct epoch_tracker et;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct mbuf *mnew, *m;
 	struct ieee80211_node *ni;
@@ -1267,13 +1266,11 @@ iwi_frame_intr(struct iwi_softc *sc, struct iwi_rx_data *data, int i,
 	IWI_UNLOCK(sc);
 
 	ni = ieee80211_find_rxnode(ic, mtod(m, struct ieee80211_frame_min *));
-	NET_EPOCH_ENTER(et);
 	if (ni != NULL) {
 		type = ieee80211_input(ni, m, rssi, nf);
 		ieee80211_free_node(ni);
 	} else
 		type = ieee80211_input_all(ic, m, rssi, nf);
-	NET_EPOCH_EXIT(et);
 
 	IWI_LOCK(sc);
 	if (sc->sc_softled) {

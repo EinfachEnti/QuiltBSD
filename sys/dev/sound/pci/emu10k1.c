@@ -2126,17 +2126,18 @@ emu_pci_attach(device_t dev)
 		goto bad;
 	}
 
-	snprintf(status, SND_STATUSLEN, "at io 0x%jx irq %jd %s",
+	snprintf(status, SND_STATUSLEN, "port 0x%jx irq %jd on %s",
 	    rman_get_start(sc->reg), rman_get_start(sc->irq),
-	    PCM_KLDSTRING(snd_emu10k1));
+	    device_get_nameunit(device_get_parent(dev)));
 
-	if (pcm_register(dev, sc, sc->nchans, gotmic ? 3 : 2)) goto bad;
+	pcm_init(dev, sc);
 	for (i = 0; i < sc->nchans; i++)
 		pcm_addchan(dev, PCMDIR_PLAY, &emupchan_class, sc);
 	for (i = 0; i < (gotmic ? 3 : 2); i++)
 		pcm_addchan(dev, PCMDIR_REC, &emurchan_class, sc);
 
-	pcm_setstatus(dev, status);
+	if (pcm_register(dev, status))
+		goto bad;
 
 	return 0;
 

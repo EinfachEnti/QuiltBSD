@@ -1,5 +1,3 @@
-#	@(#)Makefile	8.1 (Berkeley) 6/4/93
-
 .include <src.opts.mk>
 
 .include <bsd.compat.pre.mk>
@@ -12,6 +10,7 @@ SUBDIR=	${_atf} \
 	flua \
 	getty \
 	${_hyperv} \
+	kgdb \
 	${_mail.local} \
 	${_makewhatis.local} \
 	${_mknetid} \
@@ -28,6 +27,7 @@ SUBDIR=	${_atf} \
 	${_rshd} \
 	${_rtld-elf} \
 	save-entropy \
+	${_nuageinit} \
 	${_smrsh} \
 	${_tests} \
 	${_tftp-proxy} \
@@ -116,8 +116,15 @@ SUBDIR+=	tftpd
 .endif
 
 .if ${MK_TESTS} != "no"
-_atf=		atf
 _tests=		tests
+.endif
+
+.if ${MK_TESTS_SUPPORT} != "no"
+_atf=		atf
+.endif
+
+.if ${MK_NUAGEINIT} != "no"
+_nuageinit=	nuageinit
 .endif
 
 .include <bsd.arch.inc.mk>

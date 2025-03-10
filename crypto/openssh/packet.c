@@ -1,4 +1,4 @@
-/* $OpenBSD: packet.c,v 1.312 2023/08/28 03:31:16 djm Exp $ */
+/* $OpenBSD: packet.c,v 1.318 2025/02/18 08:02:12 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -535,6 +535,98 @@ ssh_remote_ipaddr(struct ssh *ssh)
 	return ssh->remote_ipaddr;
 }
 
+/*
+ * Returns the remote DNS hostname as a string. The returned string must not
+ * be freed. NB. this will usually trigger a DNS query. Return value is on
+ * heap and no caching is performed.
+ * This function does additional checks on the hostname to mitigate some
+ * attacks based on conflation of hostnames and addresses and will
+ * fall back to returning an address on error.
+ */
+
+char *
+ssh_remote_hostname(struct ssh *ssh)
+{
+	struct sockaddr_storage from;
+	socklen_t fromlen;
+	struct addrinfo hints, *ai, *aitop;
+	char name[NI_MAXHOST], ntop2[NI_MAXHOST];
+	const char *ntop = ssh_remote_ipaddr(ssh);
+
+	/* Get IP address of client. */
+	fromlen = sizeof(from);
+	memset(&from, 0, sizeof(from));
+	if (getpeername(ssh_packet_get_connection_in(ssh),
+	    (struct sockaddr *)&from, &fromlen) == -1) {
+		debug_f("getpeername failed: %.100s", strerror(errno));
+		return xstrdup(ntop);
+	}
+
+	ipv64_normalise_mapped(&from, &fromlen);
+	if (from.ss_family == AF_INET6)
+		fromlen = sizeof(struct sockaddr_in6);
+
+	debug3("trying to reverse map address %.100s.", ntop);
+	/* Map the IP address to a host name. */
+	if (getnameinfo((struct sockaddr *)&from, fromlen, name, sizeof(name),
+	    NULL, 0, NI_NAMEREQD) != 0) {
+		/* Host name not found.  Use ip address. */
+		return xstrdup(ntop);
+	}
+
+	/*
+	 * if reverse lookup result looks like a numeric hostname,
+	 * someone is trying to trick us by PTR record like following:
+	 *	1.1.1.10.in-addr.arpa.	IN PTR	2.3.4.5
+	 */
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_socktype = SOCK_DGRAM;	/*dummy*/
+	hints.ai_flags = AI_NUMERICHOST;
+	if (getaddrinfo(name, NULL, &hints, &ai) == 0) {
+		logit("Nasty PTR record \"%s\" is set up for %s, ignoring",
+		    name, ntop);
+		freeaddrinfo(ai);
+		return xstrdup(ntop);
+	}
+
+	/* Names are stored in lowercase. */
+	lowercase(name);
+
+	/*
+	 * Map it back to an IP address and check that the given
+	 * address actually is an address of this host.  This is
+	 * necessary because anyone with access to a name server can
+	 * define arbitrary names for an IP address. Mapping from
+	 * name to IP address can be trusted better (but can still be
+	 * fooled if the intruder has access to the name server of
+	 * the domain).
+	 */
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = from.ss_family;
+	hints.ai_socktype = SOCK_STREAM;
+	if (getaddrinfo(name, NULL, &hints, &aitop) != 0) {
+		logit("reverse mapping checking getaddrinfo for %.700s "
+		    "[%s] failed.", name, ntop);
+		return xstrdup(ntop);
+	}
+	/* Look for the address from the list of addresses. */
+	for (ai = aitop; ai; ai = ai->ai_next) {
+		if (getnameinfo(ai->ai_addr, ai->ai_addrlen, ntop2,
+		    sizeof(ntop2), NULL, 0, NI_NUMERICHOST) == 0 &&
+		    (strcmp(ntop, ntop2) == 0))
+				break;
+	}
+	freeaddrinfo(aitop);
+	/* If we reached the end of the list, the address was not there. */
+	if (ai == NULL) {
+		/* Address not found for the host name. */
+		logit("Address %.100s maps to %.600s, but this does not "
+		    "map back to the address.", ntop, name);
+		return xstrdup(ntop);
+	}
+	return xstrdup(name);
+}
+
 /* Returns the port number of the remote host. */
 
 int
@@ -924,9 +1016,8 @@ ssh_set_newkeys(struct ssh *ssh, int mode)
 	/* explicit_bzero(enc->iv,  enc->block_size);
 	   explicit_bzero(enc->key, enc->key_len);
 	   explicit_bzero(mac->key, mac->key_len); */
-	if ((comp->type == COMP_ZLIB ||
-	    (comp->type == COMP_DELAYED &&
-	    state->after_authentication)) && comp->enabled == 0) {
+	if (((comp->type == COMP_DELAYED && state->after_authentication)) &&
+	    comp->enabled == 0) {
 		if ((r = ssh_packet_init_compression(ssh)) < 0)
 			return r;
 		if (mode == MODE_OUT) {
@@ -1208,14 +1299,24 @@ ssh_packet_send2_wrapped(struct ssh *ssh)
 	sshbuf_dump(state->output, stderr);
 #endif
 	/* increment sequence number for outgoing packets */
-	if (++state->p_send.seqnr == 0)
+	if (++state->p_send.seqnr == 0) {
+		if ((ssh->kex->flags & KEX_INITIAL) != 0) {
+			ssh_packet_disconnect(ssh, "outgoing sequence number "
+			    "wrapped during initial key exchange");
+		}
 		logit("outgoing seqnr wraps around");
+	}
 	if (++state->p_send.packets == 0)
 		if (!(ssh->compat & SSH_BUG_NOREKEY))
 			return SSH_ERR_NEED_REKEY;
 	state->p_send.blocks += len / block_size;
 	state->p_send.bytes += len;
 	sshbuf_reset(state->outgoing_packet);
+
+	if (type == SSH2_MSG_NEWKEYS && ssh->kex->kex_strict) {
+		debug_f("resetting send seqnr %u", state->p_send.seqnr);
+		state->p_send.seqnr = 0;
+	}
 
 	if (type == SSH2_MSG_NEWKEYS)
 		r = ssh_set_newkeys(ssh, MODE_OUT);
@@ -1345,8 +1446,7 @@ ssh_packet_read_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 	/* Stay in the loop until we have received a complete packet. */
 	for (;;) {
 		/* Try to read a packet from the buffer. */
-		r = ssh_packet_read_poll_seqnr(ssh, typep, seqnr_p);
-		if (r != 0)
+		if ((r = ssh_packet_read_poll_seqnr(ssh, typep, seqnr_p)) != 0)
 			break;
 		/* If we got a packet, return it. */
 		if (*typep != SSH_MSG_NONE)
@@ -1415,29 +1515,6 @@ ssh_packet_read(struct ssh *ssh)
 	if ((r = ssh_packet_read_seqnr(ssh, &type, NULL)) != 0)
 		fatal_fr(r, "read");
 	return type;
-}
-
-/*
- * Waits until a packet has been received, verifies that its type matches
- * that given, and gives a fatal error and exits if there is a mismatch.
- */
-
-int
-ssh_packet_read_expect(struct ssh *ssh, u_int expected_type)
-{
-	int r;
-	u_char type;
-
-	if ((r = ssh_packet_read_seqnr(ssh, &type, NULL)) != 0)
-		return r;
-	if (type != expected_type) {
-		if ((r = sshpkt_disconnect(ssh,
-		    "Protocol error: expected packet type %d, got %d",
-		    expected_type, type)) != 0)
-			return r;
-		return SSH_ERR_PROTOCOL_ERROR;
-	}
-	return 0;
 }
 
 static int
@@ -1630,10 +1707,16 @@ ssh_packet_read_poll2(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 		if ((r = sshbuf_consume(state->input, mac->mac_len)) != 0)
 			goto out;
 	}
+
 	if (seqnr_p != NULL)
 		*seqnr_p = state->p_read.seqnr;
-	if (++state->p_read.seqnr == 0)
+	if (++state->p_read.seqnr == 0) {
+		if ((ssh->kex->flags & KEX_INITIAL) != 0) {
+			ssh_packet_disconnect(ssh, "incoming sequence number "
+			    "wrapped during initial key exchange");
+		}
 		logit("incoming seqnr wraps around");
+	}
 	if (++state->p_read.packets == 0)
 		if (!(ssh->compat & SSH_BUG_NOREKEY))
 			return SSH_ERR_NEED_REKEY;
@@ -1699,6 +1782,10 @@ ssh_packet_read_poll2(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 #endif
 	/* reset for next packet */
 	state->packlen = 0;
+	if (*typep == SSH2_MSG_NEWKEYS && ssh->kex->kex_strict) {
+		debug_f("resetting read seqnr %u", state->p_read.seqnr);
+		state->p_read.seqnr = 0;
+	}
 
 	if ((r = ssh_packet_check_rekey(ssh)) != 0)
 		return r;
@@ -1721,10 +1808,39 @@ ssh_packet_read_poll_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 		r = ssh_packet_read_poll2(ssh, typep, seqnr_p);
 		if (r != 0)
 			return r;
-		if (*typep) {
-			state->keep_alive_timeouts = 0;
-			DBG(debug("received packet type %d", *typep));
+		if (*typep == 0) {
+			/* no message ready */
+			return 0;
 		}
+		state->keep_alive_timeouts = 0;
+		DBG(debug("received packet type %d", *typep));
+
+		/* Always process disconnect messages */
+		if (*typep == SSH2_MSG_DISCONNECT) {
+			if ((r = sshpkt_get_u32(ssh, &reason)) != 0 ||
+			    (r = sshpkt_get_string(ssh, &msg, NULL)) != 0)
+				return r;
+			/* Ignore normal client exit notifications */
+			do_log2(ssh->state->server_side &&
+			    reason == SSH2_DISCONNECT_BY_APPLICATION ?
+			    SYSLOG_LEVEL_INFO : SYSLOG_LEVEL_ERROR,
+			    "Received disconnect from %s port %d:"
+			    "%u: %.400s", ssh_remote_ipaddr(ssh),
+			    ssh_remote_port(ssh), reason, msg);
+			free(msg);
+			return SSH_ERR_DISCONNECTED;
+		}
+
+		/*
+		 * Do not implicitly handle any messages here during initial
+		 * KEX when in strict mode. They will be need to be allowed
+		 * explicitly by the KEX dispatch table or they will generate
+		 * protocol errors.
+		 */
+		if (ssh->kex != NULL &&
+		    (ssh->kex->flags & KEX_INITIAL) && ssh->kex->kex_strict)
+			return 0;
+		/* Implicitly handle transport-level messages */
 		switch (*typep) {
 		case SSH2_MSG_IGNORE:
 			debug3("Received SSH2_MSG_IGNORE");
@@ -1739,19 +1855,6 @@ ssh_packet_read_poll_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 			debug("Remote: %.900s", msg);
 			free(msg);
 			break;
-		case SSH2_MSG_DISCONNECT:
-			if ((r = sshpkt_get_u32(ssh, &reason)) != 0 ||
-			    (r = sshpkt_get_string(ssh, &msg, NULL)) != 0)
-				return r;
-			/* Ignore normal client exit notifications */
-			do_log2(ssh->state->server_side &&
-			    reason == SSH2_DISCONNECT_BY_APPLICATION ?
-			    SYSLOG_LEVEL_INFO : SYSLOG_LEVEL_ERROR,
-			    "Received disconnect from %s port %d:"
-			    "%u: %.400s", ssh_remote_ipaddr(ssh),
-			    ssh_remote_port(ssh), reason, msg);
-			free(msg);
-			return SSH_ERR_DISCONNECTED;
 		case SSH2_MSG_UNIMPLEMENTED:
 			if ((r = sshpkt_get_u32(ssh, &seqnr)) != 0)
 				return r;
@@ -1762,6 +1865,14 @@ ssh_packet_read_poll_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 			if ((r = sshpkt_get_string_direct(ssh, &d, &len)) != 0)
 				return r;
 			DBG(debug("Received SSH2_MSG_PING len %zu", len));
+			if (!ssh->state->after_authentication) {
+				DBG(debug("Won't reply to PING in preauth"));
+				break;
+			}
+			if (ssh_packet_is_rekeying(ssh)) {
+				DBG(debug("Won't reply to PING during KEX"));
+				break;
+			}
 			if ((r = sshpkt_start(ssh, SSH2_MSG_PONG)) != 0 ||
 			    (r = sshpkt_put_string(ssh, d, len)) != 0 ||
 			    (r = sshpkt_send(ssh)) != 0)
@@ -2244,6 +2355,7 @@ kex_to_blob(struct sshbuf *m, struct kex *kex)
 	    (r = sshbuf_put_u32(m, kex->hostkey_type)) != 0 ||
 	    (r = sshbuf_put_u32(m, kex->hostkey_nid)) != 0 ||
 	    (r = sshbuf_put_u32(m, kex->kex_type)) != 0 ||
+	    (r = sshbuf_put_u32(m, kex->kex_strict)) != 0 ||
 	    (r = sshbuf_put_stringb(m, kex->my)) != 0 ||
 	    (r = sshbuf_put_stringb(m, kex->peer)) != 0 ||
 	    (r = sshbuf_put_stringb(m, kex->client_version)) != 0 ||
@@ -2406,6 +2518,7 @@ kex_from_blob(struct sshbuf *m, struct kex **kexp)
 	    (r = sshbuf_get_u32(m, (u_int *)&kex->hostkey_type)) != 0 ||
 	    (r = sshbuf_get_u32(m, (u_int *)&kex->hostkey_nid)) != 0 ||
 	    (r = sshbuf_get_u32(m, &kex->kex_type)) != 0 ||
+	    (r = sshbuf_get_u32(m, &kex->kex_strict)) != 0 ||
 	    (r = sshbuf_get_stringb(m, kex->my)) != 0 ||
 	    (r = sshbuf_get_stringb(m, kex->peer)) != 0 ||
 	    (r = sshbuf_get_stringb(m, kex->client_version)) != 0 ||
@@ -2533,12 +2646,6 @@ sshpkt_put_stringb(struct ssh *ssh, const struct sshbuf *v)
 	return sshbuf_put_stringb(ssh->state->outgoing_packet, v);
 }
 
-int
-sshpkt_getb_froms(struct ssh *ssh, struct sshbuf **valp)
-{
-	return sshbuf_froms(ssh->state->incoming_packet, valp);
-}
-
 #ifdef WITH_OPENSSL
 #ifdef OPENSSL_HAS_ECC
 int
@@ -2546,8 +2653,13 @@ sshpkt_put_ec(struct ssh *ssh, const EC_POINT *v, const EC_GROUP *g)
 {
 	return sshbuf_put_ec(ssh->state->outgoing_packet, v, g);
 }
-#endif /* OPENSSL_HAS_ECC */
 
+int
+sshpkt_put_ec_pkey(struct ssh *ssh, EVP_PKEY *pkey)
+{
+	return sshbuf_put_ec_pkey(ssh->state->outgoing_packet, pkey);
+}
+#endif /* OPENSSL_HAS_ECC */
 
 int
 sshpkt_put_bignum2(struct ssh *ssh, const BIGNUM *v)
@@ -2604,6 +2716,12 @@ int
 sshpkt_get_cstring(struct ssh *ssh, char **valp, size_t *lenp)
 {
 	return sshbuf_get_cstring(ssh->state->incoming_packet, valp, lenp);
+}
+
+int
+sshpkt_getb_froms(struct ssh *ssh, struct sshbuf **valp)
+{
+	return sshbuf_froms(ssh->state->incoming_packet, valp);
 }
 
 #ifdef WITH_OPENSSL
@@ -2734,6 +2852,7 @@ sshpkt_disconnect(struct ssh *ssh, const char *fmt,...)
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 
+	debug2_f("sending SSH2_MSG_DISCONNECT: %s", buf);
 	if ((r = sshpkt_start(ssh, SSH2_MSG_DISCONNECT)) != 0 ||
 	    (r = sshpkt_put_u32(ssh, SSH2_DISCONNECT_PROTOCOL_ERROR)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, buf)) != 0 ||

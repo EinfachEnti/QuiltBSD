@@ -1003,7 +1003,7 @@ retry_space:
 				ext_pgs_idx++;
 				if (ext_pgs_idx == max_pgs) {
 					m0 = mb_alloc_ext_pgs(M_WAITOK,
-					    sendfile_free_mext_pg);
+					    sendfile_free_mext_pg, M_RDONLY);
 
 					if (flags & SF_NOCACHE) {
 						m0->m_ext.ext_flags |=
@@ -1328,11 +1328,11 @@ sendfile(struct thread *td, struct sendfile_args *uap, int compat)
 	fdrop(fp, td);
 
 	if (uap->sbytes != NULL)
-		copyout(&sbytes, uap->sbytes, sizeof(off_t));
+		(void)copyout(&sbytes, uap->sbytes, sizeof(off_t));
 
 out:
-	free(hdr_uio, M_IOV);
-	free(trl_uio, M_IOV);
+	freeuio(hdr_uio);
+	freeuio(trl_uio);
 	return (error);
 }
 

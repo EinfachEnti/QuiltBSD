@@ -17,7 +17,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/cdefs.h>
 /*-
  * Ralink Technology RT2700U/RT2800U/RT3000U/RT3900E chipset driver.
  * http://www.ralinktech.com/
@@ -2685,6 +2684,7 @@ run_iter_func(void *arg, struct ieee80211_node *ni)
 	union run_stats sta[2];
 	uint16_t (*wstat)[3];
 	int error, ridx;
+	uint8_t dot11rate;
 
 	RUN_LOCK(sc);
 
@@ -2737,15 +2737,17 @@ run_iter_func(void *arg, struct ieee80211_node *ni)
 	ieee80211_ratectl_tx_update(vap, txs);
 	ieee80211_ratectl_rate(ni, NULL, 0);
 	/* XXX TODO: methodize with MCS rates */
+	dot11rate = ieee80211_node_get_txrate_dot11rate(ni);
 	for (ridx = 0; ridx < RT2860_RIDX_MAX; ridx++)
-		if (rt2860_rates[ridx].rate == ni->ni_txrate)
+		if (rt2860_rates[ridx].rate == dot11rate)
 			break;
 	rn->amrr_ridx = ridx;
 
 fail:
 	RUN_UNLOCK(sc);
 
-	RUN_DPRINTF(sc, RUN_DEBUG_RATE, "rate=%d, ridx=%d\n", ni->ni_txrate, rn->amrr_ridx);
+	RUN_DPRINTF(sc, RUN_DEBUG_RATE, "rate=0x%02x, ridx=%d\n",
+	    ieee80211_node_get_txrate_dot11rate(ni), rn->amrr_ridx);
 }
 
 static void
@@ -2870,7 +2872,6 @@ run_rx_frame(struct run_softc *sc, struct mbuf *m, uint32_t dmalen)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_frame *wh;
 	struct ieee80211_node *ni;
-	struct epoch_tracker et;
 	struct rt2870_rxd *rxd;
 	struct rt2860_rxwi *rxwi;
 	uint32_t flags;
@@ -2993,14 +2994,12 @@ run_rx_frame(struct run_softc *sc, struct mbuf *m, uint32_t dmalen)
 		}
 	}
 
-	NET_EPOCH_ENTER(et);
 	if (ni != NULL) {
 		(void)ieee80211_input(ni, m, rssi, nf);
 		ieee80211_free_node(ni);
 	} else {
 		(void)ieee80211_input_all(ic, m, rssi, nf);
 	}
-	NET_EPOCH_EXIT(et);
 
 	return;
 
@@ -3598,9 +3597,7 @@ run_tx_mgt(struct run_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	wh = mtod(m, struct ieee80211_frame *);
 
 	/* tell hardware to add timestamp for probe responses */
-	if ((wh->i_fc[0] &
-	    (IEEE80211_FC0_TYPE_MASK | IEEE80211_FC0_SUBTYPE_MASK)) ==
-	    (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_PROBE_RESP))
+	if (IEEE80211_IS_MGMT_PROBE_RESP(wh))
 		wflags |= RT2860_TX_TS;
 	else if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
 		xflags |= RT2860_TX_ACK;

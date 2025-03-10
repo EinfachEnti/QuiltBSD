@@ -1,4 +1,4 @@
-# $Id: gendirdeps.mk,v 1.49 2023/04/20 17:45:03 sjg Exp $
+# $Id: gendirdeps.mk,v 1.51 2025/01/05 01:16:19 sjg Exp $
 
 # SPDX-License-Identifier: BSD-2-Clause
 #
@@ -102,6 +102,10 @@ _DEPENDFILE := ${_CURDIR}/${.MAKE.DEPENDFILE:T}
 
 # caller should have set this
 META_FILES ?= ${.MAKE.META.FILES}
+# this sometimes needs to be passed separately
+.if !empty(META_XTRAS)
+META_FILES += ${META_XTRAS:N\*.meta}
+.endif
 
 .if !empty(META_FILES)
 
@@ -233,7 +237,7 @@ dir_list != cd ${_OBJDIR} && \
 	sed ${GENDIRDEPS_SEDCMDS}
 
 .if ${dir_list:M*ERROR\:*} != ""
-.warning ${dir_list:tW:C,.*(ERROR),\1,}
+.warning ${dir_list:C,.*(ERROR),\1,W}
 .warning Skipping ${_DEPENDFILE:S,${SRCTOP}/,,}
 # we are not going to update anything
 .else

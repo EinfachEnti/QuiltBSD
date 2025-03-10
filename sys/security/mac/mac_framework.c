@@ -68,10 +68,10 @@
 
 #include "opt_mac.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/condvar.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mac.h>
@@ -106,7 +106,12 @@ SYSCTL_NODE(_security, OID_AUTO, mac, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "TrustedBSD MAC policy controls");
 
 /*
- * Declare that the kernel provides MAC support, version 3 (FreeBSD 7.x).
+ * Root sysctl node for MAC modules' jail parameters.
+ */
+SYSCTL_JAIL_PARAM_NODE(mac, "Jail parameters for MAC policy controls");
+
+/*
+ * Declare that the kernel provides a specific version of MAC support.
  * This permits modules to refuse to be loaded if the necessary support isn't
  * present, even if it's pre-boot.
  */
@@ -725,9 +730,8 @@ mac_error_select(int error1, int error2)
 }
 
 int
-mac_check_structmac_consistent(struct mac *mac)
+mac_check_structmac_consistent(const struct mac *mac)
 {
-
 	/* Require that labels have a non-zero length. */
 	if (mac->m_buflen > MAC_MAX_LABEL_BUF_LEN ||
 	    mac->m_buflen <= sizeof(""))

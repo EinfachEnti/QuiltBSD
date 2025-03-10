@@ -29,7 +29,6 @@
 #include "opt_acpi.h"
 #include "opt_platform.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -173,6 +172,27 @@ static int
 uart_pl011_probe(struct uart_bas *bas)
 {
 
+	/*
+	 * Versions of QEMU before 41f7b58b634e (8.3) reported bogus values for
+	 * this tabel. The PL011 IP is always 32-bits wide and should be shifted
+	 * 2 to match the 4-byte size of the data. QEMU reported these values
+	 * incorrectly before that.
+	 * https://github.com/qemu/qemu/commit/41f7b58b634ec3b60ae874375d2bbb61d790971e
+	 *
+	 * In additon, other hardware vendors also reported this value
+	 * incorrectly. It's not tied to what the ACPI device node is, but was a
+	 * misunderstanding coupled with a Linux driver that didn't need the
+	 * right values. Quirks used to be used to ignore the bad values, now we
+	 * detect the historic mistake and override (to allow for a future where
+	 * we may need to override these values).
+	 *
+	 * PL011 Docs: https://developer.arm.com/documentation/ddi0183/latest/
+	 */
+	if (bas->regshft == 0 || bas->regiowidth == 1) {
+		bas->regshft = 2;
+		bas->regiowidth = 4;
+	}
+
 	return (0);
 }
 
@@ -232,6 +252,24 @@ uart_pl011_param(struct uart_bas *bas, int baudrate, int databits, int stopbits,
 	__uart_setreg(bas, UART_IFLS, FIFO_IFLS_BITS);
 
 	__uart_setreg(bas, UART_CR, ctrl);
+
+	/*
+	 * Loader tells us to infer the rclk when it sets xo to 0 in
+	 * hw.uart.console. The APCI SPCR code does likewise. We know the
+	 * baudrate was set by the firmware, so calculate rclk from baudrate and
+	 * the divisor register.  If 'div' is actually 0, the resulting 0 value
+	 * will have us fall back to other rclk methods. This method should be
+	 * good to 5% or better because the error in baud rates needs to be
+	 * below this for devices to communicate.
+	 */
+	if (bas->rclk == 0 && baudrate > 0 && bas->rclk_guess) {
+		uint32_t div;
+
+		div = ((__uart_getreg(bas, UART_IBRD) & IBRD_BDIVINT) << 6) |
+		    (__uart_getreg(bas, UART_FBRD) & FBRD_BDIVFRAC);
+		bas->rclk = (div * baudrate) / 4;
+	}
+
 }
 
 static void
@@ -249,6 +287,20 @@ static void
 uart_pl011_term(struct uart_bas *bas)
 {
 }
+
+#if CHECK_EARLY_PRINTF(pl011)
+static void
+uart_pl011_early_putc(int c)
+{
+	volatile uint32_t *fr = (uint32_t *)(socdev_va + UART_FR * 4);
+	volatile uint32_t *dr = (uint32_t *)(socdev_va + UART_DR * 4);
+
+	while ((*fr & FR_TXFF) != 0)
+		;
+	*dr = c & 0xff;
+}
+early_putc_t *early_putc = uart_pl011_early_putc;
+#endif /* CHECK_EARLY_PRINTF */
 
 static void
 uart_pl011_putc(struct uart_bas *bas, int c)
@@ -319,14 +371,16 @@ static kobj_method_t uart_pl011_methods[] = {
 };
 
 static struct uart_class uart_pl011_class = {
-	"uart_pl011",
+	"pl011",
 	uart_pl011_methods,
 	sizeof(struct uart_pl011_softc),
 	.uc_ops = &uart_pl011_ops,
 	.uc_range = 0x48,
 	.uc_rclk = 0,
-	.uc_rshift = 2
+	.uc_rshift = 2,
+	.uc_riowidth = 4,
 };
+UART_CLASS(uart_pl011_class);
 
 #ifdef FDT
 static struct ofw_compat_data fdt_compat_data[] = {
@@ -338,9 +392,9 @@ UART_FDT_CLASS_AND_DEVICE(fdt_compat_data);
 
 #ifdef DEV_ACPI
 static struct acpi_uart_compat_data acpi_compat_data[] = {
-	{"ARMH0011", &uart_pl011_class, ACPI_DBG2_ARM_PL011, 2, 0, 0, UART_F_IGNORE_SPCR_REGSHFT, "uart pl011"},
-	{"ARMHB000", &uart_pl011_class, ACPI_DBG2_ARM_SBSA_GENERIC, 2, 0, 0, UART_F_IGNORE_SPCR_REGSHFT, "uart pl011"},
-	{"ARMHB000", &uart_pl011_class, ACPI_DBG2_ARM_SBSA_32BIT, 2, 0, 0, UART_F_IGNORE_SPCR_REGSHFT, "uart pl011"},
+	{"ARMH0011", &uart_pl011_class, ACPI_DBG2_ARM_PL011, 2, 0, 0, 0, "uart pl011"},
+	{"ARMHB000", &uart_pl011_class, ACPI_DBG2_ARM_SBSA_GENERIC, 2, 0, 0, 0, "uart pl011"},
+	{"ARMHB000", &uart_pl011_class, ACPI_DBG2_ARM_SBSA_32BIT, 2, 0, 0, 0, "uart pl011"},
 	{NULL, NULL, 0, 0, 0, 0, 0, NULL},
 };
 UART_ACPI_CLASS_AND_DEVICE(acpi_compat_data);

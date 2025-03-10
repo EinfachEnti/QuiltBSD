@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)inode.h	8.9 (Berkeley) 5/14/95
  */
 
 #ifndef _UFS_UFS_INODE_H_
@@ -79,10 +77,10 @@ struct iown_tracker {
  * exclusive.
  */
 struct inode {
-	TAILQ_ENTRY(inode) i_nextsnap; /* snapshot file list. */
-	struct	vnode  *i_vnode;/* Vnode associated with this inode. */
-	struct 	ufsmount *i_ump;/* Ufsmount point associated with this inode. */
-	struct	 dquot *i_dquot[MAXQUOTAS]; /* Dquot structures. */
+	TAILQ_ENTRY(inode) i_nextsnap; /* Snapshot file list. */
+	struct vnode	*i_vnode; /* Vnode associated with this inode. */
+	struct ufsmount	*i_ump; /* Ufsmount point associated with this inode. */
+	struct dquot	*i_dquot[MAXQUOTAS]; /* Dquot structures. */
 	union {
 		struct dirhash *dirhash; /* Hashing for large directories. */
 		daddr_t *snapblklist;    /* Collect expunged snapshot blocks. */
@@ -90,14 +88,11 @@ struct inode {
 	/*
 	 * The real copy of the on-disk inode.
 	 */
-	union {
-		struct ufs1_dinode *din1;	/* UFS1 on-disk dinode. */
-		struct ufs2_dinode *din2;	/* UFS2 on-disk dinode. */
-	} dinode_u;
+	union dinodep i_dp;	/* On-disk dinode */
 
 	ino_t	  i_number;	/* The identity of the inode. */
-	uint32_t i_flag;	/* flags, see below */
-	int	  i_effnlink;	/* i_nlink when I/O completes */
+	uint32_t  i_flag;	/* flags, see below */
+	int32_t	  i_effnlink;	/* i_nlink when I/O completes */
 
 	/*
 	 * Side effects; used during directory lookup.
@@ -129,12 +124,12 @@ struct inode {
 	 * Copies from the on-disk dinode itself.
 	 */
 	uint64_t i_size;	/* File byte count. */
-	uint64_t i_gen;	/* Generation number. */
+	uint64_t i_gen;		/* Generation number. */
 	uint32_t i_flags;	/* Status flags (chflags). */
-	uint32_t i_uid;	/* File owner. */
-	uint32_t i_gid;	/* File group. */
+	uint32_t i_uid;		/* File owner. */
+	uint32_t i_gid;		/* File group. */
+	int32_t  i_nlink;	/* File link count. */
 	uint16_t i_mode;	/* IFMT, permissions; see below. */
-	int16_t	  i_nlink;	/* File link count. */
 };
 /*
  * These flags are kept in i_flag.
@@ -206,8 +201,8 @@ struct inode {
 
 #define	i_dirhash i_un.dirhash
 #define	i_snapblklist i_un.snapblklist
-#define	i_din1 dinode_u.din1
-#define	i_din2 dinode_u.din2
+#define	i_din1 i_dp.dp1
+#define	i_din2 i_dp.dp2
 
 #define	ITOUMP(ip)	((ip)->i_ump)
 #define	ITODEV(ip)	(ITOUMP(ip)->um_dev)
@@ -243,6 +238,12 @@ I_IS_UFS2(const struct inode *ip)
 		(ip)->i_din1->d##field = (val); 		\
 	else							\
 		(ip)->i_din2->d##field = (val); 		\
+	} while (0)
+#define	DIP_SET_NLINK(ip, val) do {					\
+	KASSERT(ip->i_nlink >= 0, ("%s:%d %s(): setting negative "	\
+	    "nlink value %d for inode %jd\n", __FILE__, __LINE__,	\
+	    __FUNCTION__, (ip)->i_nlink, (ip)->i_number));		\
+	DIP_SET(ip, i_nlink, val);					\
 	} while (0)
 
 #define	IS_SNAPSHOT(ip)		((ip)->i_flags & SF_SNAPSHOT)

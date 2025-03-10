@@ -117,7 +117,7 @@ typedef struct __ucontext32 {
 
 struct sigframe32 {
 	ucontext32_t		sf_uc;
-	struct siginfo32	sf_si;
+	struct __siginfo32	sf_si;
 };
 
 static int	grab_mcontext32(struct thread *td, mcontext32_t *, int flags);
@@ -138,7 +138,7 @@ _Static_assert(sizeof(siginfo_t) == 80, "siginfo_t size incorrect");
 #ifdef COMPAT_FREEBSD32
 _Static_assert(sizeof(mcontext32_t) == 1224, "mcontext32_t size incorrect");
 _Static_assert(sizeof(ucontext32_t) == 1280, "ucontext32_t size incorrect");
-_Static_assert(sizeof(struct siginfo32) == 64, "struct siginfo32 size incorrect");
+_Static_assert(sizeof(struct __siginfo32) == 64, "struct __siginfo32 size incorrect");
 #endif /* COMPAT_FREEBSD32 */
 #else /* powerpc */
 _Static_assert(sizeof(mcontext_t) == 1224, "mcontext_t size incorrect");
@@ -155,7 +155,7 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	struct thread *td;
 	struct proc *p;
 	#ifdef COMPAT_FREEBSD32
-	struct siginfo32 siginfo32;
+	struct __siginfo32 siginfo32;
 	struct sigframe32 sf32;
 	#endif
 	size_t sfpsize;
@@ -528,8 +528,8 @@ set_mcontext(struct thread *td, mcontext_t *mcp)
 	 * Additionally, ensure VSX is disabled as well, as it is illegal
 	 * to leave it turned on when FP or VEC are off.
 	 */
-	tf->srr1 &= ~(PSL_FP | PSL_VSX);
-	pcb->pcb_flags &= ~(PCB_FPU | PCB_VSX);
+	tf->srr1 &= ~(PSL_FP | PSL_VSX | PSL_VEC);
+	pcb->pcb_flags &= ~(PCB_FPU | PCB_VSX | PCB_VEC);
 
 	if (mcp->mc_flags & _MC_FP_VALID) {
 		/* enable_fpu() will happen lazily on a fault */
@@ -550,9 +550,6 @@ set_mcontext(struct thread *td, mcontext_t *mcp)
 		pcb->pcb_vec.vscr = mcp->mc_vscr;
 		pcb->pcb_vec.vrsave = mcp->mc_vrsave;
 		memcpy(pcb->pcb_vec.vr, mcp->mc_avec, sizeof(mcp->mc_avec));
-	} else {
-		tf->srr1 &= ~PSL_VEC;
-		pcb->pcb_flags &= ~PCB_VEC;
 	}
 
 	return (0);
@@ -596,13 +593,13 @@ cleanup_power_extras(struct thread *td)
  * Keep this in sync with the assembly code in cpu_switch()!
  */
 void
-cpu_save_thread_regs(struct thread *td)
+cpu_update_pcb(struct thread *td)
 {
 	uint32_t pcb_flags;
 	struct pcb *pcb;
 
 	KASSERT(td == curthread,
-	    ("cpu_save_thread_regs: td is not curthread"));
+	    ("cpu_update_pcb: td is not curthread"));
 
 	pcb = td->td_pcb;
 
@@ -1113,7 +1110,7 @@ cpu_copy_thread(struct thread *td, struct thread *td0)
 
 	/* Ensure td0 pcb is up to date. */
 	if (td0 == curthread)
-		cpu_save_thread_regs(td0);
+		cpu_update_pcb(td0);
 
 	pcb2 = td->td_pcb;
 
@@ -1152,12 +1149,15 @@ cpu_copy_thread(struct thread *td, struct thread *td0)
 	td->td_md.md_saved_msr = psl_kernset;
 }
 
-void
+int
 cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
     stack_t *stack)
 {
 	struct trapframe *tf;
 	uintptr_t sp;
+	#ifdef __powerpc64__
+	int error;
+	#endif
 
 	tf = td->td_frame;
 	/* align stack and alloc space for frame ptr and saved LR */
@@ -1185,10 +1185,12 @@ cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 			tf->srr0 = (register_t)entry;
 			/* ELFv2 ABI requires that the global entry point be in r12. */
 			tf->fixreg[12] = (register_t)entry;
-		}
-		else {
+		} else {
 			register_t entry_desc[3];
-			(void)copyin((void *)entry, entry_desc, sizeof(entry_desc));
+			error = copyin((void *)entry, entry_desc,
+			    sizeof(entry_desc));
+			if (error != 0)
+				return (error);
 			tf->srr0 = entry_desc[0];
 			tf->fixreg[2] = entry_desc[1];
 			tf->fixreg[11] = entry_desc[2];
@@ -1204,6 +1206,7 @@ cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 
 	td->td_retval[0] = (register_t)entry;
 	td->td_retval[1] = 0;
+	return (0);
 }
 
 static int

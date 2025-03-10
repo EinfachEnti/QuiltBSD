@@ -26,7 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -169,7 +168,7 @@ vtpci_add_child(struct vtpci_common *cn)
 
 	dev = cn->vtpci_dev;
 
-	child = device_add_child(dev, NULL, -1);
+	child = device_add_child(dev, NULL, DEVICE_UNIT_ANY);
 	if (child == NULL) {
 		device_printf(dev, "cannot create child device\n");
 		return (ENOMEM);
@@ -183,18 +182,14 @@ vtpci_add_child(struct vtpci_common *cn)
 int
 vtpci_delete_child(struct vtpci_common *cn)
 {
-	device_t dev, child;
+	device_t dev;
 	int error;
 
 	dev = cn->vtpci_dev;
 
-	child = cn->vtpci_child_dev;
-	if (child != NULL) {
-		error = device_delete_child(dev, child);
-		if (error)
-			return (error);
-		cn->vtpci_child_dev = NULL;
-	}
+	error = bus_generic_detach(dev);
+	if (error)
+		return (error);
 
 	return (0);
 }

@@ -1,5 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
 # RCSid:
-#       $Id: dirdeps-targets.mk,v 1.25 2023/05/11 05:07:28 sjg Exp $
+#       $Id: dirdeps-targets.mk,v 1.28 2024/10/19 00:47:38 sjg Exp $
 #
 #       @(#) Copyright (c) 2019-2020 Simon J. Gerraty
 #
@@ -39,6 +41,9 @@
 .if ${.MAKE.LEVEL} == 0
 # pickup customizations
 .-include <local.dirdeps-targets.mk>
+
+# this is what we are here for
+.MAIN: dirdeps
 
 # for DIRDEPS_BUILD this is how we prime the pump
 # include . to allow any directory to work as a target
@@ -155,6 +160,9 @@ MK_DIRDEPS_CACHE = yes
 .endfor
 .if defined(STATIC_DIRDEPS_CACHE)
 .export STATIC_DIRDEPS_CACHE
+.if !empty(DEBUG_DIRDEPS_TARGETS)
+.info STATIC_DIRDEPS_CACHE=${STATIC_DIRDEPS_CACHE:S,${SRCTOP}/,,}
+.endif
 .endif
 .endif
 

@@ -32,7 +32,6 @@
  * in Chapter 20.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
@@ -53,7 +52,7 @@
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #include <dev/iicbus/iiconf.h>
 #include <dev/iicbus/iicbus.h>
@@ -618,7 +617,8 @@ cdnc_i2c_attach(device_t dev)
 	cdnc_i2c_add_sysctls(dev);
 
 	/* Probe and attach iicbus when interrupts work. */
-	return (bus_delayed_attach_children(dev));
+	bus_delayed_attach_children(dev);
+	return (0);
 }
 
 static int
@@ -626,17 +626,12 @@ cdnc_i2c_detach(device_t dev)
 {
 	struct cdnc_i2c_softc *sc = device_get_softc(dev);
 
-	if (device_is_attached(dev))
-		bus_generic_detach(dev);
+	bus_generic_detach(dev);
 
 	if (sc->ref_clk != NULL) {
 		clk_release(sc->ref_clk);
 		sc->ref_clk = NULL;
 	}
-
-	/* Delete iic bus. */
-	if (sc->iicbus)
-		device_delete_child(dev, sc->iicbus);
 
 	/* Disable hardware. */
 	if (sc->mem_res != NULL) {

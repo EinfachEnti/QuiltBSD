@@ -33,7 +33,6 @@
  * THE POSSIBILITY OF SUCH DAMAGES.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
@@ -82,7 +81,6 @@ bcma_attach(device_t dev)
 
 	/* Enumerate children */
 	if ((error = bcma_add_children(dev))) {
-		device_delete_children(dev);
 		return (error);
 	}
 
@@ -679,7 +677,7 @@ bcma_add_children(device_t bus)
 	bcma_erom = (struct bcma_erom *)erom;
 	while ((error = bcma_erom_next_corecfg(bcma_erom, &corecfg)) == 0) {
 		/* Add the child device */
-		child = BUS_ADD_CHILD(bus, 0, NULL, -1);
+		child = BUS_ADD_CHILD(bus, 0, NULL, DEVICE_UNIT_ANY);
 		if (child == NULL) {
 			error = ENXIO;
 			goto cleanup;

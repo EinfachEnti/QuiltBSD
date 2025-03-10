@@ -150,7 +150,7 @@ static uma_zone_t slabzones[2];
 static uma_zone_t hashzone;
 
 /* The boot-time adjusted value for cache line alignment. */
-int uma_align_cache = 64 - 1;
+static unsigned int uma_cache_align_mask = 64 - 1;
 
 static MALLOC_DEFINE(M_UMAHASH, "UMAHash", "UMA Hash Buckets");
 static MALLOC_DEFINE(M_UMA, "UMA", "UMA Misc");
@@ -1222,7 +1222,7 @@ zone_timeout(uma_zone_t zone, void *unused)
 
 trim:
 	/* Trim caches not used for a long time. */
-	if ((zone->uz_flags & UMA_ZONE_UNMANAGED) == 0) {
+	if ((zone->uz_flags & (UMA_ZONE_UNMANAGED | UMA_ZONE_NOTRIM)) == 0) {
 		for (int i = 0; i < vm_ndomains; i++) {
 			if (bucket_cache_reclaim_domain(zone, false, false, i) &&
 			    (zone->uz_flags & UMA_ZFLAG_CACHE) == 0)
@@ -1791,6 +1791,9 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int domain, int flags,
 	if (keg->uk_flags & UMA_ZONE_NODUMP)
 		aflags |= M_NODUMP;
 
+	if (keg->uk_flags & UMA_ZONE_NOFREE)
+		aflags |= M_NEVERFREED;
+
 	/* zone is passed for legacy reasons. */
 	size = keg->uk_ppera * PAGE_SIZE;
 	mem = keg->uk_allocf(zone, size, domain, &sflags, aflags);
@@ -1890,8 +1893,7 @@ startup_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 
 	pa = VM_PAGE_TO_PHYS(m);
 	for (i = 0; i < pages; i++, pa += PAGE_SIZE) {
-#if defined(__aarch64__) || defined(__amd64__) || \
-    defined(__riscv) || defined(__powerpc64__)
+#if MINIDUMP_PAGE_TRACKING && MINIDUMP_STARTUP_PAGE_TRACKING
 		if ((wait & M_NODUMP) == 0)
 			dump_add_page(pa);
 #endif
@@ -1918,8 +1920,7 @@ startup_free(void *mem, vm_size_t bytes)
 	if (va >= bootstart && va + bytes <= bootmem)
 		pmap_remove(kernel_pmap, va, va + bytes);
 	for (; bytes != 0; bytes -= PAGE_SIZE, m++) {
-#if defined(__aarch64__) || defined(__amd64__) || \
-    defined(__riscv) || defined(__powerpc64__)
+#if MINIDUMP_PAGE_TRACKING && MINIDUMP_STARTUP_PAGE_TRACKING
 		dump_drop_page(VM_PAGE_TO_PHYS(m));
 #endif
 		vm_page_unwire_noq(m);
@@ -2079,6 +2080,28 @@ contig_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *pflag,
 	    bytes, wait, 0, ~(vm_paddr_t)0, 1, 0, VM_MEMATTR_DEFAULT));
 }
 
+#if defined(UMA_USE_DMAP) && !defined(UMA_MD_SMALL_ALLOC)
+void *
+uma_small_alloc(uma_zone_t zone, vm_size_t bytes, int domain, uint8_t *flags,
+    int wait)
+{
+	vm_page_t m;
+	vm_paddr_t pa;
+	void *va;
+
+	*flags = UMA_SLAB_PRIV;
+	m = vm_page_alloc_noobj_domain(domain,
+	    malloc2vm_flags(wait) | VM_ALLOC_WIRED);
+	if (m == NULL)
+		return (NULL);
+	pa = m->phys_addr;
+	if ((wait & M_NODUMP) == 0)
+		dump_add_page(pa);
+	va = (void *)PHYS_TO_DMAP(pa);
+	return (va);
+}
+#endif
+
 /*
  * Frees a number of pages to the system
  *
@@ -2140,6 +2163,21 @@ pcpu_page_free(void *mem, vm_size_t size, uint8_t flags)
 	pmap_qremove(sva, size >> PAGE_SHIFT);
 	kva_free(sva, size);
 }
+
+#if defined(UMA_USE_DMAP) && !defined(UMA_MD_SMALL_ALLOC)
+void
+uma_small_free(void *mem, vm_size_t size, uint8_t flags)
+{
+	vm_page_t m;
+	vm_paddr_t pa;
+
+	pa = DMAP_TO_PHYS((vm_offset_t)mem);
+	dump_drop_page(pa);
+	m = PHYS_TO_VM_PAGE(pa);
+	vm_page_unwire_noq(m);
+	vm_page_free(m);
+}
+#endif
 
 /*
  * Zero fill initializer
@@ -2488,7 +2526,7 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	 * If we haven't booted yet we need allocations to go through the
 	 * startup cache until the vm is ready.
 	 */
-#ifdef UMA_MD_SMALL_ALLOC
+#ifdef UMA_USE_DMAP
 	if (keg->uk_ppera == 1)
 		keg->uk_allocf = uma_small_alloc;
 	else
@@ -2501,7 +2539,7 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 		keg->uk_allocf = contig_alloc;
 	else
 		keg->uk_allocf = page_alloc;
-#ifdef UMA_MD_SMALL_ALLOC
+#ifdef UMA_USE_DMAP
 	if (keg->uk_ppera == 1)
 		keg->uk_freef = uma_small_free;
 	else
@@ -3154,7 +3192,7 @@ uma_startup1(vm_offset_t virtual_avail)
 	smr_init();
 }
 
-#ifndef UMA_MD_SMALL_ALLOC
+#ifndef UMA_USE_DMAP
 extern void vm_radix_reserve_kva(void);
 #endif
 
@@ -3174,7 +3212,7 @@ uma_startup2(void)
 		vm_map_unlock(kernel_map);
 	}
 
-#ifndef UMA_MD_SMALL_ALLOC
+#ifndef UMA_USE_DMAP
 	/* Set up radix zone to use noobj_alloc. */
 	vm_radix_reserve_kva();
 #endif
@@ -3243,20 +3281,44 @@ uma_kcreate(uma_zone_t zone, size_t size, uma_init uminit, uma_fini fini,
 	args.size = size;
 	args.uminit = uminit;
 	args.fini = fini;
-	args.align = (align == UMA_ALIGN_CACHE) ? uma_align_cache : align;
+	args.align = align;
 	args.flags = flags;
 	args.zone = zone;
 	return (zone_alloc_item(kegs, &args, UMA_ANYDOMAIN, M_WAITOK));
 }
 
+
+static void
+check_align_mask(unsigned int mask)
+{
+
+	KASSERT(powerof2(mask + 1),
+	    ("UMA: %s: Not the mask of a power of 2 (%#x)", __func__, mask));
+	/*
+	 * Make sure the stored align mask doesn't have its highest bit set,
+	 * which would cause implementation-defined behavior when passing it as
+	 * the 'align' argument of uma_zcreate().  Such very large alignments do
+	 * not make sense anyway.
+	 */
+	KASSERT(mask <= INT_MAX,
+	    ("UMA: %s: Mask too big (%#x)", __func__, mask));
+}
+
 /* Public functions */
 /* See uma.h */
 void
-uma_set_align(int align)
+uma_set_cache_align_mask(unsigned int mask)
 {
 
-	if (align != UMA_ALIGN_CACHE)
-		uma_align_cache = align;
+	check_align_mask(mask);
+	uma_cache_align_mask = mask;
+}
+
+/* Returns the alignment mask to use to request cache alignment. */
+unsigned int
+uma_get_cache_align_mask(void)
+{
+	return (uma_cache_align_mask);
 }
 
 /* See uma.h */
@@ -3268,8 +3330,7 @@ uma_zcreate(const char *name, size_t size, uma_ctor ctor, uma_dtor dtor,
 	struct uma_zctor_args args;
 	uma_zone_t res;
 
-	KASSERT(powerof2(align + 1), ("invalid zone alignment %d for \"%s\"",
-	    align, name));
+	check_align_mask(align);
 
 	/* This stuff is essential for the zone ctor */
 	memset(&args, 0, sizeof(args));
@@ -3445,7 +3506,7 @@ item_ctor(uma_zone_t zone, int uz_flags, int size, void *udata, int flags,
 	skipdbg = uma_dbg_zskip(zone, item);
 	if (!skipdbg && (uz_flags & UMA_ZFLAG_TRASH) != 0 &&
 	    zone->uz_ctor != trash_ctor)
-		trash_ctor(item, size, udata, flags);
+		trash_ctor(item, size, zone, flags);
 #endif
 
 	/* Check flags before loading ctor pointer. */
@@ -3487,7 +3548,7 @@ item_dtor(uma_zone_t zone, void *item, int size, void *udata,
 #ifdef INVARIANTS
 		if (!skipdbg && (zone->uz_flags & UMA_ZFLAG_TRASH) != 0 &&
 		    zone->uz_dtor != trash_dtor)
-			trash_dtor(item, size, udata);
+			trash_dtor(item, size, zone);
 #endif
 	}
 	kasan_mark_item_invalid(zone, item);
@@ -5148,7 +5209,7 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 
 	pages = howmany(count, keg->uk_ipers) * keg->uk_ppera;
 
-#ifdef UMA_MD_SMALL_ALLOC
+#ifdef UMA_USE_DMAP
 	if (keg->uk_ppera > 1) {
 #else
 	if (1) {
@@ -5163,7 +5224,7 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 	keg->uk_kva = kva;
 	keg->uk_offset = 0;
 	zone->uz_max_items = pages * keg->uk_ipers;
-#ifdef UMA_MD_SMALL_ALLOC
+#ifdef UMA_USE_DMAP
 	keg->uk_allocf = (keg->uk_ppera > 1) ? noobj_alloc : uma_small_alloc;
 #else
 	keg->uk_allocf = noobj_alloc;
@@ -5245,8 +5306,13 @@ uma_reclaim_domain_cb(uma_zone_t zone, void *arg)
 	struct uma_reclaim_args *args;
 
 	args = arg;
-	if ((zone->uz_flags & UMA_ZONE_UNMANAGED) == 0)
-		uma_zone_reclaim_domain(zone, args->req, args->domain);
+	if ((zone->uz_flags & UMA_ZONE_UNMANAGED) != 0)
+		return;
+	if ((args->req == UMA_RECLAIM_TRIM) &&
+	    (zone->uz_flags & UMA_ZONE_NOTRIM) !=0)
+		return;
+
+	uma_zone_reclaim_domain(zone, args->req, args->domain);
 }
 
 /* See uma.h */

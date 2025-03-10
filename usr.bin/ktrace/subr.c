@@ -29,13 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)subr.c	8.1 (Berkeley) 6/6/93";
-#endif /* not lint */
-#endif
-
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/file.h>
 #include <sys/proc.h>
@@ -77,7 +70,7 @@ getpoints(char *s)
 			facs |= KTRFAC_PSIG;
 			break;
 		case 't':
-			facs |= KTRFAC_STRUCT;
+			facs |= KTRFAC_STRUCT | KTRFAC_STRUCT_ARRAY;
 			break;
 		case 'u':
 			facs |= KTRFAC_USER;
@@ -87,6 +80,12 @@ getpoints(char *s)
 			break;
 		case 'y':
 			facs |= KTRFAC_SYSCTL;
+			break;
+		case 'a':
+		        facs |= KTRFAC_ARGS;
+			break;
+		case 'e':
+		        facs |= KTRFAC_ENVS;
 			break;
 		case '+':
 			facs |= DEF_POINTS;

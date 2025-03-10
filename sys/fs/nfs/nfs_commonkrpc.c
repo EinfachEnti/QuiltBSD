@@ -599,10 +599,14 @@ nfs_getauth(struct nfssockreq *nrp, int secflavour, char *clnt_principal,
 		else
 			svc = rpc_gss_svc_privacy;
 
-		if (clnt_principal == NULL)
+		if (clnt_principal == NULL) {
+			NFSCL_DEBUG(1, "nfs_getauth: clnt princ=NULL, "
+			    "srv princ=%s\n", srv_principal);
 			auth = rpc_gss_secfind_call(nrp->nr_client, cred,
 			    srv_principal, mech_oid, svc);
-		else {
+		} else {
+			NFSCL_DEBUG(1, "nfs_getauth: clnt princ=%s "
+			    "srv princ=%s\n", clnt_principal, srv_principal);
 			auth = rpc_gss_seccreate_call(nrp->nr_client, cred,
 			    clnt_principal, srv_principal, "kerberosv5",
 			    svc, NULL, NULL, NULL);
@@ -666,7 +670,7 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
     struct thread *td, struct ucred *cred, u_int32_t prog, u_int32_t vers,
     u_char *retsum, int toplevel, u_int64_t *xidp, struct nfsclsession *dssep)
 {
-	uint32_t retseq, retval, slotseq, *tl;
+	uint32_t retseq, retval, retval0, slotseq, *tl;
 	int i = 0, j = 0, opcnt, set_sigset = 0, slot;
 	int error = 0, usegssname = 0, secflavour = AUTH_SYS;
 	int freeslot, maxslot, reterr, slotpos, timeo;
@@ -799,7 +803,10 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
 			secflavour = RPCSEC_GSS_KRB5P;
 		else
 			secflavour = RPCSEC_GSS_KRB5;
-		srv_principal = NFSMNT_SRVKRBNAME(nmp);
+		if (nrp->nr_srvprinc[0] == '\0')
+			srv_principal = NFSMNT_SRVKRBNAME(nmp);
+		else
+			srv_principal = nrp->nr_srvprinc;
 	} else if (nmp != NULL && (!NFSHASKERB(nmp) || NFSHASSYSKRB5(nmp)) &&
 	    nd->nd_procnum != NFSPROC_NULL &&
 	    (nd->nd_flag & ND_USEGSSNAME) != 0) {
@@ -1032,7 +1039,7 @@ tryagain:
 			sep->nfsess_badslots |= (0x1ULL << nd->nd_slotid);
 			mtx_unlock(&sep->nfsess_mtx);
 			/* And free the slot. */
-			nfsv4_freeslot(sep, nd->nd_slotid, false);
+			nfsv4_freeslot(sep, nd->nd_slotid, true);
 		}
 		if (stat == RPC_INTR)
 			error = EINTR;
@@ -1040,6 +1047,22 @@ tryagain:
 			NFSINCRGLOBAL(nfsstatsv1.rpcinvalid);
 			error = ENXIO;
 		}
+	} else if (stat == RPC_AUTHERROR) {
+		/* Check for a session slot that needs to be free'd. */
+		if ((nd->nd_flag & (ND_NFSV41 | ND_HASSLOTID)) ==
+		    (ND_NFSV41 | ND_HASSLOTID) && nmp != NULL &&
+		    nd->nd_procnum != NFSPROC_NULL) {
+			/*
+			 * This can occur when a Kerberos/RPCSEC_GSS session
+			 * expires, due to TGT expiration.
+			 * Free the slot, resetting the slot's sequence#.
+			 */
+			if (sep == NULL)
+				sep = nfsmnt_mdssession(nmp);
+			nfsv4_freeslot(sep, nd->nd_slotid, true);
+		}
+		NFSINCRGLOBAL(nfsstatsv1.rpcinvalid);
+		error = EACCES;
 	} else {
 		NFSINCRGLOBAL(nfsstatsv1.rpcinvalid);
 		error = EACCES;
@@ -1169,15 +1192,22 @@ tryagain:
 					if (retseq != sep->nfsess_slotseq[slot])
 						printf("retseq diff 0x%x\n",
 						    retseq);
-					retval = fxdr_unsigned(uint32_t, *++tl);
+					retval0 = fxdr_unsigned(uint32_t,*tl++);
+					retval = fxdr_unsigned(uint32_t, *tl);
 					if ((retval + 1) < sep->nfsess_foreslots
-					    )
+					    ) {
 						sep->nfsess_foreslots = (retval
 						    + 1);
-					else if ((retval + 1) >
-					    sep->nfsess_foreslots)
-						sep->nfsess_foreslots = (retval
-						    < 64) ? (retval + 1) : 64;
+						nfs_resetslots(sep);
+					} else if ((retval + 1) >
+					    sep->nfsess_foreslots) {
+						if (retval0 > retval)
+							printf("Sess:highest > "
+							    "target_highest\n");
+						sep->nfsess_foreslots =
+						    (retval < NFSV4_SLOTS) ?
+						    (retval + 1) : NFSV4_SLOTS;
+					}
 				}
 				mtx_unlock(&sep->nfsess_mtx);
 
@@ -1208,6 +1238,14 @@ tryagain:
 				NFSCL_DEBUG(1, "Got badsession\n");
 				NFSLOCKCLSTATE();
 				NFSLOCKMNT(nmp);
+				if (TAILQ_EMPTY(&nmp->nm_sess)) {
+					NFSUNLOCKMNT(nmp);
+					NFSUNLOCKCLSTATE();
+					printf("If server has not rebooted, "
+					    "check NFS clients for unique "
+					    "/etc/hostid's\n");
+					goto out;
+				}
 				sep = NFSMNT_MDSSESSION(nmp);
 				if (bcmp(sep->nfsess_sessionid, nd->nd_sequence,
 				    NFSX_V4SESSIONID) == 0) {
@@ -1292,7 +1330,8 @@ tryagain:
 			     nd->nd_procnum != NFSPROC_LOCKU))) ||
 			    (nd->nd_repstat == NFSERR_DELAY &&
 			     (nd->nd_flag & ND_NFSV4) == 0) ||
-			    nd->nd_repstat == NFSERR_RESOURCE) {
+			    nd->nd_repstat == NFSERR_RESOURCE ||
+			    nd->nd_repstat == NFSERR_RETRYUNCACHEDREP) {
 				/* Clip at NFS_TRYLATERDEL. */
 				if (timespeccmp(&trylater_delay,
 				    &nfs_trylater_max, >))
@@ -1388,6 +1427,7 @@ tryagain:
 				nd->nd_repstat = NFSERR_STALEDONTRECOVER;
 		}
 	}
+out:
 
 #ifdef KDTRACE_HOOKS
 	if (nmp != NULL && dtrace_nfscl_nfs234_done_probe != NULL) {
@@ -1428,6 +1468,25 @@ nfsmout:
 	if (set_sigset)
 		newnfs_restore_sigmask(td, &oldset);
 	return (error);
+}
+
+/*
+ * Reset slots above nfsess_foreslots that are not busy.
+ */
+void
+nfs_resetslots(struct nfsclsession *sep)
+{
+	int i;
+	uint64_t bitval;
+
+	mtx_assert(&sep->nfsess_mtx, MA_OWNED);
+	bitval = (1 << sep->nfsess_foreslots);
+	for (i = sep->nfsess_foreslots; i < NFSV4_SLOTS; i++) {
+		if ((sep->nfsess_slots & bitval) == 0 &&
+		    (sep->nfsess_badslots & bitval) == 0)
+			sep->nfsess_slotseq[i] = 0;
+		bitval <<= 1;
+	}
 }
 
 /*

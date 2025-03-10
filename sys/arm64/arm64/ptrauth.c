@@ -35,7 +35,6 @@
 #error Must be built with pointer authentication disabled
 #endif
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
@@ -44,6 +43,7 @@
 
 #include <machine/armreg.h>
 #include <machine/cpu.h>
+#include <machine/cpu_feat.h>
 #include <machine/reg.h>
 #include <machine/vmparam.h>
 
@@ -82,8 +82,8 @@ ptrauth_disable(void)
 	return (false);
 }
 
-void
-ptrauth_init(void)
+static bool
+ptrauth_check(const struct cpu_feat *feat __unused, u_int midr __unused)
 {
 	uint64_t isar1;
 	int pac_enable;
@@ -97,27 +97,42 @@ ptrauth_init(void)
 	if (!pac_enable) {
 		if (boothowto & RB_VERBOSE)
 			printf("Pointer authentication is disabled\n");
-		return;
+		return (false);
 	}
 
 	if (!get_kernel_reg(ID_AA64ISAR1_EL1, &isar1))
-		return;
+		return (false);
 
 	if (ptrauth_disable())
-		return;
+		return (false);
 
 	/*
 	 * This assumes if there is pointer authentication on the boot CPU
 	 * it will also be available on any non-boot CPUs. If this is ever
 	 * not the case we will have to add a quirk.
 	 */
-	if (ID_AA64ISAR1_APA_VAL(isar1) > 0 ||
-	    ID_AA64ISAR1_API_VAL(isar1) > 0) {
-		enable_ptrauth = true;
-		elf64_addr_mask.code |= PAC_ADDR_MASK;
-		elf64_addr_mask.data |= PAC_ADDR_MASK;
-	}
+	return (ID_AA64ISAR1_APA_VAL(isar1) > 0 ||
+	    ID_AA64ISAR1_API_VAL(isar1) > 0);
 }
+
+static void
+ptrauth_enable(const struct cpu_feat *feat __unused,
+    cpu_feat_errata errata_status __unused, u_int *errata_list __unused,
+    u_int errata_count __unused)
+{
+	enable_ptrauth = true;
+	elf64_addr_mask.code |= PAC_ADDR_MASK;
+	elf64_addr_mask.data |= PAC_ADDR_MASK;
+}
+
+
+static struct cpu_feat feat_pauth = {
+	.feat_name		= "FEAT_PAuth",
+	.feat_check		= ptrauth_check,
+	.feat_enable		= ptrauth_enable,
+	.feat_flags		= CPU_FEAT_EARLY_BOOT | CPU_FEAT_SYSTEM,
+};
+DATA_SET(cpu_feat_set, feat_pauth);
 
 /* Copy the keys when forking a new process */
 void
@@ -170,13 +185,11 @@ ptrauth_thread_alloc(struct thread *td)
  * Load the userspace keys. We can't use WRITE_SPECIALREG as we need
  * to set the architecture extension.
  */
-#define	LOAD_KEY(space, name)					\
-__asm __volatile(						\
-	".arch_extension pauth			\n"		\
-	"msr	"#name"keylo_el1, %0		\n"		\
-	"msr	"#name"keyhi_el1, %1		\n"		\
-	".arch_extension nopauth		\n"		\
-	:: "r"(td->td_md.md_ptrauth_##space.name.pa_key_lo),	\
+#define	LOAD_KEY(space, name, reg)					\
+__asm __volatile(							\
+	"msr	"__XSTRING(MRS_REG_ALT_NAME(reg ## KeyLo_EL1))", %0	\n"	\
+	"msr	"__XSTRING(MRS_REG_ALT_NAME(reg ## KeyHi_EL1))", %1	\n"	\
+	:: "r"(td->td_md.md_ptrauth_##space.name.pa_key_lo),		\
 	   "r"(td->td_md.md_ptrauth_##space.name.pa_key_hi))
 
 void
@@ -188,7 +201,7 @@ ptrauth_thread0(struct thread *td)
 	/* TODO: Generate a random number here */
 	memset(&td->td_md.md_ptrauth_kern, 0,
 	    sizeof(td->td_md.md_ptrauth_kern));
-	LOAD_KEY(kern, apia);
+	LOAD_KEY(kern, apia, APIA);
 	/*
 	 * No isb as this is called before ptrauth_start so can rely on
 	 * the instruction barrier there.
@@ -241,8 +254,8 @@ ptrauth_mp_start(uint64_t cpu)
 
 	__asm __volatile(
 	    ".arch_extension pauth		\n"
-	    "msr	apiakeylo_el1, %0	\n"
-	    "msr	apiakeyhi_el1, %1	\n"
+	    "msr	"__XSTRING(APIAKeyLo_EL1_REG)", %0	\n"
+	    "msr	"__XSTRING(APIAKeyHi_EL1_REG)", %1	\n"
 	    ".arch_extension nopauth		\n"
 	    :: "r"(start_key.pa_key_lo), "r"(start_key.pa_key_hi));
 
@@ -258,7 +271,7 @@ struct thread *
 ptrauth_switch(struct thread *td)
 {
 	if (enable_ptrauth) {
-		LOAD_KEY(kern, apia);
+		LOAD_KEY(kern, apia, APIA);
 		isb();
 	}
 
@@ -272,7 +285,7 @@ ptrauth_exit_el0(struct thread *td)
 	if (!enable_ptrauth)
 		return;
 
-	LOAD_KEY(kern, apia);
+	LOAD_KEY(kern, apia, APIA);
 	isb();
 }
 
@@ -283,11 +296,11 @@ ptrauth_enter_el0(struct thread *td)
 	if (!enable_ptrauth)
 		return;
 
-	LOAD_KEY(user, apia);
-	LOAD_KEY(user, apib);
-	LOAD_KEY(user, apda);
-	LOAD_KEY(user, apdb);
-	LOAD_KEY(user, apga);
+	LOAD_KEY(user, apia, APIA);
+	LOAD_KEY(user, apib, APIB);
+	LOAD_KEY(user, apda, APDA);
+	LOAD_KEY(user, apdb, APDB);
+	LOAD_KEY(user, apga, APGA);
 	/*
 	 * No isb as this is called from the exception handler so can rely
 	 * on the eret instruction to be the needed context synchronizing event.

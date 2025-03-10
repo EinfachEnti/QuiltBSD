@@ -5,7 +5,7 @@
 # Copyright 2018 Allan Jude <allanjude@freebsd.org>
 #
 # Redistribution and use in source and binary forms, with or without
-# modification, are permitted providing that the following conditions 
+# modification, are permitted providing that the following conditions
 # are met:
 # 1. Redistributions of source code must retain the above copyright
 #    notice, this list of conditions and the following disclaimer.
@@ -67,9 +67,13 @@ cert_files_in()
 	find -L "$@" -type f \( \
 	     -name '*.pem' -or \
 	     -name '*.crt' -or \
-	     -name '*.cer' -or \
-	     -name '*.crl' \
+	     -name '*.cer' \
 	\) 2>/dev/null
+}
+
+eolcvt()
+{
+	cat "$@" | tr -s '\r' '\n'
 }
 
 do_hash()
@@ -106,7 +110,7 @@ create_trusted()
 {
 	local hash certhash otherfile otherhash
 	local suffix
-	local link=${2:+-lm}
+	local link=${2:+-lrs}
 
 	hash=$(do_hash "$1") || return
 	certhash=$(openssl x509 -sha1 -in "$1" -noout -fingerprint)
@@ -114,7 +118,7 @@ create_trusted()
 		otherhash=$(openssl x509 -sha1 -in "$otherfile" -noout -fingerprint)
 		if [ "$certhash" = "$otherhash" ] ; then
 			info "Skipping untrusted certificate $hash ($otherfile)"
-			return 1
+			return 0
 		fi
 	done
 	for otherfile in $(find $CERTDESTDIR -name "$hash.*") ; do
@@ -155,7 +159,7 @@ resolve_certname()
 create_untrusted()
 {
 	local srcfile filename
-	local link=${2:+-lm}
+	local link=${2:+-lrs}
 
 	set -- $(resolve_certname "$1")
 	srcfile=$1
@@ -182,7 +186,7 @@ do_scan()
 	IFS="$oldIFS"
 	for CFILE in $(cert_files_in "$@") ; do
 		verbose "Reading $CFILE"
-		case $(grep -c '^Certificate:$' "$CFILE") in
+		case $(eolcvt "$CFILE" | egrep -c '^-+BEGIN CERTIFICATE-+$') in
 		0)
 			;;
 		1)
@@ -191,8 +195,8 @@ do_scan()
 		*)
 			verbose "Multiple certificates found, splitting..."
 			SPLITDIR=$(mktemp -d)
-			egrep '^[^#]' "$CFILE" | \
-				split -p '^Certificate:$' - "$SPLITDIR/x"
+			eolcvt "$CFILE" | egrep '^(---|[0-9A-Za-z/+=]+$)' | \
+				split -p '^-+BEGIN CERTIFICATE-+$' - "$SPLITDIR/x"
 			for CERT in $(find "$SPLITDIR" -type f) ; do
 				"$CFUNC" "$CERT"
 			done
@@ -330,7 +334,7 @@ fi
 : ${METALOG:=${DESTDIR}/METALOG}
 INSTALLFLAGS=
 if "$UNPRIV" ; then
-	INSTALLFLAGS="-U -M ${METALOG} -D ${DESTDIR}"
+	INSTALLFLAGS="-U -M ${METALOG} -D ${DESTDIR} -o root -g wheel"
 fi
 : ${LOCALBASE:=$(sysctl -n user.localbase)}
 : ${TRUSTPATH:=${DESTDIR}${DISTBASE}/usr/share/certs/trusted:${DESTDIR}${LOCALBASE}/share/certs:${DESTDIR}${LOCALBASE}/etc/ssl/certs}

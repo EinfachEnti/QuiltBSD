@@ -43,18 +43,15 @@
 int
 x86_init_fdt(void)
 {
-	void *dtbp, *mdp;
+	void *dtbp;
 	int error;
 
-	if (OF_install(OFW_FDT, 0) == FALSE) {
+	if (!OF_install(OFW_FDT, 0)) {
 		error = ENXIO;
 		goto out;
 	}
 
-	mdp = preload_search_by_type("elf kernel");
-	if (mdp == NULL)
-		mdp = preload_search_by_type("elf32 kernel");
-	dtbp = MD_FETCH(mdp, MODINFOMD_DTBP, void *);
+	dtbp = MD_FETCH(preload_kmdp, MODINFOMD_DTBP, void *);
 
 #if defined(FDT_DTB_STATIC)
 	/*

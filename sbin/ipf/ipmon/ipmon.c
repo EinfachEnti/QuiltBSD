@@ -13,10 +13,6 @@
 #include <fcntl.h>
 #include <signal.h>
 
-#if !defined(lint)
-static const char sccsid[] = "@(#)ipmon.c	1.21 6/5/96 (C)1993-2000 Darren Reed";
-static const char rcsid[] = "@(#)$Id$";
-#endif
 
 
 #define	STRERROR(x)	strerror(x)
@@ -81,7 +77,8 @@ struct	flags	tcpfl[] = {
 	{ TH_URG, 'U' },
 	{ TH_PUSH,'P' },
 	{ TH_ECN, 'E' },
-	{ TH_CWR, 'C' },
+	{ TH_CWR, 'W' },
+	{ TH_AE,  'e' },
 	{ 0, '\0' }
 };
 
@@ -582,7 +579,7 @@ dumphex(FILE *log, int dopts, char *buf, int len)
 		}
 
 		if ((j + 1) & 0xf)
-			*t++ = ' ';;
+			*t++ = ' ';
 	}
 
 	if (j & 0xf) {
@@ -1200,7 +1197,7 @@ print_ipflog(config_t *conf, char *buf, int blen)
 				*t++ = ' ';
 				*t++ = '-';
 				for (i = 0; tcpfl[i].value; i++)
-					if (tp->th_flags & tcpfl[i].value)
+					if (__tcp_get_flags(tp) & tcpfl[i].value)
 						*t++ = tcpfl[i].flag;
 				if (ipmonopts & IPMON_VERBOSE) {
 					sprintf(t, " %lu %lu %hu",

@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)stat.h	8.12 (Berkeley) 6/16/95
  */
 
 #ifndef _SYS_STAT_H_
@@ -187,7 +185,8 @@ struct stat {
 	blksize_t st_blksize;		/* optimal blocksize for I/O */
 	fflags_t  st_flags;		/* user defined flags for file */
 	__uint64_t st_gen;		/* file generation number */
-	__uint64_t st_spare[10];
+	__uint64_t st_filerev;		/* file revision, incr on changes */
+	__uint64_t st_spare[9];
 };
 
 #ifdef _KERNEL

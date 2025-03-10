@@ -35,7 +35,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/condvar.h>
 #include <sys/conf.h>
@@ -397,7 +396,8 @@ SYSINIT(audit_init, SI_SUB_AUDIT, SI_ORDER_FIRST, audit_init, NULL);
 void
 audit_shutdown(void *arg, int howto)
 {
-
+	if (KERNEL_PANICKED())
+		return;
 	audit_rotate_vnode(NULL, NULL);
 }
 

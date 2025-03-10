@@ -28,7 +28,6 @@
  * Generic DT based cpufreq driver
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -42,8 +41,8 @@
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/regulator/regulator.h>
+#include <dev/clk/clk.h>
+#include <dev/regulator/regulator.h>
 
 #include "cpufreq_if.h"
 
@@ -402,7 +401,7 @@ cpufreq_dt_oppv2_parse(struct cpufreq_dt_softc *sc, phandle_t node)
 	if (opp_table == opp_xref)
 		return (ENXIO);
 
-	if (!OF_hasprop(opp_table, "opp-shared")) {
+	if (!OF_hasprop(opp_table, "opp-shared") && mp_ncpus > 1) {
 		device_printf(sc->dev, "Only opp-shared is supported\n");
 		return (ENXIO);
 	}

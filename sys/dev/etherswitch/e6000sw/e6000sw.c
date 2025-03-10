@@ -66,6 +66,7 @@ MALLOC_DEFINE(M_E6000SW, "e6000sw", "e6000sw switch");
 #define	E6000SW_UNLOCK(_sc)		sx_unlock(&(_sc)->sx)
 #define	E6000SW_LOCK_ASSERT(_sc, _what)	sx_assert(&(_sc)->sx, (_what))
 #define	E6000SW_TRYLOCK(_sc)		sx_tryxlock(&(_sc)->sx)
+#define	E6000SW_LOCKED(_sc)		sx_xlocked(&(_sc)->sx)
 #define	E6000SW_WAITREADY(_sc, _reg, _bit)				\
     e6000sw_waitready((_sc), REG_GLOBAL, (_reg), (_bit))
 #define	E6000SW_WAITREADY2(_sc, _reg, _bit)				\
@@ -169,8 +170,8 @@ static device_method_t e6000sw_methods[] = {
 	DEVMETHOD(bus_add_child,		device_add_child_ordered),
 
 	/* mii interface */
-	DEVMETHOD(miibus_readreg,		e6000sw_readphy_locked),
-	DEVMETHOD(miibus_writereg,		e6000sw_writephy_locked),
+	DEVMETHOD(miibus_readreg,		e6000sw_readphy),
+	DEVMETHOD(miibus_writereg,		e6000sw_writephy),
 
 	/* etherswitch interface */
 	DEVMETHOD(etherswitch_getinfo,		e6000sw_getinfo),
@@ -204,7 +205,7 @@ e6000sw_identify(driver_t *driver, device_t parent)
 {
 
 	if (device_find_child(parent, "e6000sw", -1) == NULL)
-		BUS_ADD_CHILD(parent, 0, "e6000sw", -1);
+		BUS_ADD_CHILD(parent, 0, "e6000sw", DEVICE_UNIT_ANY);
 }
 
 static int
@@ -453,8 +454,6 @@ e6000sw_init_interface(e6000sw_softc_t *sc, int port)
 	snprintf(name, IFNAMSIZ, "%sport", device_get_nameunit(sc->dev));
 
 	sc->ifp[port] = if_alloc(IFT_ETHER);
-	if (sc->ifp[port] == NULL)
-		return (ENOMEM);
 	if_setsoftc(sc->ifp[port], sc);
 	if_setflagbits(sc->ifp[port], IFF_UP | IFF_BROADCAST |
 	    IFF_DRV_RUNNING | IFF_SIMPLEX, 0);
@@ -643,8 +642,8 @@ e6000sw_attach(device_t dev)
 		device_printf(dev, "switch is ready.\n");
 	E6000SW_UNLOCK(sc);
 
-	bus_generic_probe(dev);
-	bus_generic_attach(dev);
+	bus_identify_children(dev);
+	bus_attach_children(dev);
 
 	taskqueue_enqueue_timeout(sc->sc_tq, &sc->sc_tt, hz);
 
@@ -744,17 +743,20 @@ e6000sw_write_xmdio(device_t dev, int phy, int devaddr, int devreg, int val)
 	return (0);
 }
 
-static int e6000sw_readphy(device_t dev, int phy, int reg)
+static int
+e6000sw_readphy(device_t dev, int phy, int reg)
 {
 	e6000sw_softc_t *sc;
-	int ret;
+	int locked, ret;
 
 	sc = device_get_softc(dev);
-	E6000SW_LOCK_ASSERT(sc, SA_UNLOCKED);
 
-	E6000SW_LOCK(sc);
+	locked = E6000SW_LOCKED(sc);
+	if (!locked)
+		E6000SW_LOCK(sc);
 	ret = e6000sw_readphy_locked(dev, phy, reg);
-	E6000SW_UNLOCK(sc);
+	if (!locked)
+		E6000SW_UNLOCK(sc);
 
 	return (ret);
 }
@@ -795,17 +797,20 @@ e6000sw_readphy_locked(device_t dev, int phy, int reg)
 	return (val & PHY_DATA_MASK);
 }
 
-static int e6000sw_writephy(device_t dev, int phy, int reg, int data)
+static int
+e6000sw_writephy(device_t dev, int phy, int reg, int data)
 {
 	e6000sw_softc_t *sc;
-	int ret;
+	int locked, ret;
 
 	sc = device_get_softc(dev);
-	E6000SW_LOCK_ASSERT(sc, SA_UNLOCKED);
 
-	E6000SW_LOCK(sc);
+	locked = E6000SW_LOCKED(sc);
+	if (!locked)
+		E6000SW_LOCK(sc);
 	ret = e6000sw_writephy_locked(dev, phy, reg, data);
-	E6000SW_UNLOCK(sc);
+	if (!locked)
+		E6000SW_UNLOCK(sc);
 
 	return (ret);
 }
@@ -840,18 +845,20 @@ e6000sw_writephy_locked(device_t dev, int phy, int reg, int data)
 static int
 e6000sw_detach(device_t dev)
 {
-	int phy;
+	int error, phy;
 	e6000sw_softc_t *sc;
 
 	sc = device_get_softc(dev);
+
+	error = bus_generic_detach(dev);
+	if (error != 0)
+		return (error);
 
 	if (device_is_attached(dev))
 		taskqueue_drain_timeout(sc->sc_tq, &sc->sc_tt);
 
 	if (sc->sc_tq != NULL)
 		taskqueue_free(sc->sc_tq);
-
-	device_delete_children(dev);
 
 	sx_destroy(&sc->sx);
 	for (phy = 0; phy < sc->num_ports; phy++) {

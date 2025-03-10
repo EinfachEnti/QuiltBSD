@@ -839,16 +839,17 @@ cs4281_pci_attach(device_t dev)
 
     mixer_init(dev, ac97_getmixerclass(), codec);
 
-    if (pcm_register(dev, sc, 1, 1))
-	goto bad;
+    pcm_init(dev, sc);
 
     pcm_addchan(dev, PCMDIR_PLAY, &cs4281chan_class, sc);
     pcm_addchan(dev, PCMDIR_REC, &cs4281chan_class, sc);
 
-    snprintf(status, SND_STATUSLEN, "at %s 0x%jx irq %jd %s",
-	     (sc->regtype == SYS_RES_IOPORT)? "io" : "memory",
-	     rman_get_start(sc->reg), rman_get_start(sc->irq),PCM_KLDSTRING(snd_cs4281));
-    pcm_setstatus(dev, status);
+    snprintf(status, SND_STATUSLEN, "%s 0x%jx irq %jd on %s",
+	     (sc->regtype == SYS_RES_IOPORT)? "port" : "mem",
+	     rman_get_start(sc->reg), rman_get_start(sc->irq),
+	     device_get_nameunit(device_get_parent(dev)));
+    if (pcm_register(dev, status))
+	goto bad;
 
     return 0;
 

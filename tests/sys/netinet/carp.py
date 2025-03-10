@@ -39,6 +39,7 @@ class TestCarp(VnetTestTemplate):
             if p.src != "00:00:5e:00:01:01":
                 raise
 
+    @pytest.mark.require_progs(["scapy"])
     def test_source_mac(self):
         "Test carp packets source address"
 
@@ -51,3 +52,18 @@ class TestCarp(VnetTestTemplate):
         carp_pkts = sc.sniff(iface=if1.name, stop_filter=filter_f, timeout=5)
 
         self.check_carp_src_mac(carp_pkts)
+
+    @pytest.mark.require_progs(["scapy"])
+    def test_source_mac_vrrp(self):
+        "Test VRRP packets source address"
+
+        if1 = self.vnet.iface_alias_map["if1"]
+
+        ToolsHelper.print_output(
+            "ifconfig {} add vhid 1 carpver 3 192.0.2.203/24".format(if1.name)
+        )
+
+        carp_pkts = sc.sniff(iface=if1.name, stop_filter=filter_f, timeout=5)
+
+        self.check_carp_src_mac(carp_pkts)
+

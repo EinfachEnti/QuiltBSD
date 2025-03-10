@@ -26,7 +26,7 @@
 # SUCH DAMAGE.
 #
 
-# ext2fs(5) test scenario with a 1k block size
+# ext2fs(4) test scenario with a 1k block size
 # "panic: ext2_reallocblks: alloc mismatch" seen.
 # "Fatal trap 12: page fault while in kernel mode" seen.
 
@@ -35,7 +35,7 @@
 
 . ../default.cfg
 
-# Uses mke2fs from sysutils/e2fsprogs
+# Uses mke2fs from filesystems/e2fsprogs
 [ -z "`type mke2fs 2>/dev/null`" ] &&
     echo "Skipping test as mke2fs not installed" && exit 0
 

@@ -29,7 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/systm.h>
@@ -61,7 +60,6 @@
 #include <cam/scsi/scsi_message.h>
 #include <cam/scsi/scsi_pass.h>
 #include <machine/stdarg.h>	/* for xpt_print below */
-#include "opt_cam.h"
 
 struct scsi_quirk_entry {
 	struct scsi_inquiry_pattern inq_pat;
@@ -648,16 +646,14 @@ proberegister(struct cam_periph *periph, void *arg)
 
 	request_ccb = (union ccb *)arg;
 	if (request_ccb == NULL) {
-		printf("proberegister: no probe CCB, "
-		       "can't register device\n");
+		printf("proberegister: no probe CCB, can't register device\n");
 		return(CAM_REQ_CMP_ERR);
 	}
 
 	softc = (probe_softc *)malloc(sizeof(*softc), M_CAMXPT, M_NOWAIT);
 
 	if (softc == NULL) {
-		printf("proberegister: Unable to probe new device. "
-		       "Unable to allocate softc\n");
+		printf("proberegister: Unable to probe new device. Unable to allocate softc\n");
 		return(CAM_REQ_CMP_ERR);
 	}
 	TAILQ_INIT(&softc->request_ccbs);
@@ -866,8 +862,8 @@ again:
 					/*timeout*/60000);
 			break;
 		}
-		xpt_print(periph->path, "Unable to mode sense control page - "
-		    "malloc failure\n");
+		xpt_print(periph->path,
+		    "Unable to mode sense control page - malloc failure\n");
 		PROBE_SET_ACTION(softc, PROBE_SUPPORTED_VPD_LIST);
 	}
 	/* FALLTHROUGH */
@@ -1002,8 +998,8 @@ done:
 		inquiry_len = roundup2(SID_ADDITIONAL_LENGTH(inq_buf), 2);
 		inq_buf = malloc(inquiry_len, M_CAMXPT, M_NOWAIT);
 		if (inq_buf == NULL) {
-			xpt_print(periph->path, "malloc failure- skipping Basic"
-			    "Domain Validation\n");
+			xpt_print(periph->path,
+			    "malloc failure- skipping Basic Domain Validation\n");
 			PROBE_SET_ACTION(softc, PROBE_DV_EXIT);
 			scsi_test_unit_ready(csio,
 					     /*retries*/4,
@@ -2037,9 +2033,9 @@ scsi_scan_bus(struct cam_periph *periph, union ccb *request_ccb)
 						 request_ccb->ccb_h.path_id,
 						 i, 0);
 			if (status != CAM_REQ_CMP) {
-				printf("scsi_scan_bus: xpt_create_path failed"
-				       " with status %#x, bus scan halted\n",
-				       status);
+				printf(
+		"scsi_scan_bus: xpt_create_path failed with status %#x, bus scan halted\n",
+				    status);
 				free(scan_info, M_CAMXPT);
 				request_ccb->ccb_h.status = status;
 				xpt_free_ccb(work_ccb);
@@ -2232,8 +2228,8 @@ scsi_scan_bus(struct cam_periph *periph, union ccb *request_ccb)
 			    scan_info->counter, 0);
 			if (status != CAM_REQ_CMP) {
 				mtx_unlock(mtx);
-				printf("scsi_scan_bus: xpt_create_path failed"
-				    " with status %#x, bus scan halted\n",
+				printf(
+		"scsi_scan_bus: xpt_create_path failed with status %#x, bus scan halted\n",
 			       	    status);
 				xpt_free_ccb(request_ccb);
 				xpt_free_ccb((union ccb *)scan_info->cpi);
@@ -2262,9 +2258,9 @@ scsi_scan_bus(struct cam_periph *periph, union ccb *request_ccb)
 			 */
 			xpt_free_path(oldpath);
 			if (status != CAM_REQ_CMP) {
-				printf("scsi_scan_bus: xpt_create_path failed "
-				       "with status %#x, halting LUN scan\n",
-			 	       status);
+				printf(
+		"scsi_scan_bus: xpt_create_path failed with status %#x, halting LUN scan\n",
+				    status);
 				goto hop_again;
 			}
 			xpt_setup_ccb(&request_ccb->ccb_h, path,
@@ -2325,8 +2321,8 @@ scsi_scan_lun(struct cam_periph *periph, struct cam_path *path,
 	if (request_ccb == NULL) {
 		request_ccb = xpt_alloc_ccb_nowait();
 		if (request_ccb == NULL) {
-			xpt_print(path, "scsi_scan_lun: can't allocate CCB, "
-			    "can't continue\n");
+			xpt_print(path,
+			    "scsi_scan_lun: can't allocate CCB, can't continue\n");
 			return;
 		}
 		status = xpt_create_path(&new_path, NULL,
@@ -2334,8 +2330,8 @@ scsi_scan_lun(struct cam_periph *periph, struct cam_path *path,
 					  path->target->target_id,
 					  path->device->lun_id);
 		if (status != CAM_REQ_CMP) {
-			xpt_print(path, "scsi_scan_lun: can't create path, "
-			    "can't continue\n");
+			xpt_print(path,
+			    "scsi_scan_lun: can't create path, can't continue\n");
 			xpt_free_ccb(request_ccb);
 			return;
 		}
@@ -2368,8 +2364,8 @@ scsi_scan_lun(struct cam_periph *periph, struct cam_path *path,
 					  request_ccb);
 
 		if (status != CAM_REQ_CMP) {
-			xpt_print(path, "scsi_scan_lun: cam_alloc_periph "
-			    "returned an error, can't continue probe\n");
+			xpt_print(path,
+	    "scsi_scan_lun: cam_alloc_periph returned an error, can't continue probe\n");
 			request_ccb->ccb_h.status = status;
 			xpt_done(request_ccb);
 		}
@@ -2621,8 +2617,7 @@ scsi_action(union ccb *start_ccb)
 
 	if (start_ccb->ccb_h.func_code != XPT_SCSI_IO) {
 		KASSERT((start_ccb->ccb_h.alloc_flags & CAM_CCB_FROM_UMA) == 0,
-		    ("%s: ccb %p, func_code %#x should not be allocated "
-		    "from UMA zone\n",
+		    ("%s: ccb %p, func_code %#x should not be allocated from UMA zone\n",
 		    __func__, start_ccb, start_ccb->ccb_h.func_code));
 	}
 
@@ -2689,8 +2684,9 @@ scsi_set_transfer_settings(struct ccb_trans_settings *cts, struct cam_path *path
 
 	if (cts->protocol_version > device->protocol_version) {
 		if (bootverbose) {
-			xpt_print(path, "Down reving Protocol "
-			    "Version from %d to %d?\n", cts->protocol_version,
+			xpt_print(path,
+			    "Down reving Protocol Version from %d to %d?\n",
+			    cts->protocol_version,
 			    device->protocol_version);
 		}
 		cts->protocol_version = device->protocol_version;
@@ -2714,8 +2710,9 @@ scsi_set_transfer_settings(struct ccb_trans_settings *cts, struct cam_path *path
 
 	if (cts->transport_version > device->transport_version) {
 		if (bootverbose) {
-			xpt_print(path, "Down reving Transport "
-			    "Version from %d to %d?\n", cts->transport_version,
+			xpt_print(path,
+			    "Down reving Transport Version from %d to %d?\n",
+			    cts->transport_version,
 			    device->transport_version);
 		}
 		cts->transport_version = device->transport_version;
@@ -3119,13 +3116,13 @@ scsi_announce_periph_sbuf(struct cam_periph *periph, struct sbuf *sb)
 		if ((spi->valid & CTS_SPI_VALID_BUS_WIDTH) != 0
 		 && spi->bus_width > 0) {
 			if (freq != 0) {
-				sbuf_printf(sb, ", ");
+				sbuf_cat(sb, ", ");
 			} else {
-				sbuf_printf(sb, " (");
+				sbuf_cat(sb, " (");
 			}
 			sbuf_printf(sb, "%dbit)", 8 * (0x01 << spi->bus_width));
 		} else if (freq != 0) {
-			sbuf_printf(sb, ")");
+			sbuf_putc(sb, ')');
 		}
 	}
 	if (cts.ccb_h.status == CAM_REQ_CMP && cts.transport == XPORT_FC) {
@@ -3139,7 +3136,7 @@ scsi_announce_periph_sbuf(struct cam_periph *periph, struct sbuf *sb)
 		if (fc->valid & CTS_FC_VALID_PORT)
 			sbuf_printf(sb, " PortID 0x%x", fc->port);
 	}
-	sbuf_printf(sb, "\n");
+	sbuf_putc(sb, '\n');
 }
 
 static void

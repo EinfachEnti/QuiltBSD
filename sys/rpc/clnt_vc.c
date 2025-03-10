@@ -30,11 +30,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char *sccsid2 = "@(#)clnt_tcp.c 1.37 87/10/05 Copyr 1984 Sun Micro";
-static char *sccsid = "@(#)clnt_tcp.c	2.2 88/08/01 4.0 RPCSRC";
-static char sccsid3[] = "@(#)clnt_vc.c 1.19 89/03/16 Copyr 1988 Sun Micro";
-#endif
 #include <sys/cdefs.h>
 /*
  * clnt_tcp.c, Implements a TCP/IP based, client side RPC.
@@ -145,6 +140,9 @@ clnt_vc_create(
 	int error, interrupted, one = 1, sleep_flag;
 	struct sockopt sopt;
 
+	KASSERT(raddr->sa_family != AF_LOCAL,
+	    ("%s: kernel RPC over unix(4) not supported", __func__));
+
 	if (disrupt == 0)
 		disrupt = (uint32_t)(long)raddr;
 
@@ -158,7 +156,7 @@ clnt_vc_create(
 	ct->ct_upcallrefs = 0;
 	ct->ct_rcvstate = RPCRCVSTATE_NORMAL;
 
-	if ((so->so_state & (SS_ISCONNECTED|SS_ISCONFIRMING)) == 0) {
+	if ((so->so_state & SS_ISCONNECTED) == 0) {
 		error = soconnect(so, raddr, curthread);
 		SOCK_LOCK(so);
 		interrupted = 0;
@@ -239,12 +237,8 @@ clnt_vc_create(
 	 */
 	xdrmem_create(&xdrs, ct->ct_mcallc, MCALL_MSG_SIZE,
 	    XDR_ENCODE);
-	if (! xdr_callhdr(&xdrs, &call_msg)) {
-		if (ct->ct_closeit) {
-			soclose(ct->ct_socket);
-		}
+	if (! xdr_callhdr(&xdrs, &call_msg))
 		goto err;
-	}
 	ct->ct_mpos = XDR_GETPOS(&xdrs);
 	XDR_DESTROY(&xdrs);
 	ct->ct_waitchan = "rpcrecv";
@@ -257,25 +251,21 @@ clnt_vc_create(
 	sendsz = __rpc_get_t_size(si.si_af, si.si_proto, (int)sendsz);
 	recvsz = __rpc_get_t_size(si.si_af, si.si_proto, (int)recvsz);
 	error = soreserve(ct->ct_socket, sendsz, recvsz);
-	if (error != 0) {
-		if (ct->ct_closeit) {
-			soclose(ct->ct_socket);
-		}
+	if (error != 0)
 		goto err;
-	}
 	cl->cl_refs = 1;
 	cl->cl_ops = &clnt_vc_ops;
 	cl->cl_private = ct;
 	cl->cl_auth = authnone_create();
 
-	SOCKBUF_LOCK(&ct->ct_socket->so_rcv);
+	SOCK_RECVBUF_LOCK(ct->ct_socket);
 	soupcall_set(ct->ct_socket, SO_RCV, clnt_vc_soupcall, ct);
-	SOCKBUF_UNLOCK(&ct->ct_socket->so_rcv);
+	SOCK_RECVBUF_UNLOCK(ct->ct_socket);
 
 	ct->ct_raw = NULL;
 	ct->ct_record = NULL;
 	ct->ct_record_resid = 0;
-	ct->ct_sslrefno = 0;
+	ct->ct_tlsstate = RPCTLS_NONE;
 	TAILQ_INIT(&ct->ct_pending);
 	return (cl);
 
@@ -423,7 +413,7 @@ call_again:
 	TAILQ_INSERT_TAIL(&ct->ct_pending, cr, cr_link);
 	mtx_unlock(&ct->ct_lock);
 
-	if (ct->ct_sslrefno != 0) {
+	if (ct->ct_tlsstate > RPCTLS_NONE) {
 		/*
 		 * Copy the mbuf chain to a chain of ext_pgs mbuf(s)
 		 * as required by KERN_TLS.
@@ -442,9 +432,9 @@ call_again:
 	mreq = NULL;
 	if (error == EMSGSIZE || (error == ERESTART &&
 	    (ct->ct_waitflag & PCATCH) == 0 && trycnt-- > 0)) {
-		SOCKBUF_LOCK(&ct->ct_socket->so_snd);
+		SOCK_SENDBUF_LOCK(ct->ct_socket);
 		sbwait(ct->ct_socket, SO_SND);
-		SOCKBUF_UNLOCK(&ct->ct_socket->so_snd);
+		SOCK_SENDBUF_UNLOCK(ct->ct_socket);
 		AUTH_VALIDATE(auth, xid, NULL, NULL);
 		mtx_lock(&ct->ct_lock);
 		TAILQ_REMOVE(&ct->ct_pending, cr, cr_link);
@@ -642,7 +632,6 @@ clnt_vc_control(CLIENT *cl, u_int request, void *info)
 	struct ct_data *ct = (struct ct_data *)cl->cl_private;
 	void *infop = info;
 	SVCXPRT *xprt;
-	uint64_t *p;
 	int error;
 	static u_int thrdnum = 0;
 
@@ -759,22 +748,22 @@ clnt_vc_control(CLIENT *cl, u_int request, void *info)
 	case CLSET_BACKCHANNEL:
 		xprt = (SVCXPRT *)info;
 		if (ct->ct_backchannelxprt == NULL) {
+			SVC_ACQUIRE(xprt);
 			xprt->xp_p2 = ct;
-			if (ct->ct_sslrefno != 0)
+			if (ct->ct_tlsstate > RPCTLS_NONE)
 				xprt->xp_tls = RPCTLS_FLAGS_HANDSHAKE;
 			ct->ct_backchannelxprt = xprt;
 		}
 		break;
 
 	case CLSET_TLS:
-		p = (uint64_t *)info;
-		ct->ct_sslsec = *p++;
-		ct->ct_sslusec = *p++;
-		ct->ct_sslrefno = *p;
-		if (ct->ct_sslrefno != RPCTLS_REFNO_HANDSHAKE) {
+		ct->ct_tlsstate = *(int *)info;
+		if (ct->ct_tlsstate == RPCTLS_COMPLETE) {
+			/* cl ref cnt is released by clnt_vc_dotlsupcall(). */
+			CLNT_ACQUIRE(cl);
 			mtx_unlock(&ct->ct_lock);
 			/* Start the kthread that handles upcalls. */
-			error = kthread_add(clnt_vc_dotlsupcall, ct,
+			error = kthread_add(clnt_vc_dotlsupcall, cl,
 			    NULL, NULL, 0, 0, "krpctls%u", thrdnum++);
 			if (error != 0)
 				panic("Can't add KRPC thread error %d", error);
@@ -826,12 +815,12 @@ clnt_vc_close(CLIENT *cl)
 		ct->ct_closing = TRUE;
 		mtx_unlock(&ct->ct_lock);
 
-		SOCKBUF_LOCK(&ct->ct_socket->so_rcv);
+		SOCK_RECVBUF_LOCK(ct->ct_socket);
 		if (ct->ct_socket->so_rcv.sb_upcall != NULL) {
 			soupcall_clear(ct->ct_socket, SO_RCV);
 			clnt_vc_upcallsdone(ct);
 		}
-		SOCKBUF_UNLOCK(&ct->ct_socket->so_rcv);
+		SOCK_RECVBUF_UNLOCK(ct->ct_socket);
 
 		/*
 		 * Abort any pending requests and wait until everyone
@@ -850,7 +839,7 @@ clnt_vc_close(CLIENT *cl)
 
 	ct->ct_closing = FALSE;
 	ct->ct_closed = TRUE;
-	wakeup(&ct->ct_sslrefno);
+	wakeup(&ct->ct_tlsstate);
 	mtx_unlock(&ct->ct_lock);
 	wakeup(ct);
 }
@@ -859,7 +848,7 @@ static void
 clnt_vc_destroy(CLIENT *cl)
 {
 	struct ct_data *ct = (struct ct_data *) cl->cl_private;
-	struct socket *so = NULL;
+	struct socket *so;
 	SVCXPRT *xprt;
 	uint32_t reterr;
 
@@ -874,46 +863,40 @@ clnt_vc_destroy(CLIENT *cl)
 		mtx_lock(&ct->ct_lock);
 		xprt->xp_p2 = NULL;
 		sx_xunlock(&xprt->xp_lock);
-	}
-
-	if (ct->ct_socket) {
-		if (ct->ct_closeit) {
-			so = ct->ct_socket;
-		}
+		SVC_RELEASE(xprt);
 	}
 
 	/* Wait for the upcall kthread to terminate. */
 	while ((ct->ct_rcvstate & RPCRCVSTATE_UPCALLTHREAD) != 0)
-		msleep(&ct->ct_sslrefno, &ct->ct_lock, 0,
+		msleep(&ct->ct_tlsstate, &ct->ct_lock, 0,
 		    "clntvccl", hz);
 	mtx_unlock(&ct->ct_lock);
-
 	mtx_destroy(&ct->ct_lock);
+
+	so = ct->ct_closeit ? ct->ct_socket : NULL;
 	if (so) {
-		if (ct->ct_sslrefno != 0) {
-			/*
-			 * If the TLS handshake is in progress, the upcall
-			 * will fail, but the socket should be closed by the
-			 * daemon, since the connect upcall has just failed.
-			 */
-			if (ct->ct_sslrefno != RPCTLS_REFNO_HANDSHAKE) {
-				/*
-				 * If the upcall fails, the socket has
-				 * probably been closed via the rpctlscd
-				 * daemon having crashed or been
-				 * restarted, so ignore return stat.
-				 */
-				rpctls_cl_disconnect(ct->ct_sslsec,
-				    ct->ct_sslusec, ct->ct_sslrefno,
-				    &reterr);
-			}
+		/*
+		 * If the TLS handshake is in progress, the upcall will fail,
+		 * but the socket should be closed by the daemon, since the
+		 * connect upcall has just failed.  If the upcall fails, the
+		 * socket has probably been closed via the rpctlscd daemon
+		 * having crashed or been restarted, so ignore return stat.
+		 */
+		CURVNET_SET(so->so_vnet);
+		switch (ct->ct_tlsstate) {
+		case RPCTLS_COMPLETE:
+			rpctls_cl_disconnect(so, &reterr);
+			/* FALLTHROUGH */
+		case RPCTLS_INHANDSHAKE:
 			/* Must sorele() to get rid of reference. */
-			CURVNET_SET(so->so_vnet);
 			sorele(so);
 			CURVNET_RESTORE();
-		} else {
+			break;
+		case RPCTLS_NONE:
+			CURVNET_RESTORE();
 			soshutdown(so, SHUT_WR);
 			soclose(so);
+			break;
 		}
 	}
 	m_freem(ct->ct_record);
@@ -972,7 +955,7 @@ clnt_vc_soupcall(struct socket *so, void *arg, int waitflag)
 	/*
 	 * If another thread is already here, it must be in
 	 * soreceive(), so just return to avoid races with it.
-	 * ct_upcallrefs is protected by the SOCKBUF_LOCK(),
+	 * ct_upcallrefs is protected by the socket receive buffer lock
 	 * which is held in this function, except when
 	 * soreceive() is called.
 	 */
@@ -989,12 +972,12 @@ clnt_vc_soupcall(struct socket *so, void *arg, int waitflag)
 		uio.uio_td = curthread;
 		m2 = m = NULL;
 		rcvflag = MSG_DONTWAIT | MSG_SOCALLBCK;
-		if (ct->ct_sslrefno != 0 && (ct->ct_rcvstate &
+		if (ct->ct_tlsstate > RPCTLS_NONE && (ct->ct_rcvstate &
 		    RPCRCVSTATE_NORMAL) != 0)
 			rcvflag |= MSG_TLSAPPDATA;
-		SOCKBUF_UNLOCK(&so->so_rcv);
+		SOCK_RECVBUF_UNLOCK(so);
 		error = soreceive(so, NULL, &uio, &m, &m2, &rcvflag);
-		SOCKBUF_LOCK(&so->so_rcv);
+		SOCK_RECVBUF_LOCK(so);
 
 		if (error == EWOULDBLOCK) {
 			/*
@@ -1024,7 +1007,7 @@ clnt_vc_soupcall(struct socket *so, void *arg, int waitflag)
 		 * This record needs to be handled in userland
 		 * via an SSL_read() call, so do an upcall to the daemon.
 		 */
-		if (ct->ct_sslrefno != 0 && error == ENXIO) {
+		if (ct->ct_tlsstate > RPCTLS_NONE && error == ENXIO) {
 			/* Disable reception, marking an upcall needed. */
 			mtx_lock(&ct->ct_lock);
 			ct->ct_rcvstate |= RPCRCVSTATE_UPCALLNEEDED;
@@ -1032,7 +1015,7 @@ clnt_vc_soupcall(struct socket *so, void *arg, int waitflag)
 			 * If an upcall in needed, wake up the kthread
 			 * that runs clnt_vc_dotlsupcall().
 			 */
-			wakeup(&ct->ct_sslrefno);
+			wakeup(&ct->ct_tlsstate);
 			mtx_unlock(&ct->ct_lock);
 			break;
 		}
@@ -1260,7 +1243,7 @@ static void
 clnt_vc_upcallsdone(struct ct_data *ct)
 {
 
-	SOCKBUF_LOCK_ASSERT(&ct->ct_socket->so_rcv);
+	SOCK_RECVBUF_LOCK_ASSERT(ct->ct_socket);
 
 	while (ct->ct_upcallrefs > 0)
 		(void) msleep(&ct->ct_upcallrefs,
@@ -1274,21 +1257,22 @@ clnt_vc_upcallsdone(struct ct_data *ct)
 static void
 clnt_vc_dotlsupcall(void *data)
 {
-	struct ct_data *ct = (struct ct_data *)data;
+	CLIENT *cl = (CLIENT *)data;
+	struct ct_data *ct = (struct ct_data *)cl->cl_private;
 	enum clnt_stat ret;
 	uint32_t reterr;
 
+	CURVNET_SET(ct->ct_socket->so_vnet);
 	mtx_lock(&ct->ct_lock);
 	ct->ct_rcvstate |= RPCRCVSTATE_UPCALLTHREAD;
 	while (!ct->ct_closed) {
 		if ((ct->ct_rcvstate & RPCRCVSTATE_UPCALLNEEDED) != 0) {
 			ct->ct_rcvstate &= ~RPCRCVSTATE_UPCALLNEEDED;
 			ct->ct_rcvstate |= RPCRCVSTATE_UPCALLINPROG;
-			if (ct->ct_sslrefno != 0 && ct->ct_sslrefno !=
-			    RPCTLS_REFNO_HANDSHAKE) {
+			if (ct->ct_tlsstate == RPCTLS_COMPLETE) {
 				mtx_unlock(&ct->ct_lock);
-				ret = rpctls_cl_handlerecord(ct->ct_sslsec,
-				    ct->ct_sslusec, ct->ct_sslrefno, &reterr);
+				ret = rpctls_cl_handlerecord(ct->ct_socket,
+				    &reterr);
 				mtx_lock(&ct->ct_lock);
 			}
 			ct->ct_rcvstate &= ~RPCRCVSTATE_UPCALLINPROG;
@@ -1301,15 +1285,17 @@ clnt_vc_dotlsupcall(void *data)
 		if ((ct->ct_rcvstate & RPCRCVSTATE_SOUPCALLNEEDED) != 0) {
 			ct->ct_rcvstate &= ~RPCRCVSTATE_SOUPCALLNEEDED;
 			mtx_unlock(&ct->ct_lock);
-			SOCKBUF_LOCK(&ct->ct_socket->so_rcv);
+			SOCK_RECVBUF_LOCK(ct->ct_socket);
 			clnt_vc_soupcall(ct->ct_socket, ct, M_NOWAIT);
-			SOCKBUF_UNLOCK(&ct->ct_socket->so_rcv);
+			SOCK_RECVBUF_UNLOCK(ct->ct_socket);
 			mtx_lock(&ct->ct_lock);
 		}
-		msleep(&ct->ct_sslrefno, &ct->ct_lock, 0, "clntvcdu", hz);
+		msleep(&ct->ct_tlsstate, &ct->ct_lock, 0, "clntvcdu", hz);
 	}
 	ct->ct_rcvstate &= ~RPCRCVSTATE_UPCALLTHREAD;
-	wakeup(&ct->ct_sslrefno);
+	wakeup(&ct->ct_tlsstate);
 	mtx_unlock(&ct->ct_lock);
+	CLNT_RELEASE(cl);
+	CURVNET_RESTORE();
 	kthread_exit();
 }

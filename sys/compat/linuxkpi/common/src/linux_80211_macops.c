@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/kernel.h>
@@ -75,7 +74,7 @@ out:
 }
 
 void
-lkpi_80211_mo_stop(struct ieee80211_hw *hw)
+lkpi_80211_mo_stop(struct ieee80211_hw *hw, bool suspend)
 {
 	struct lkpi_hw *lhw;
 
@@ -83,8 +82,8 @@ lkpi_80211_mo_stop(struct ieee80211_hw *hw)
 	if (lhw->ops->stop == NULL)
 		return;
 
-	LKPI_80211_TRACE_MO("hw %p", hw);
-	lhw->ops->stop(hw);
+	LKPI_80211_TRACE_MO("hw %p suspend %d", hw, suspend);
+	lhw->ops->stop(hw, suspend);
 	lhw->sc_flags &= ~LKPI_MAC80211_DRV_STARTED;
 }
 
@@ -684,6 +683,8 @@ lkpi_80211_mo_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	struct lkpi_hw *lhw;
 	int error;
 
+	lockdep_assert_wiphy(hw->wiphy);
+
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->set_key == NULL) {
 		error = EOPNOTSUPP;
@@ -692,6 +693,58 @@ lkpi_80211_mo_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 
 	LKPI_80211_TRACE_MO("hw %p cmd %d vif %p sta %p kc %p", hw, cmd, vif, sta, kc);
 	error = lhw->ops->set_key(hw, cmd, vif, sta, kc);
+
+out:
+	return (error);
+}
+
+int
+lkpi_80211_mo_ampdu_action(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+    struct ieee80211_ampdu_params *params)
+{
+	struct lkpi_hw *lhw;
+	int error;
+
+	lhw = HW_TO_LHW(hw);
+	if (lhw->ops->ampdu_action == NULL) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+
+	LKPI_80211_TRACE_MO("hw %p vif %p params %p { %p, %d, %u, %u, %u, %u, %d }",
+	    hw, vif, params, params->sta, params->action, params->buf_size,
+	    params->timeout, params->ssn, params->tid, params->amsdu);
+	error = lhw->ops->ampdu_action(hw, vif, params);
+
+out:
+	return (error);
+}
+
+int
+lkpi_80211_mo_sta_statistics(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+    struct ieee80211_sta *sta, struct station_info *sinfo)
+{
+	struct lkpi_hw *lhw;
+	struct lkpi_sta *lsta;
+	int error;
+
+	lhw = HW_TO_LHW(hw);
+	if (lhw->ops->sta_statistics == NULL) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+
+	lsta = STA_TO_LSTA(sta);
+	if (!lsta->added_to_drv) {
+		error = EEXIST;
+		goto out;
+	}
+
+	lockdep_assert_wiphy(hw->wiphy);
+
+	LKPI_80211_TRACE_MO("hw %p vif %p sta %p sinfo %p", hw, vif, sta, sinfo);
+	lhw->ops->sta_statistics(hw, vif, sta, sinfo);
+	error = 0;
 
 out:
 	return (error);

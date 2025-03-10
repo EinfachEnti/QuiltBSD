@@ -27,15 +27,12 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)subr_log.c	8.1 (Berkeley) 6/10/93
  */
 
 /*
  * Error log buffer for kernel printf's.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/conf.h>
@@ -77,7 +74,7 @@ static struct cdevsw log_cdevsw = {
 static int	logkqread(struct knote *note, long hint);
 static void	logkqdetach(struct knote *note);
 
-static struct filterops log_read_filterops = {
+static const struct filterops log_read_filterops = {
 	.f_isfd =	1,
 	.f_attach =	NULL,
 	.f_detach =	logkqdetach,

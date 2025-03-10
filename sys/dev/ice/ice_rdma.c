@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/*  Copyright (c) 2023, Intel Corporation
+/*  Copyright (c) 2024, Intel Corporation
  *  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
@@ -168,7 +168,7 @@ ice_rdma_qset_register_request(struct ice_rdma_peer *peer, struct ice_rdma_qset_
 	struct ice_vsi *vsi = NULL;
 	struct ice_dcbx_cfg *dcbx_cfg;
 	struct ice_hw *hw = &sc->hw;
-	enum ice_status status;
+	int status;
 	int count, i, ret = 0;
 	uint32_t *qset_teid;
 	uint16_t *qs_handle;

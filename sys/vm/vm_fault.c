@@ -40,8 +40,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	from: @(#)vm_fault.c	8.4 (Berkeley) 1/12/94
- *
  *
  * Copyright (c) 1987, 1990 Carnegie-Mellon University.
  * All rights reserved.
@@ -382,12 +380,10 @@ vm_fault_soft_fast(struct faultstate *fs)
 	psind = 0;
 #if VM_NRESERVLEVEL > 0
 	if ((m->flags & PG_FICTITIOUS) == 0 &&
-	    (m_super = vm_reserv_to_superpage(m)) != NULL &&
-	    rounddown2(vaddr, pagesizes[m_super->psind]) >= fs->entry->start &&
-	    roundup2(vaddr + 1, pagesizes[m_super->psind]) <= fs->entry->end &&
-	    (vaddr & (pagesizes[m_super->psind] - 1)) == (VM_PAGE_TO_PHYS(m) &
-	    (pagesizes[m_super->psind] - 1)) && !fs->wired &&
-	    pmap_ps_enabled(fs->map->pmap)) {
+	    (m_super = vm_reserv_to_superpage(m)) != NULL) {
+		psind = m_super->psind;
+		KASSERT(psind > 0,
+		    ("psind %d of m_super %p < 1", psind, m_super));
 		flags = PS_ALL_VALID;
 		if ((fs->prot & VM_PROT_WRITE) != 0) {
 			/*
@@ -400,9 +396,23 @@ vm_fault_soft_fast(struct faultstate *fs)
 			if ((fs->first_object->flags & OBJ_UNMANAGED) == 0)
 				flags |= PS_ALL_DIRTY;
 		}
-		if (vm_page_ps_test(m_super, flags, m)) {
+		while (rounddown2(vaddr, pagesizes[psind]) < fs->entry->start ||
+		    roundup2(vaddr + 1, pagesizes[psind]) > fs->entry->end ||
+		    (vaddr & (pagesizes[psind] - 1)) !=
+		    (VM_PAGE_TO_PHYS(m) & (pagesizes[psind] - 1)) ||
+		    !vm_page_ps_test(m_super, psind, flags, m) ||
+		    !pmap_ps_enabled(fs->map->pmap)) {
+			psind--;
+			if (psind == 0)
+				break;
+			m_super += rounddown2(m - m_super,
+			    atop(pagesizes[psind]));
+			KASSERT(m_super->psind >= psind,
+			    ("psind %d of m_super %p < %d", m_super->psind,
+			    m_super, psind));
+		}
+		if (psind > 0) {
 			m_map = m_super;
-			psind = m_super->psind;
 			vaddr = rounddown2(vaddr, pagesizes[psind]);
 			/* Preset the modified bit for dirty superpages. */
 			if ((flags & PS_ALL_DIRTY) != 0)
@@ -475,7 +485,9 @@ vm_fault_populate_cleanup(vm_object_t object, vm_pindex_t first,
 	VM_OBJECT_ASSERT_WLOCKED(object);
 	MPASS(first <= last);
 	for (pidx = first, m = vm_page_lookup(object, pidx);
-	    pidx <= last; pidx++, m = vm_page_next(m)) {
+	    pidx <= last; pidx++, m = TAILQ_NEXT(m, listq)) {
+		KASSERT(m != NULL && m->pindex == pidx,
+		    ("%s: pindex mismatch", __func__));
 		vm_fault_populate_check_page(m);
 		vm_page_deactivate(m);
 		vm_page_xunbusy(m);
@@ -613,14 +625,15 @@ vm_fault_populate(struct faultstate *fs)
 	}
 	for (pidx = pager_first, m = vm_page_lookup(fs->first_object, pidx);
 	    pidx <= pager_last;
-	    pidx += npages, m = vm_page_next(&m[npages - 1])) {
+	    pidx += npages, m = TAILQ_NEXT(&m[npages - 1], listq)) {
 		vaddr = fs->entry->start + IDX_TO_OFF(pidx) - fs->entry->offset;
-
+		KASSERT(m != NULL && m->pindex == pidx,
+		    ("%s: pindex mismatch", __func__));
 		psind = m->psind;
-		if (psind > 0 && ((vaddr & (pagesizes[psind] - 1)) != 0 ||
+		while (psind > 0 && ((vaddr & (pagesizes[psind] - 1)) != 0 ||
 		    pidx + OFF_TO_IDX(pagesizes[psind]) - 1 > pager_last ||
-		    !pmap_ps_enabled(fs->map->pmap) || fs->wired))
-			psind = 0;
+		    !pmap_ps_enabled(fs->map->pmap)))
+			psind--;
 
 		npages = atop(pagesizes[psind]);
 		for (i = 0; i < npages; i++) {
@@ -1342,7 +1355,7 @@ vm_fault_getpages(struct faultstate *fs, int *behindp, int *aheadp)
 	MPASS(status == FAULT_CONTINUE || status == FAULT_RESTART);
 	if (status == FAULT_RESTART)
 		return (status);
-	KASSERT(fs->vp == NULL || !fs->map->system_map,
+	KASSERT(fs->vp == NULL || !vm_map_is_system(fs->map),
 	    ("vm_fault: vnode-backed object mapped by system map"));
 
 	/*
@@ -1893,6 +1906,7 @@ vm_fault_prefault(const struct faultstate *fs, vm_offset_t addra,
 	vm_offset_t addr, starta;
 	vm_pindex_t pindex;
 	vm_page_t m;
+	vm_prot_t prot;
 	int i;
 
 	pmap = fs->map->pmap;
@@ -1908,6 +1922,14 @@ vm_fault_prefault(const struct faultstate *fs, vm_offset_t addra,
 		if (starta < entry->start)
 			starta = entry->start;
 	}
+	prot = entry->protection;
+
+	/*
+	 * If pmap_enter() has enabled write access on a nearby mapping, then
+	 * don't attempt promotion, because it will fail.
+	 */
+	if ((fs->prot & VM_PROT_WRITE) != 0)
+		prot |= VM_PROT_NO_PROMOTE;
 
 	/*
 	 * Generate the sequence of virtual addresses that are candidates for
@@ -1951,7 +1973,7 @@ vm_fault_prefault(const struct faultstate *fs, vm_offset_t addra,
 		}
 		if (vm_page_all_valid(m) &&
 		    (m->flags & PG_FICTITIOUS) == 0)
-			pmap_enter_quick(pmap, addr, m, entry->protection);
+			pmap_enter_quick(pmap, addr, m, prot);
 		if (!obj_locked || lobject != entry->object.vm_object)
 			VM_OBJECT_RUNLOCK(lobject);
 	}
@@ -2063,7 +2085,7 @@ vm_fault_copy_entry(vm_map_t dst_map, vm_map_t src_map __unused,
 	vm_pindex_t dst_pindex, pindex, src_pindex;
 	vm_prot_t access, prot;
 	vm_offset_t vaddr;
-	vm_page_t dst_m;
+	vm_page_t dst_m, mpred;
 	vm_page_t src_m;
 	bool upgrade;
 
@@ -2135,9 +2157,11 @@ vm_fault_copy_entry(vm_map_t dst_map, vm_map_t src_map __unused,
 	 * with the source object, all of its pages must be dirtied,
 	 * regardless of whether they can be written.
 	 */
+	mpred = (src_object == dst_object) ?
+	   vm_page_mpred(src_object, src_pindex) : NULL;
 	for (vaddr = dst_entry->start, dst_pindex = 0;
 	    vaddr < dst_entry->end;
-	    vaddr += PAGE_SIZE, dst_pindex++) {
+	    vaddr += PAGE_SIZE, dst_pindex++, mpred = dst_m) {
 again:
 		/*
 		 * Find the page in the source object, and copy it in.
@@ -2175,9 +2199,9 @@ again:
 			/*
 			 * Allocate a page in the destination object.
 			 */
-			dst_m = vm_page_alloc(dst_object, (src_object ==
+			dst_m = vm_page_alloc_after(dst_object, (src_object ==
 			    dst_object ? src_pindex : 0) + dst_pindex,
-			    VM_ALLOC_NORMAL);
+			    VM_ALLOC_NORMAL, mpred);
 			if (dst_m == NULL) {
 				VM_OBJECT_WUNLOCK(dst_object);
 				VM_OBJECT_RUNLOCK(object);
