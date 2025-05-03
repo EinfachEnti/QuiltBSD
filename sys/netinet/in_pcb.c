@@ -826,7 +826,6 @@ in_pcb_lport_dest(const struct inpcb *inp, struct sockaddr *lsa,
 #endif
 
 	tmpinp = NULL;
-	lport = *lportp;
 
 	if (V_ipport_randomized)
 		*lastport = first + (arc4random() % (last - first));
@@ -1116,42 +1115,18 @@ in_pcbconnect(struct inpcb *inp, struct sockaddr_in *sin, struct ucred *cred)
 			    IA_SIN(CK_STAILQ_FIRST(&V_in_ifaddrhead))->sin_addr;
 			if ((error = prison_get_ip4(cred, &faddr)) != 0)
 				return (error);
-		} else if (sin->sin_addr.s_addr == INADDR_BROADCAST) {
-			if (CK_STAILQ_FIRST(&V_in_ifaddrhead)->ia_ifp->if_flags
-			    & IFF_BROADCAST)
-				faddr = satosin(&CK_STAILQ_FIRST(
-				    &V_in_ifaddrhead)->ia_broadaddr)->sin_addr;
-			else
-				faddr = sin->sin_addr;
-		}
+		} else if (sin->sin_addr.s_addr == INADDR_BROADCAST &&
+		    CK_STAILQ_FIRST(&V_in_ifaddrhead)->ia_ifp->if_flags
+		    & IFF_BROADCAST) {
+			faddr = satosin(&CK_STAILQ_FIRST(
+			    &V_in_ifaddrhead)->ia_broadaddr)->sin_addr;
+		} else
+			faddr = sin->sin_addr;
 	} else
 		faddr = sin->sin_addr;
 
 	if (in_nullhost(inp->inp_laddr)) {
 		error = in_pcbladdr(inp, &faddr, &laddr, cred);
-		/*
-		 * If the destination address is multicast and an outgoing
-		 * interface has been set as a multicast option, prefer the
-		 * address of that interface as our source address.
-		 */
-		if (IN_MULTICAST(ntohl(sin->sin_addr.s_addr)) &&
-		    inp->inp_moptions != NULL &&
-		    inp->inp_moptions->imo_multicast_ifp != NULL) {
-			struct ifnet *ifp =
-			    inp->inp_moptions->imo_multicast_ifp;
-			struct in_ifaddr *ia;
-
-			CK_STAILQ_FOREACH(ia, &V_in_ifaddrhead, ia_link) {
-				if (ia->ia_ifp == ifp &&
-				    prison_check_ip4(cred,
-				    &ia->ia_addr.sin_addr) == 0)
-					break;
-			}
-			if (ia == NULL)
-				return (EADDRNOTAVAIL);
-			laddr = ia->ia_addr.sin_addr;
-			error = 0;
-		}
 		if (error)
 			return (error);
 	} else
@@ -1232,6 +1207,27 @@ in_pcbladdr(const struct inpcb *inp, struct in_addr *faddr,
 	 */
 	if (!prison_saddrsel_ip4(cred, laddr))
 		return (0);
+
+	/*
+	 * If the destination address is multicast and an outgoing
+	 * interface has been set as a multicast option, prefer the
+	 * address of that interface as our source address.
+	 */
+	if (IN_MULTICAST(ntohl(faddr->s_addr)) && inp->inp_moptions != NULL &&
+	    inp->inp_moptions->imo_multicast_ifp != NULL) {
+		struct ifnet *ifp = inp->inp_moptions->imo_multicast_ifp;
+		struct in_ifaddr *ia;
+
+		CK_STAILQ_FOREACH(ia, &V_in_ifaddrhead, ia_link) {
+			if (ia->ia_ifp == ifp &&
+			    prison_check_ip4(cred, &ia->ia_addr.sin_addr) == 0)
+				break;
+		}
+		if (ia == NULL)
+			return (EADDRNOTAVAIL);
+		*laddr = ia->ia_addr.sin_addr;
+		return (0);
+	}
 
 	error = 0;
 

@@ -665,15 +665,19 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 				aux = auxp = (Elf_Auxinfo *)envp;
 				auxpf = (Elf_Auxinfo *)(envp + rtld_argc);
 				dbg("move aux from %p to %p", auxpf, aux);
-				/* XXXKIB insert place for AT_EXECPATH if not
-				 * present */
+				/*
+				 * XXXKIB insert place for AT_EXECPATH if not
+				 * present
+				 */
 				for (;; auxp++, auxpf++) {
 					*auxp = *auxpf;
 					if (auxp->a_type == AT_NULL)
 						break;
 				}
-				/* Since the auxiliary vector has moved,
-				 * redigest it. */
+				/*
+				 * Since the auxiliary vector has moved,
+				 * redigest it.
+				 */
 				for (i = 0; i < AT_COUNT; i++)
 					aux_info[i] = NULL;
 				for (auxp = aux; auxp->a_type != AT_NULL;
@@ -682,8 +686,10 @@ _rtld(Elf_Addr *sp, func_ptr_type *exit_proc, Obj_Entry **objp)
 						aux_info[auxp->a_type] = auxp;
 				}
 
-				/* Point AT_EXECPATH auxv and aux_info to the
-				 * binary path. */
+				/*
+				 * Point AT_EXECPATH auxv and aux_info to the
+				 * binary path.
+				 */
 				if (binpath == NULL) {
 					aux_info[AT_EXECPATH] = NULL;
 				} else {
@@ -1034,6 +1040,7 @@ _rtld_bind(Obj_Entry *obj, Elf_Size reloff)
 	Elf_Addr target;
 	RtldLockState lockstate;
 
+relock:
 	rlock_acquire(rtld_bind_lock, &lockstate);
 	if (sigsetjmp(lockstate.env, 0) != 0)
 		lock_upgrade(rtld_bind_lock, &lockstate);
@@ -1047,10 +1054,15 @@ _rtld_bind(Obj_Entry *obj, Elf_Size reloff)
 	    NULL, &lockstate);
 	if (def == NULL)
 		rtld_die();
-	if (ELF_ST_TYPE(def->st_info) == STT_GNU_IFUNC)
+	if (ELF_ST_TYPE(def->st_info) == STT_GNU_IFUNC) {
+		if (lockstate_wlocked(&lockstate)) {
+			lock_release(rtld_bind_lock, &lockstate);
+			goto relock;
+		}
 		target = (Elf_Addr)rtld_resolve_ifunc(defobj, def);
-	else
+	} else {
 		target = (Elf_Addr)(defobj->relocbase + def->st_value);
+	}
 
 	dbg("\"%s\" in \"%s\" ==> %p in \"%s\"", defobj->strtab + def->st_name,
 	    obj->path == NULL ? NULL : basename(obj->path), (void *)target,
@@ -1677,7 +1689,7 @@ digest_phdr(const Elf_Phdr *phdr, int phnum, caddr_t entry, const char *path)
 				obj->mapbase = obj->vaddrbase + obj->relocbase;
 			} else { /* Last load segment */
 				obj->mapsize = rtld_round_page(
-						   ph->p_vaddr + ph->p_memsz) -
+				    ph->p_vaddr + ph->p_memsz) -
 				    obj->vaddrbase;
 			}
 			nsegs++;
@@ -1877,8 +1889,8 @@ find_library(const char *xname, const Obj_Entry *refobj, int *fdp)
 
 	if (strchr(name, '/') != NULL) { /* Hard coded pathname */
 		if (name[0] != '/' && !trust) {
-			_rtld_error("Absolute pathname required "
-				    "for shared object \"%s\"",
+			_rtld_error(
+		    "Absolute pathname required for shared object \"%s\"",
 			    name);
 			return (NULL);
 		}
@@ -1957,8 +1969,8 @@ find_library(const char *xname, const Obj_Entry *refobj, int *fdp)
 	}
 
 	if (objgiven && refobj->path != NULL) {
-		_rtld_error("Shared object \"%s\" not found, "
-			    "required by \"%s\"",
+		_rtld_error(
+	    "Shared object \"%s\" not found, required by \"%s\"",
 		    name, basename(refobj->path));
 	} else {
 		_rtld_error("Shared object \"%s\" not found", name);
@@ -2040,8 +2052,10 @@ find_symdef(unsigned long symnum, const Obj_Entry *refobj,
 
 	if (def != NULL) {
 		*defobj_out = defobj;
-		/* Record the information in the cache to avoid subsequent
-		 * lookups. */
+		/*
+		 * Record the information in the cache to avoid subsequent
+		 * lookups.
+		 */
 		if (cache != NULL) {
 			cache[symnum].sym = def;
 			cache[symnum].obj = defobj;
@@ -2110,7 +2124,7 @@ gethints(bool nostdlib)
 		if (read(fd, &hdr, sizeof hdr) != sizeof hdr) {
 			dbg("failed to read %lu bytes from hints file \"%s\"",
 			    (u_long)sizeof hdr, ld_elf_hints_path);
-		cleanup1:
+cleanup1:
 			close(fd);
 			hdr.dirlistlen = 0;
 			return (NULL);
@@ -2164,10 +2178,10 @@ gethints(bool nostdlib)
 		}
 		p = xmalloc(dirlistlen + 1);
 		if (pread(fd, p, dirlistlen + 1, strtab + dirlist) !=
-			(ssize_t)dirlistlen + 1 ||
-		    p[dirlistlen] != '\0') {
+		    (ssize_t)dirlistlen + 1 || p[dirlistlen] != '\0') {
 			free(p);
-	dbg("failed to read %d bytes starting at %d from hints file \"%s\"",
+			dbg(
+	    "failed to read %d bytes starting at %d from hints file \"%s\"",
 			    dirlistlen + 1, strtab + dirlist,
 			    ld_elf_hints_path);
 			goto cleanup1;
@@ -2616,10 +2630,8 @@ load_filtee1(Obj_Entry *obj, Needed_Entry *needed, int flags,
 {
 	for (; needed != NULL; needed = needed->next) {
 		needed->obj = dlopen_object(obj->strtab + needed->name, -1, obj,
-		    flags,
-		    ((ld_loadfltr || obj->z_loadfltr) ? RTLD_NOW : RTLD_LAZY) |
-			RTLD_LOCAL,
-		    lockstate);
+		    flags, ((ld_loadfltr || obj->z_loadfltr) ? RTLD_NOW :
+		    RTLD_LAZY) | RTLD_LOCAL, lockstate);
 	}
 }
 
@@ -3431,12 +3443,12 @@ resolve_object_ifunc(Obj_Entry *obj, bool bind_now, int flags,
 	if (obj_disable_relro(obj) == -1 ||
 	    (obj->irelative && reloc_iresolve(obj, lockstate) == -1) ||
 	    (obj->irelative_nonplt &&
-		reloc_iresolve_nonplt(obj, lockstate) == -1) ||
+	    reloc_iresolve_nonplt(obj, lockstate) == -1) ||
 	    ((obj->bind_now || bind_now) && obj->gnu_ifunc &&
-		reloc_gnu_ifunc(obj, flags, lockstate) == -1) ||
+	    reloc_gnu_ifunc(obj, flags, lockstate) == -1) ||
 	    (obj->non_plt_gnu_ifunc &&
-		reloc_non_plt(obj, &obj_rtld, flags | SYMLOOK_IFUNC,
-		    lockstate) == -1) ||
+	    reloc_non_plt(obj, &obj_rtld, flags | SYMLOOK_IFUNC,
+	    lockstate) == -1) ||
 	    obj_enforce_relro(obj) == -1)
 		return (-1);
 	return (0);
@@ -3803,7 +3815,7 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 		obj = load_object(name, fd, refobj, lo_flags);
 	}
 
-	if (obj) {
+	if (obj != NULL) {
 		obj->dl_refcount++;
 		if (mode & RTLD_GLOBAL &&
 		    objlist_find(&list_global, obj) == NULL)
@@ -3815,33 +3827,31 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 			if ((lo_flags & RTLD_LO_DEEPBIND) != 0)
 				obj->deepbind = true;
 			result = 0;
-			if ((lo_flags & (RTLD_LO_EARLY | RTLD_LO_IGNSTLS)) ==
-				0 &&
+			if ((lo_flags & (RTLD_LO_EARLY |
+			    RTLD_LO_IGNSTLS)) == 0 &&
 			    obj->static_tls && !allocate_tls_offset(obj)) {
-				_rtld_error("%s: No space available "
-					    "for static Thread Local Storage",
+				_rtld_error(
+		    "%s: No space available for static Thread Local Storage",
 				    obj->path);
 				result = -1;
 			}
 			if (result != -1)
 				result = load_needed_objects(obj,
-				    lo_flags &
-					(RTLD_LO_DLOPEN | RTLD_LO_EARLY |
-					    RTLD_LO_IGNSTLS | RTLD_LO_TRACE));
+				    lo_flags & (RTLD_LO_DLOPEN | RTLD_LO_EARLY |
+				    RTLD_LO_IGNSTLS | RTLD_LO_TRACE));
 			init_dag(obj);
 			ref_dag(obj);
 			if (result != -1)
 				result = rtld_verify_versions(&obj->dagmembers);
 			if (result != -1 && ld_tracing)
 				goto trace;
-			if (result == -1 ||
-			    relocate_object_dag(obj,
-				(mode & RTLD_MODEMASK) == RTLD_NOW, &obj_rtld,
-				(lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
-				lockstate) == -1) {
+			if (result == -1 || relocate_object_dag(obj,
+			    (mode & RTLD_MODEMASK) == RTLD_NOW, &obj_rtld,
+			    (lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
+			    lockstate) == -1) {
 				dlopen_cleanup(obj, lockstate);
 				obj = NULL;
-			} else if (lo_flags & RTLD_LO_EARLY) {
+			} else if ((lo_flags & RTLD_LO_EARLY) != 0) {
 				/*
 				 * Do not call the init functions for early
 				 * loaded filtees.  The image is still not
@@ -3896,10 +3906,9 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 			distribute_static_tls(&initlist, lockstate);
 	}
 
-	if (initlist_objects_ifunc(&initlist,
-		(mode & RTLD_MODEMASK) == RTLD_NOW,
-		(lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
-		lockstate) == -1) {
+	if (initlist_objects_ifunc(&initlist, (mode & RTLD_MODEMASK) ==
+	    RTLD_NOW, (lo_flags & RTLD_LO_EARLY) ? SYMLOOK_EARLY : 0,
+	    lockstate) == -1) {
 		objlist_clear(&initlist);
 		dlopen_cleanup(obj, lockstate);
 		if (lockstate == &mlockstate)
@@ -3907,7 +3916,7 @@ dlopen_object(const char *name, int fd, Obj_Entry *refobj, int lo_flags,
 		return (NULL);
 	}
 
-	if (!(lo_flags & RTLD_LO_EARLY)) {
+	if ((lo_flags & RTLD_LO_EARLY) == 0) {
 		/* Call the init functions. */
 		objlist_call_init(&initlist, lockstate);
 	}
@@ -4673,12 +4682,13 @@ symlook_default(SymLook *req, const Obj_Entry *refobj)
 	 */
 	res = symlook_obj(&req1, refobj);
 	if (res == 0 && (refobj->symbolic ||
-	    ELF_ST_VISIBILITY(req1.sym_out->st_other) == STV_PROTECTED)) {
+	    ELF_ST_VISIBILITY(req1.sym_out->st_other) == STV_PROTECTED ||
+	    refobj->deepbind)) {
 		req->sym_out = req1.sym_out;
 		req->defobj_out = req1.defobj_out;
 		assert(req->defobj_out != NULL);
 	}
-	if (refobj->symbolic || req->defobj_out != NULL)
+	if (refobj->symbolic || req->defobj_out != NULL || refobj->deepbind)
 		donelist_check(&donelist, refobj);
 
 	if (!refobj->deepbind)
