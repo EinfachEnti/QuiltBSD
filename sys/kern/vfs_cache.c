@@ -41,6 +41,7 @@
 #include <sys/counter.h>
 #include <sys/filedesc.h>
 #include <sys/fnv_hash.h>
+#include <sys/inotify.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
@@ -627,8 +628,7 @@ SYSCTL_INT(_debug, OID_AUTO, vfscache, CTLFLAG_RW, &doingcache, 0,
 #endif
 
 /* Export size information to userland */
-SYSCTL_INT(_debug_sizeof, OID_AUTO, namecache, CTLFLAG_RD, SYSCTL_NULL_INT_PTR,
-    sizeof(struct namecache), "sizeof(struct namecache)");
+SYSCTL_SIZEOF_STRUCT(namecache);
 
 /*
  * The new name cache statistics
@@ -2630,6 +2630,14 @@ cache_enter_time(struct vnode *dvp, struct vnode *vp, struct componentname *cnp,
 		atomic_store_ptr(&dvp->v_cache_dd, ncp);
 	} else if (vp != NULL) {
 		/*
+		 * Take the slow path in INOTIFY().  This flag will be lazily
+		 * cleared by cache_vop_inotify() once all directories referring
+		 * to vp are unwatched.
+		 */
+		if (__predict_false((vn_irflag_read(dvp) & VIRF_INOTIFY) != 0))
+			vn_irflag_set_cond(vp, VIRF_INOTIFY_PARENT);
+
+		/*
 		 * For this case, the cache entry maps both the
 		 * directory name in it and the name ".." for the
 		 * directory's parent.
@@ -2772,7 +2780,7 @@ nchinit(void *dummy __unused)
 
 	ncsize = desiredvnodes * ncsizefactor;
 	cache_recalc_neg_min();
-	nchashtbl = nchinittbl(desiredvnodes * 2, &nchash);
+	nchashtbl = nchinittbl(ncsize, &nchash);
 	ncbuckethash = cache_roundup_2(mp_ncpus * mp_ncpus) - 1;
 	if (ncbuckethash < 7) /* arbitrarily chosen to avoid having one lock */
 		ncbuckethash = 7;
@@ -4009,6 +4017,56 @@ out:
 	return (error);
 }
 
+void
+cache_vop_inotify(struct vnode *vp, int event, uint32_t cookie)
+{
+	struct mtx *vlp;
+	struct namecache *ncp;
+	int isdir;
+	bool logged, self;
+
+	isdir = vp->v_type == VDIR ? IN_ISDIR : 0;
+	self = (vn_irflag_read(vp) & VIRF_INOTIFY) != 0 &&
+	    (vp->v_type != VDIR || (event & ~_IN_DIR_EVENTS) != 0);
+
+	if (self) {
+		int selfevent;
+
+		if (event == _IN_ATTRIB_LINKCOUNT)
+			selfevent = IN_ATTRIB;
+		else
+			selfevent = event;
+		inotify_log(vp, NULL, 0, selfevent | isdir, cookie);
+	}
+	if ((event & IN_ALL_EVENTS) == 0)
+		return;
+
+	logged = false;
+	vlp = VP2VNODELOCK(vp);
+	mtx_lock(vlp);
+	TAILQ_FOREACH(ncp, &vp->v_cache_dst, nc_dst) {
+		if ((ncp->nc_flag & NCF_ISDOTDOT) != 0)
+			continue;
+		if ((vn_irflag_read(ncp->nc_dvp) & VIRF_INOTIFY) != 0) {
+			/*
+			 * XXX-MJ if the vnode has two links in the same
+			 * dir, we'll log the same event twice.
+			 */
+			inotify_log(ncp->nc_dvp, ncp->nc_name, ncp->nc_nlen,
+			    event | isdir, cookie);
+			logged = true;
+		}
+	}
+	if (!logged && (vn_irflag_read(vp) & VIRF_INOTIFY_PARENT) != 0) {
+		/*
+		 * We didn't find a watched directory that contains this vnode,
+		 * so stop calling VOP_INOTIFY for operations on the vnode.
+		 */
+		vn_irflag_unset(vp, VIRF_INOTIFY_PARENT);
+	}
+	mtx_unlock(vlp);
+}
+
 #ifdef DDB
 static void
 db_print_vpath(struct vnode *vp)
@@ -4175,7 +4233,7 @@ SYSCTL_PROC(_vfs_cache_param, OID_AUTO, fast_lookup, CTLTYPE_INT|CTLFLAG_RW|CTLF
  */
 struct nameidata_outer {
 	size_t ni_pathlen;
-	int cn_flags;
+	uint64_t cn_flags;
 };
 
 struct nameidata_saved {
@@ -4457,7 +4515,7 @@ cache_fpl_terminated(struct cache_fpl *fpl)
 	(NC_NOMAKEENTRY | NC_KEEPPOSENTRY | LOCKLEAF | LOCKPARENT | WANTPARENT | \
 	 FAILIFEXISTS | FOLLOW | EMPTYPATH | LOCKSHARED | ISRESTARTED | WILLBEDIR | \
 	 ISOPEN | NOMACCHECK | AUDITVNODE1 | AUDITVNODE2 | NOCAPCHECK | OPENREAD | \
-	 OPENWRITE | WANTIOCTLCAPS | OPENNAMED)
+	 OPENWRITE | WANTIOCTLCAPS | NAMEILOOKUP)
 
 #define CACHE_FPL_INTERNAL_CN_FLAGS \
 	(ISDOTDOT | MAKEENTRY | ISLASTCN)
@@ -4521,10 +4579,6 @@ cache_can_fplookup(struct cache_fpl *fpl)
 		cache_fpl_aborted_early(fpl);
 		return (false);
 	}
-	if ((cnp->cn_flags & OPENNAMED) != 0) {
-		cache_fpl_aborted_early(fpl);
-		return (false);
-	}
 	return (true);
 }
 
@@ -4533,17 +4587,23 @@ cache_fplookup_dirfd(struct cache_fpl *fpl, struct vnode **vpp)
 {
 	struct nameidata *ndp;
 	struct componentname *cnp;
-	int error;
-	bool fsearch;
+	int error, flags;
 
 	ndp = fpl->ndp;
 	cnp = fpl->cnp;
 
-	error = fgetvp_lookup_smr(ndp, vpp, &fsearch);
+	error = fgetvp_lookup_smr(ndp, vpp, &flags);
 	if (__predict_false(error != 0)) {
 		return (cache_fpl_aborted(fpl));
 	}
-	fpl->fsearch = fsearch;
+	if (__predict_false((flags & O_RESOLVE_BENEATH) != 0)) {
+		_Static_assert((CACHE_FPL_SUPPORTED_CN_FLAGS & RBENEATH) == 0,
+		    "RBENEATH supported by fplookup");
+		cache_fpl_smr_exit(fpl);
+		cache_fpl_aborted(fpl);
+		return (EOPNOTSUPP);
+	}
+	fpl->fsearch = (flags & FSEARCH) != 0;
 	if ((*vpp)->v_type != VDIR) {
 		if (!((cnp->cn_flags & EMPTYPATH) != 0 && cnp->cn_pnbuf[0] == '\0')) {
 			cache_fpl_smr_exit(fpl);
@@ -5274,30 +5334,19 @@ static int __noinline
 cache_fplookup_dotdot(struct cache_fpl *fpl)
 {
 	struct nameidata *ndp;
-	struct componentname *cnp;
 	struct namecache *ncp;
 	struct vnode *dvp;
-	struct prison *pr;
 	u_char nc_flag;
 
 	ndp = fpl->ndp;
-	cnp = fpl->cnp;
 	dvp = fpl->dvp;
 
-	MPASS(cache_fpl_isdotdot(cnp));
+	MPASS(cache_fpl_isdotdot(fpl->cnp));
 
 	/*
 	 * XXX this is racy the same way regular lookup is
 	 */
-	for (pr = cnp->cn_cred->cr_prison; pr != NULL;
-	    pr = pr->pr_parent)
-		if (dvp == pr->pr_root)
-			break;
-
-	if (dvp == ndp->ni_rootdir ||
-	    dvp == ndp->ni_topdir ||
-	    dvp == rootvnode ||
-	    pr != NULL) {
+	if (vfs_lookup_isroot(ndp, dvp)) {
 		fpl->tvp = dvp;
 		fpl->tvp_seqc = vn_seqc_read_any(dvp);
 		if (seqc_in_modify(fpl->tvp_seqc)) {

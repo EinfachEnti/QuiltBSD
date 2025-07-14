@@ -114,6 +114,7 @@ andre [label="Andre Oppermann\nandre@FreeBSD.org\n2003/11/12"]
 andreast [label="Andreas Tobler\nandreast@FreeBSD.org\n2010/09/05"]
 andrew [label="Andrew Turner\nandrew@FreeBSD.org\n2010/07/19"]
 antoine [label="Antoine Brodin\nantoine@FreeBSD.org\n2008/02/03"]
+aokblast [label="ShengYi Hung\naokblast@FreeBSD.org\n2025/07/02"]
 araujo [label="Marcelo Araujo\naraujo@FreeBSD.org\n2015/08/04"]
 arichardson [label="Alex Richardson\narichardson@FreeBSD.org\n2017/10/30"]
 ariff [label="Ariff Abdullah\nariff@FreeBSD.org\n2005/11/14"]
@@ -251,7 +252,9 @@ ken [label="Ken Merry\nken@FreeBSD.org\n1998/09/08"]
 kensmith [label="Ken Smith\nkensmith@FreeBSD.org\n2004/01/23"]
 kevans [label="Kyle Evans\nkevans@FreeBSD.org\n2017/06/20"]
 kevlo [label="Kevin Lo\nkevlo@FreeBSD.org\n2006/07/23"]
+kgalazka [label="Krzysztof Galazka\nkgalazka@FreeBSD.org\n2025/04/07"]
 khng [label="Ka Ho Ng\nkhng@FreeBSD.org\n2021/03/15"]
+khorben [label="Pierre Pronchery\nkhorben@FreeBSD.org\n2025/05/06"]
 kib [label="Konstantin Belousov\nkib@FreeBSD.org\n2006/06/03"]
 kibab [label="Ilya Bakulin\nkibab@FreeBSD.org\n2017/09/02"]
 kmacy [label="Kip Macy\nkmacy@FreeBSD.org\n2005/06/01"]
@@ -382,6 +385,7 @@ uqs [label="Ulrich Spoerlein\nuqs@FreeBSD.org\n2010/01/28"]
 vangyzen [label="Eric van Gyzen\nvangyzen@FreeBSD.org\n2015/03/08"]
 vanhu [label="Yvan Vanhullebus\nvanhu@FreeBSD.org\n2008/07/21"]
 versus [label="Konrad Jankowski\nversus@FreeBSD.org\n2008/10/27"]
+vexeduxr [label="Ahmad Khalifa\nvexeduxr@FreeBSD.org\n2025/06/13"]
 vmaffione [label="Vincenzo Maffione\nvmaffione@FreeBSD.org\n2018/03/19"]
 weongyo [label="Weongyo Jeong\nweongyo@FreeBSD.org\n2007/12/21"]
 wes [label="Wes Peters\nwes@FreeBSD.org\n1998/11/25"]
@@ -563,6 +567,7 @@ emaste -> scottph
 emax -> markus
 
 erj -> jeb
+erj -> kgalazka
 
 fjoe -> versus
 
@@ -635,6 +640,7 @@ imp -> takawata
 imp -> toshi
 imp -> tsoome
 imp -> uch
+imp -> vexeduxr
 
 jake -> bms
 jake -> gordon
@@ -714,6 +720,8 @@ julian -> mp
 
 kan -> kib
 
+kbowling -> kgalazka
+
 ken -> asomers
 ken -> chuck
 ken -> ram
@@ -757,6 +765,7 @@ kp -> nick
 kp -> rcm
 kp -> zlei
 
+lwhsu -> aokblast
 lwhsu -> khng
 
 manu -> corvink
@@ -770,6 +779,7 @@ marcel -> nwhitehorn
 marcel -> sjg
 
 markj -> "0mp"
+markj -> aokblast
 markj -> bnovkov
 markj -> cem
 markj -> christos
@@ -848,6 +858,7 @@ philip -> donner
 philip -> ed
 philip -> jls
 philip -> khng
+philip -> khorben
 philip -> matteo
 philip -> uqs
 philip -> kp

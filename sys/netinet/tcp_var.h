@@ -528,15 +528,6 @@ typedef enum {
 /* Minimum map entries limit value, if set */
 #define TCP_MIN_MAP_ENTRIES_LIMIT	128
 
-/*
- * TODO: We yet need to brave plowing in
- * to tcp_input() and the pru_usrreq() block.
- * Right now these go to the old standards which
- * are somewhat ok, but in the long term may
- * need to be changed. If we do tackle tcp_input()
- * then we need to get rid of the tcp_do_segment()
- * function below.
- */
 /* Flags for tcp functions */
 #define	TCP_FUNC_BEING_REMOVED	0x01   	/* Can no longer be referenced */
 #define	TCP_FUNC_OUTPUT_CANDROP	0x02   	/* tfb_tcp_output may ask tcp_drop */
@@ -936,9 +927,12 @@ struct in_conninfo;
 	  + (tp)->t_rttvar) >> TCP_DELTA_SHIFT)
 
 /*
- * TCP statistics.
- * Many of these should be kept per connection,
- * but that's inconvenient at the moment.
+ * Global (per-VNET) TCP statistics.  The below structure represents what we
+ * export to the userland, but in the kernel we have an array of counter_u64_t
+ * with as many elements as there are members in the structure.  The counters
+ * shall be increased by TCPSTAT_INC() or KMOD_TCPSTAT_INC().  Adding a new
+ * counter also requires adding corresponding SDT probes into in_kdtrace.h and
+ * into in_kdtrace.c.
  */
 struct	tcpstat {
 	uint64_t tcps_connattempt;	/* connections initiated */
@@ -1024,6 +1018,8 @@ struct	tcpstat {
 	uint64_t tcps_sc_zonefail;	/* zalloc() failed */
 	uint64_t tcps_sc_sendcookie;	/* SYN cookie sent */
 	uint64_t tcps_sc_recvcookie;	/* SYN cookie received */
+	uint64_t tcps_sc_spurcookie;	/* SYN cookie spurious, rejected */
+	uint64_t tcps_sc_failcookie;	/* SYN cookie failed, rejected */
 
 	uint64_t tcps_hc_added;		/* entry added to hostcache */
 	uint64_t tcps_hc_bucketoverflow;/* hostcache per bucket limit hit */
@@ -1243,6 +1239,9 @@ struct tcp_function_info {
 #define	TCPCTL_SACK		14	/* Selective Acknowledgement,rfc 2018 */
 #define	TCPCTL_DROP		15	/* drop tcp connection */
 #define	TCPCTL_STATES		16	/* connection counts by TCP state */
+#define	TCPCTL_KTLSLIST		17	/* connections with active ktls
+					   session */
+#define	TCPCTL_KTLSLIST_WKEYS	18	/* KTLSLIST with key data exported */
 
 #ifdef _KERNEL
 #ifdef SYSCTL_DECL

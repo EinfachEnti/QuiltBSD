@@ -27,12 +27,12 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_kern_tls.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
+#include <sys/inotify.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/ktls.h>
@@ -83,7 +83,7 @@ static MALLOC_DEFINE(M_SENDFILE, "sendfile", "sendfile dynamic memory");
  * Every I/O completion calls sendfile_iodone(), which decrements the 'nios',
  * and the syscall also calls sendfile_iodone() after allocating all mbufs,
  * linking them and sending to socket.  Whoever reaches zero 'nios' is
- * responsible to * call pru_ready on the socket, to notify it of readyness
+ * responsible to call pr_ready() on the socket, to notify it of readyness
  * of the data.
  */
 struct sf_io {
@@ -285,6 +285,11 @@ sendfile_iowait(struct sf_io *sfio, const char *wmesg)
 
 /*
  * I/O completion callback.
+ *
+ * When called via I/O path, the curvnet is not set and should be obtained
+ * from the socket.  When called synchronously from vn_sendfile(), usually
+ * to report error or just release the reference (all pages are valid), then
+ * curvnet shall be already set.
  */
 static void
 sendfile_iodone(void *arg, vm_page_t *pa, int count, int error)
@@ -348,7 +353,7 @@ sendfile_iodone(void *arg, vm_page_t *pa, int count, int error)
 		 * Either I/O operation failed, or we failed to allocate
 		 * buffers, or we bailed out on first busy page, or we
 		 * succeeded filling the request without any I/Os. Anyway,
-		 * pru_send hadn't been executed - nothing had been sent
+		 * pr_send() hadn't been executed - nothing had been sent
 		 * to the socket yet.
 		 */
 		MPASS((curthread->td_pflags & TDP_KTHREAD) == 0);
@@ -365,7 +370,7 @@ sendfile_iodone(void *arg, vm_page_t *pa, int count, int error)
 		    ("non-ext_pgs mbuf with TLS session"));
 #endif
 	so = sfio->so;
-	CURVNET_SET(so->so_vnet);
+	CURVNET_SET_QUIET(so->so_vnet);
 	if (__predict_false(sfio->error)) {
 		/*
 		 * I/O operation failed.  The state of data in the socket
@@ -793,7 +798,11 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	SFSTAT_INC(sf_syscalls);
 	SFSTAT_ADD(sf_rhpages_requested, SF_READAHEAD(flags));
 
-	if (flags & SF_SYNC) {
+	if (__predict_false(flags & SF_SYNC)) {
+		gone_in(16, "Warning! %s[%u] uses SF_SYNC sendfile(2) flag. "
+		    "Please follow up to https://bugs.freebsd.org/"
+		    "bugzilla/show_bug.cgi?id=287348. ",
+		    td->td_proc->p_comm, td->td_proc->p_pid);
 		sfs = malloc(sizeof(*sfs), M_SENDFILE, M_WAITOK | M_ZERO);
 		mtx_init(&sfs->mtx, "sendfile", NULL, MTX_DEF);
 		cv_init(&sfs->cv, "sendfile");
@@ -811,6 +820,7 @@ vn_sendfile(struct file *fp, int sockfd, struct uio *hdr_uio,
 	error = SOCK_IO_SEND_LOCK(so, SBL_WAIT | SBL_NOINTR);
 	if (error != 0)
 		goto out;
+	CURVNET_SET(so->so_vnet);
 #ifdef KERN_TLS
 	tls = ktls_hold(so->so_snd.sb_tls_info);
 #endif
@@ -1161,7 +1171,6 @@ prepend_header:
 		    ("%s: mlen %u space %d hdrlen %d",
 		    __func__, m_length(m, NULL), space, hdrlen));
 
-		CURVNET_SET(so->so_vnet);
 #ifdef KERN_TLS
 		if (tls != NULL)
 			ktls_frame(m, tls, &tls_enq_cnt, TLS_RLTYPE_APP);
@@ -1203,8 +1212,6 @@ prepend_header:
 			tcp_log_sendfile(so, offset, nbytes, flags);
 		}
 #endif
-		CURVNET_RESTORE();
-
 		m = NULL;
 		if (error)
 			goto done;
@@ -1222,6 +1229,7 @@ prepend_header:
 	 */
 	if (trl_uio != NULL) {
 		SOCK_IO_SEND_UNLOCK(so);
+		CURVNET_RESTORE();
 		error = kern_writev(td, sockfd, trl_uio);
 		if (error == 0)
 			sbytes += td->td_retval[0];
@@ -1230,6 +1238,7 @@ prepend_header:
 
 done:
 	SOCK_IO_SEND_UNLOCK(so);
+	CURVNET_RESTORE();
 out:
 	/*
 	 * If there was no error we have to clear td->td_retval[0]
@@ -1237,6 +1246,8 @@ out:
 	 */
 	if (error == 0) {
 		td->td_retval[0] = 0;
+		if (sbytes > 0 && vp != NULL)
+			INOTIFY(vp, IN_ACCESS);
 	}
 	if (sent != NULL) {
 		(*sent) = sbytes;
@@ -1265,7 +1276,6 @@ out:
 	if (tls != NULL)
 		ktls_free(tls);
 #endif
-
 	if (error == ERESTART)
 		error = EINTR;
 
