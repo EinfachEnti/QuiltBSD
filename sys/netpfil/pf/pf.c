@@ -327,7 +327,7 @@ int			 pf_change_icmp_af(struct mbuf *, int,
 			    sa_family_t);
 int			 pf_translate_icmp_af(int, void *);
 static void		 pf_send_icmp(struct mbuf *, u_int8_t, u_int8_t,
-			    int, sa_family_t, int);
+			    int, sa_family_t, struct pf_krule *, int);
 static void		 pf_detach_state(struct pf_kstate *);
 static int		 pf_state_key_attach(struct pf_state_key *,
 			    struct pf_state_key *, struct pf_kstate *);
@@ -4349,11 +4349,11 @@ pf_return(struct pf_krule *r, struct pf_krule *nr, struct pf_pdesc *pd,
 	} else if (pd->proto != IPPROTO_ICMP && pd->af == AF_INET &&
 		r->return_icmp)
 		pf_send_icmp(pd->m, r->return_icmp >> 8,
-			r->return_icmp & 255, 0, pd->af, rtableid);
+			r->return_icmp & 255, 0, pd->af, r, rtableid);
 	else if (pd->proto != IPPROTO_ICMPV6 && pd->af == AF_INET6 &&
 		r->return_icmp6)
 		pf_send_icmp(pd->m, r->return_icmp6 >> 8,
-			r->return_icmp6 & 255, 0, pd->af, rtableid);
+			r->return_icmp6 & 255, 0, pd->af, r, rtableid);
 }
 
 static int
@@ -4411,7 +4411,7 @@ pf_send_challenge_ack(struct pf_pdesc *pd, struct pf_kstate *s,
 
 static void
 pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, int mtu,
-    sa_family_t af, int rtableid)
+    sa_family_t af, struct pf_krule *r, int rtableid)
 {
 	struct pf_send_entry *pfse;
 	struct mbuf *m0;
@@ -9016,7 +9016,7 @@ pf_route(struct pf_krule *r, struct ifnet *oifp,
 		if (ip->ip_ttl <= IPTTLDEC) {
 			if (r->rt != PF_DUPTO)
 				pf_send_icmp(m0, ICMP_TIMXCEED,
-				    ICMP_TIMXCEED_INTRANS, 0, pd->af,
+				    ICMP_TIMXCEED_INTRANS, 0, pd->af, r,
 				    pd->act.rtableid);
 			goto bad_locked;
 		}
@@ -9162,7 +9162,7 @@ pf_route(struct pf_krule *r, struct ifnet *oifp,
 			}
 
 			pf_send_icmp(m0, ICMP_UNREACH, ICMP_UNREACH_NEEDFRAG,
-			   ifp->if_mtu, pd->af, pd->act.rtableid);
+			   ifp->if_mtu, pd->af, r, pd->act.rtableid);
 		}
 		SDT_PROBE1(pf, ip, route_to, drop, __LINE__);
 		goto bad;
@@ -9313,7 +9313,7 @@ pf_route6(struct pf_krule *r, struct ifnet *oifp,
 		if (ip6->ip6_hlim <= IPV6_HLIMDEC) {
 			if (r->rt != PF_DUPTO)
 				pf_send_icmp(m0, ICMP6_TIME_EXCEEDED,
-				    ICMP6_TIME_EXCEED_TRANSIT, 0, pd->af,
+				    ICMP6_TIME_EXCEED_TRANSIT, 0, pd->af, r,
 				    pd->act.rtableid);
 			goto bad_locked;
 		}
@@ -9462,7 +9462,7 @@ pf_route6(struct pf_krule *r, struct ifnet *oifp,
 
 			if (r->rt != PF_DUPTO)
 				pf_send_icmp(m0, ICMP6_PACKET_TOO_BIG, 0,
-				    ifp->if_mtu, pd->af, pd->act.rtableid);
+				    ifp->if_mtu, pd->af, r, pd->act.rtableid);
 		}
 		SDT_PROBE1(pf, ip6, route_to, drop, __LINE__);
 		goto bad;
@@ -10064,6 +10064,8 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 	pd->didx = (dir == PF_IN) ? 1 : 0;
 	pd->af = pd->naf = af;
 
+	PF_RULES_ASSERT();
+
 	TAILQ_INIT(&pd->sctp_multihome_jobs);
 	if (default_actions != NULL)
 		memcpy(&pd->act, default_actions, sizeof(pd->act));
@@ -10139,6 +10141,12 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		}
 
 		h = mtod(pd->m, struct ip6_hdr *);
+		if (pd->m->m_pkthdr.len <
+		    sizeof(struct ip6_hdr) + ntohs(h->ip6_plen)) {
+			*action = PF_DROP;
+			REASON_SET(reason, PFRES_SHORT);
+			return (-1);
+		}
 
 		if (pf_walk_header6(pd, h, reason) != PF_PASS) {
 			*action = PF_DROP;
@@ -10477,11 +10485,10 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 	PF_RULES_RLOCK_TRACKER;
 	KASSERT(dir == PF_IN || dir == PF_OUT, ("%s: bad direction %d\n", __func__, dir));
 	M_ASSERTPKTHDR(*m0);
+	NET_EPOCH_ASSERT();
 
 	if (!V_pf_status.running)
 		return (PF_PASS);
-
-	PF_RULES_RLOCK();
 
 	kif = (struct pfi_kkif *)ifp->if_pf_kif;
 
@@ -10489,23 +10496,19 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		DPFPRINTF(PF_DEBUG_URGENT,
 		    ("%s: kif == NULL, if_xname %s\n",
 		    __func__, ifp->if_xname));
-		PF_RULES_RUNLOCK();
 		return (PF_DROP);
 	}
 	if (kif->pfik_flags & PFI_IFLAG_SKIP) {
-		PF_RULES_RUNLOCK();
 		return (PF_PASS);
 	}
 
 	if ((*m0)->m_flags & M_SKIP_FIREWALL) {
-		PF_RULES_RUNLOCK();
 		return (PF_PASS);
 	}
 
 	if (__predict_false(! M_WRITABLE(*m0))) {
 		*m0 = m_unshare(*m0, M_NOWAIT);
 		if (*m0 == NULL) {
-			PF_RULES_RUNLOCK();
 			return (PF_DROP);
 		}
 	}
@@ -10518,12 +10521,10 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		ifp = ifnet_byindexgen(pd.pf_mtag->if_index,
 		    pd.pf_mtag->if_idxgen);
 		if (ifp == NULL || ifp->if_flags & IFF_DYING) {
-			PF_RULES_RUNLOCK();
 			m_freem(*m0);
 			*m0 = NULL;
 			return (PF_PASS);
 		}
-		PF_RULES_RUNLOCK();
 		(ifp->if_output)(ifp, *m0, sintosa(&pd.pf_mtag->dst), NULL);
 		*m0 = NULL;
 		return (PF_PASS);
@@ -10538,10 +10539,11 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		/* But only once. We may see the packet multiple times (e.g.
 		 * PFIL_IN/PFIL_OUT). */
 		pf_dummynet_flag_remove(pd.m, pd.pf_mtag);
-		PF_RULES_RUNLOCK();
 
 		return (PF_PASS);
 	}
+
+	PF_RULES_RLOCK();
 
 	if (pf_setup_pdesc(af, dir, &pd, m0, &action, &reason,
 		kif, default_actions) == -1) {
