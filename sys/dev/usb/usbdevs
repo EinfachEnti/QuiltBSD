@@ -102,7 +102,7 @@ vendor CREATIVE		0x041e	Creative Labs
 vendor NOKIA		0x0421	Nokia
 vendor ADI		0x0422	ADI Systems
 vendor CATC		0x0423	Computer Access Technology
-/vendor SMC2		0x0424	Microchip Technology
+vendor SMC2		0x0424	Microchip Technology
 vendor MOTOROLA_HK	0x0425	Motorola HK
 vendor GRAVIS		0x0428	Advanced Gravis Computer
 vendor CIRRUSLOGIC	0x0429	Cirrus Logic
