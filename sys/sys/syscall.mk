@@ -433,4 +433,7 @@ MIASM =  \
 	kcmp.o \
 	getrlimitusage.o \
 	fchroot.o \
-	setcred.o
+	setcred.o \
+	exterrctl.o \
+	inotify_add_watch_at.o \
+	inotify_rm_watch.o

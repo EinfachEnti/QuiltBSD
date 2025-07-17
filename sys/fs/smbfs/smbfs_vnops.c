@@ -810,6 +810,9 @@ smbfs_pathconf(struct vop_pathconf_args *ap)
 	    case _PC_NO_TRUNC:
 		*retval = 1;
 		break;
+	    case _PC_HAS_HIDDENSYSTEM:
+		*retval = 1;
+		break;
 	    default:
 		error = vop_stdpathconf(ap);
 	}
@@ -1051,7 +1054,7 @@ smbfs_lookup(struct vop_lookup_args *ap)
 	struct smbfattr fattr, *fap;
 	struct smb_cred *scred;
 	char *name = cnp->cn_nameptr;
-	int flags = cnp->cn_flags;
+	uint64_t flags = cnp->cn_flags;
 	int nameiop = cnp->cn_nameiop;
 	int nmlen = cnp->cn_namelen;
 	int error, islastcn, isdot;

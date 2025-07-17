@@ -40,43 +40,37 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_hwpmc_hooks.h"
+#include "opt_hwt_hooks.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/buf.h>
 #include <sys/disk.h>
+#include <sys/dirent.h>
 #include <sys/fail.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
-#include <sys/kdb.h>
+#include <sys/filio.h>
+#include <sys/inotify.h>
 #include <sys/ktr.h>
-#include <sys/stat.h>
-#include <sys/priv.h>
-#include <sys/proc.h>
+#include <sys/ktrace.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/mutex.h>
 #include <sys/namei.h>
-#include <sys/vnode.h>
-#include <sys/dirent.h>
-#include <sys/bio.h>
-#include <sys/buf.h>
-#include <sys/filio.h>
-#include <sys/resourcevar.h>
-#include <sys/rwlock.h>
+#include <sys/priv.h>
 #include <sys/prng.h>
-#include <sys/sx.h>
+#include <sys/proc.h>
+#include <sys/rwlock.h>
 #include <sys/sleepqueue.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
-#include <sys/ttycom.h>
-#include <sys/conf.h>
-#include <sys/syslog.h>
 #include <sys/unistd.h>
 #include <sys/user.h>
-#include <sys/ktrace.h>
+#include <sys/vnode.h>
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
@@ -92,6 +86,10 @@
 
 #ifdef HWPMC_HOOKS
 #include <sys/pmckern.h>
+#endif
+
+#ifdef HWT_HOOKS
+#include <dev/hwt/hwt_hook.h>
 #endif
 
 static fo_rdwr_t	vn_read;
@@ -195,11 +193,11 @@ vn_open(struct nameidata *ndp, int *flagp, int cmode, struct file *fp)
 }
 
 static uint64_t
-open2nameif(int fmode, u_int vn_open_flags)
+open2nameif(int fmode, u_int vn_open_flags, uint64_t cn_flags)
 {
 	uint64_t res;
 
-	res = ISOPEN | LOCKLEAF;
+	res = ISOPEN | LOCKLEAF | cn_flags;
 	if ((fmode & O_RESOLVE_BENEATH) != 0)
 		res |= RBENEATH;
 	if ((fmode & O_EMPTY_PATH) != 0)
@@ -208,17 +206,19 @@ open2nameif(int fmode, u_int vn_open_flags)
 		res |= OPENREAD;
 	if ((fmode & FWRITE) != 0)
 		res |= OPENWRITE;
-	if ((fmode & O_NAMEDATTR) != 0) {
-		res |= OPENNAMED;
-		if ((fmode & O_CREAT) != 0)
-			res |= CREATENAMED;
-	}
+	if ((fmode & O_NAMEDATTR) != 0)
+		res |= OPENNAMED | CREATENAMED;
+	if ((fmode & O_NOFOLLOW) != 0)
+		res &= ~FOLLOW;
 	if ((vn_open_flags & VN_OPEN_NOAUDIT) == 0)
 		res |= AUDITVNODE1;
+	else
+		res &= ~AUDITVNODE1;
 	if ((vn_open_flags & VN_OPEN_NOCAPCHECK) != 0)
 		res |= NOCAPCHECK;
 	if ((vn_open_flags & VN_OPEN_WANTIOCTLCAPS) != 0)
 		res |= WANTIOCTLCAPS;
+
 	return (res);
 }
 
@@ -269,7 +269,9 @@ restart:
 		return (EINVAL);
 	else if ((fmode & (O_CREAT | O_DIRECTORY)) == O_CREAT) {
 		ndp->ni_cnd.cn_nameiop = CREATE;
-		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags);
+		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags,
+		    ndp->ni_cnd.cn_flags);
+
 		/*
 		 * Set NOCACHE to avoid flushing the cache when
 		 * rolling in many files at once.
@@ -278,8 +280,8 @@ restart:
 		 * exist despite NOCACHE.
 		 */
 		ndp->ni_cnd.cn_flags |= LOCKPARENT | NOCACHE | NC_KEEPPOSENTRY;
-		if ((fmode & O_EXCL) == 0 && (fmode & O_NOFOLLOW) == 0)
-			ndp->ni_cnd.cn_flags |= FOLLOW;
+		if ((fmode & O_EXCL) != 0)
+			ndp->ni_cnd.cn_flags &= ~FOLLOW;
 		if ((vn_open_flags & VN_OPEN_INVFS) == 0)
 			bwillwrite();
 		if ((error = namei(ndp)) != 0)
@@ -307,7 +309,8 @@ restart:
 				NDREINIT(ndp);
 				goto restart;
 			}
-			if ((vn_open_flags & VN_OPEN_NAMECACHE) != 0)
+			if ((vn_open_flags & VN_OPEN_NAMECACHE) != 0 ||
+			    (vn_irflag_read(ndp->ni_dvp) & VIRF_INOTIFY) != 0)
 				ndp->ni_cnd.cn_flags |= MAKEENTRY;
 #ifdef MAC
 			error = mac_vnode_check_create(cred, ndp->ni_dvp,
@@ -359,9 +362,8 @@ restart:
 		}
 	} else {
 		ndp->ni_cnd.cn_nameiop = LOOKUP;
-		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags);
-		ndp->ni_cnd.cn_flags |= (fmode & O_NOFOLLOW) != 0 ? NOFOLLOW :
-		    FOLLOW;
+		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags,
+		    ndp->ni_cnd.cn_flags);
 		if ((fmode & FWRITE) == 0)
 			ndp->ni_cnd.cn_flags |= LOCKSHARED;
 		if ((error = namei(ndp)) != 0)
@@ -484,6 +486,7 @@ vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
 		if (vp->v_type != VFIFO && vp->v_type != VSOCK &&
 		    VOP_ACCESS(vp, VREAD, cred, td) == 0)
 			fp->f_flag |= FKQALLOWED;
+		INOTIFY(vp, IN_OPEN);
 		return (0);
 	}
 
@@ -831,7 +834,7 @@ foffset_lock(struct file *fp, int flags)
 		}
 		DROP_GIANT();
 		sleepq_add(&fp->f_vnread_flags, NULL, "vofflock", 0, 0);
-		sleepq_wait(&fp->f_vnread_flags, PUSER -1);
+		sleepq_wait(&fp->f_vnread_flags, PRI_MAX_KERN);
 		PICKUP_GIANT();
 		sleepq_lock(&fp->f_vnread_flags);
 		state = atomic_load_16(flagsp);
@@ -893,7 +896,7 @@ foffset_lock(struct file *fp, int flags)
 	if ((flags & FOF_NOLOCK) == 0) {
 		while (fp->f_vnread_flags & FOFFSET_LOCKED) {
 			fp->f_vnread_flags |= FOFFSET_LOCK_WAITING;
-			msleep(&fp->f_vnread_flags, mtxp, PUSER -1,
+			msleep(&fp->f_vnread_flags, mtxp, PRI_MAX_KERN,
 			    "vofflock", 0);
 		}
 		fp->f_vnread_flags |= FOFFSET_LOCKED;
@@ -1746,6 +1749,8 @@ vn_truncate_locked(struct vnode *vp, off_t length, bool sync,
 			vattr.va_vaflags |= VA_SYNC;
 		error = VOP_SETATTR(vp, &vattr, cred);
 		VOP_ADD_WRITECOUNT_CHECKED(vp, -1);
+		if (error == 0)
+			INOTIFY(vp, IN_MODIFY);
 	}
 	return (error);
 }
@@ -1961,7 +1966,7 @@ vn_start_write_refed(struct mount *mp, int flags, bool mplocked)
 			if (flags & V_PCATCH)
 				mflags |= PCATCH;
 		}
-		mflags |= (PUSER - 1);
+		mflags |= PRI_MAX_KERN;
 		while ((mp->mnt_kern_flag & MNTK_SUSPEND) != 0) {
 			if ((flags & V_NOWAIT) != 0) {
 				error = EWOULDBLOCK;
@@ -2086,7 +2091,7 @@ vn_start_secondary_write(struct vnode *vp, struct mount **mpp, int flags)
 		if ((flags & V_PCATCH) != 0)
 			mflags |= PCATCH;
 	}
-	mflags |= (PUSER - 1) | PDROP;
+	mflags |= PRI_MAX_KERN | PDROP;
 	error = msleep(&mp->mnt_flag, MNT_MTX(mp), mflags, "suspfs", 0);
 	vfs_rel(mp);
 	if (error == 0)
@@ -2171,7 +2176,7 @@ vfs_write_suspend(struct mount *mp, int flags)
 		return (EALREADY);
 	}
 	while (mp->mnt_kern_flag & MNTK_SUSPEND)
-		msleep(&mp->mnt_flag, MNT_MTX(mp), PUSER - 1, "wsuspfs", 0);
+		msleep(&mp->mnt_flag, MNT_MTX(mp), PRI_MAX_KERN, "wsuspfs", 0);
 
 	/*
 	 * Unmount holds a write reference on the mount point.  If we
@@ -2192,7 +2197,7 @@ vfs_write_suspend(struct mount *mp, int flags)
 	mp->mnt_susp_owner = curthread;
 	if (mp->mnt_writeopcount > 0)
 		(void) msleep(&mp->mnt_writeopcount, 
-		    MNT_MTX(mp), (PUSER - 1)|PDROP, "suspwt", 0);
+		    MNT_MTX(mp), PRI_MAX_KERN | PDROP, "suspwt", 0);
 	else
 		MNT_IUNLOCK(mp);
 	if ((error = VFS_SYNC(mp, MNT_SUSPEND)) != 0) {
@@ -3010,6 +3015,24 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 		}
 	}
 #endif
+
+#ifdef HWT_HOOKS
+	if (HWT_HOOK_INSTALLED && (prot & VM_PROT_EXECUTE) != 0 &&
+	    error == 0) {
+		struct hwt_record_entry ent;
+		char *fullpath;
+		char *freepath;
+
+		if (vn_fullpath(vp, &fullpath, &freepath) == 0) {
+			ent.fullpath = fullpath;
+			ent.addr = (uintptr_t) *addr;
+			ent.record_type = HWT_RECORD_MMAP;
+			HWT_CALL_HOOK(td, HWT_MMAP, &ent);
+			free(freepath, M_TEMP);
+		}
+	}
+#endif
+
 	return (error);
 }
 

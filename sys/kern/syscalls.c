@@ -597,4 +597,7 @@ const char *syscallnames[] = {
 	"getrlimitusage",			/* 589 = getrlimitusage */
 	"fchroot",			/* 590 = fchroot */
 	"setcred",			/* 591 = setcred */
+	"exterrctl",			/* 592 = exterrctl */
+	"inotify_add_watch_at",			/* 593 = inotify_add_watch_at */
+	"inotify_rm_watch",			/* 594 = inotify_rm_watch */
 };

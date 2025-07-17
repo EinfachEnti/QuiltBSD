@@ -164,16 +164,4 @@ tc.const.h: tc.const.c sh.char.h config.h config_f.h sh.types.h sh.err.h ${BUILD
 	    sort >> ${.TARGET}
 	@echo '#endif /* _h_tc_const */' >> ${.TARGET}
 
-<<<<<<< HEAD
-#beforeinstallconfig:
-#	rm -f ${DESTDIR}/.cshrc
-
-afterinstallconfig:
-	# XXX Set link mode explicitly via -m.  We cannot use LINKMODE for this
-	# link, as it would also apply to the tcsh link above.
-	${INSTALL_LINK} ${TAG_ARGS} -m ${CONFMODE} ${DESTDIR}/root/.cshrc \
-	    ${DESTDIR}/.cshrc
-
-=======
->>>>>>> freebsd/main
 .include <bsd.prog.mk>

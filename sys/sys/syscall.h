@@ -528,4 +528,7 @@
 #define	SYS_getrlimitusage	589
 #define	SYS_fchroot	590
 #define	SYS_setcred	591
-#define	SYS_MAXSYSCALL	592
+#define	SYS_exterrctl	592
+#define	SYS_inotify_add_watch_at	593
+#define	SYS_inotify_rm_watch	594
+#define	SYS_MAXSYSCALL	595
