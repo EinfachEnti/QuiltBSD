@@ -26,7 +26,7 @@ makeoptions	WITH_CTF=1		# Run ctfconvert(1) for DTrace support
 options 	SCHED_ULE		# ULE scheduler
 options 	NUMA			# Non-Uniform Memory Architecture support
 options 	PREEMPTION		# Enable kernel thread preemption
-options 	BLOAT_KERNEL_WITH_EXTERR
+options 	EXTERR_STRINGS
 options 	VIMAGE			# Subsystem virtualization, e.g. VNET
 options 	INET			# InterNETworking
 options 	INET6			# IPv6 communications protocols
@@ -95,8 +95,6 @@ options 	RCTL			# Resource limits
 # Debugging support.  Always need this:
 options 	KDB			# Enable kernel debugger support.
 options 	KDB_TRACE		# Print a stack trace for a panic.
-# For full debugger support use (turn off in stable branch):
-include "std.debug"
 
 # Kernel dump features.
 options 	EKCD			# Support for encrypted kernel dumps
@@ -183,6 +181,9 @@ device		mrsas			# LSI/Avago MegaRAID SAS/SATA, 6Gb/s and 12Gb/s
 # NVM Express (NVMe) support
 device		nvme			# base NVMe driver
 device		nvd			# expose NVMe namespaces as disks, depends on nvme
+
+# Universal Flash Storage Host Controller Interface support
+device 		ufshci			# UFS host controller
 
 # Intel Volume Management Device (VMD) support
 device		vmd
@@ -406,6 +407,7 @@ options 	HID_DEBUG		# enable debug msgs
 device		hid			# Generic HID support
 device		hidbus			# Generic HID Bus
 options 	IICHID_SAMPLING		# Workaround missing GPIO INTR support
+options 	U2F_MAKE_UHID_ALIAS	# install /dev/uhid alias for /dev/u2f/
 
 # I2C support
 device		ig4			#Synopsys DesignWare I2C Controller
