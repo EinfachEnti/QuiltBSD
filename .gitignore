@@ -29,5 +29,6 @@ tags
 .clangd
 .ccls-cache
 sys/*/compile
+/src.conf
 .idea
 .vscode

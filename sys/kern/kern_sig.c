@@ -124,6 +124,7 @@ const struct filterops sig_filtops = {
 	.f_attach = filt_sigattach,
 	.f_detach = filt_sigdetach,
 	.f_event = filt_signal,
+	.f_copy = knote_triv_copy,
 };
 
 static int	kern_forcesigexit = 1;
@@ -2656,9 +2657,11 @@ ptrace_coredumpreq(struct thread *td, struct proc *p,
 		return;
 	}
 
+	memset(&wctx, 0, sizeof(wctx));
 	wctx.vp = tcq->tc_vp;
 	wctx.fcred = NOCRED;
 
+	memset(&cdw, 0, sizeof(wctx));
 	cdw.ctx = &wctx;
 	cdw.write_fn = core_vn_write;
 	cdw.extend_fn = core_vn_extend;

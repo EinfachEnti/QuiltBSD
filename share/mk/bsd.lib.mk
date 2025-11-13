@@ -74,8 +74,26 @@ LIB_TAG_ARGS=	${TAG_ARGS}
 TAG_ARGS=	-T ${TAGS:ts,:[*]}
 
 DBG_TAG_ARGS=	${TAG_ARGS},dbg
+# Usually we want to put development files (e.g., static libraries) into a
+# separate -dev packages but for a few cases, like tests, that's not wanted,
+# so allow the caller to disable it by setting NO_DEV_PACKAGE.
+.if !defined(NO_DEV_PACKAGE)
 DEV_TAG_ARGS=	${TAG_ARGS},dev
-.endif	# !defined(NO_ROOT)
+.else
+DEV_TAG_ARGS=	${TAG_ARGS}
+.endif
+
+.endif	# defined(NO_ROOT)
+
+# By default, put library manpages in the -dev subpackage, since they're not
+# usually interesting if the development files aren't installed.   For pages
+# that should be installed in the base package, define a new MANNODEV group.
+# Note that bsd.man.mk ignores this setting if MANSPLITPKG is enabled: then
+# manpages are always installed in the -man subpackage.
+MANSUBPACKAGE?=	-dev
+MANGROUPS?=	MAN
+MANGROUPS+=	MANNODEV
+MANNODEVSUBPACKAGE=
 
 # ELF hardening knobs
 .if ${MK_BIND_NOW} != "no"
@@ -450,7 +468,11 @@ LINKGRP?=	${LIBGRP}
 LINKMODE?=	${LIBMODE}
 SYMLINKOWN?=	${LIBOWN}
 SYMLINKGRP?=	${LIBGRP}
+.if !defined(NO_DEV_PACKAGE)
 LINKTAGS=	dev${_COMPAT_TAG}
+.else
+LINKTAGS=	${_COMPAT_TAG}
+.endif
 .include <bsd.links.mk>
 
 .if ${MK_MAN} != "no" && !defined(LIBRARIES_ONLY)

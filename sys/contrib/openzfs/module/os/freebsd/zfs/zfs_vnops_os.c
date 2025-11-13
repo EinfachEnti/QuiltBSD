@@ -61,6 +61,7 @@
 #include <sys/fs/zfs.h>
 #include <sys/dmu.h>
 #include <sys/dmu_objset.h>
+#include <sys/dsl_dataset.h>
 #include <sys/spa.h>
 #include <sys/txg.h>
 #include <sys/dbuf.h>
@@ -388,7 +389,9 @@ zfs_ioctl(vnode_t *vp, ulong_t com, intptr_t data, int flag, cred_t *cred,
 		error = vn_lock(vp, LK_EXCLUSIVE);
 		if (error)
 			return (error);
+		vn_seqc_write_begin(vp);
 		error = zfs_ioctl_setxattr(vp, fsx, cred);
+		vn_seqc_write_end(vp);
 		VOP_UNLOCK(vp);
 		return (error);
 	}
@@ -1695,7 +1698,6 @@ zfs_readdir(vnode_t *vp, zfs_uio_t *uio, cred_t *cr, int *eofp,
 	objset_t	*os;
 	caddr_t		outbuf;
 	size_t		bufsize;
-	ssize_t		orig_resid;
 	zap_cursor_t	zc;
 	zap_attribute_t	*zap;
 	uint_t		bytes_wanted;
@@ -1744,7 +1746,6 @@ zfs_readdir(vnode_t *vp, zfs_uio_t *uio, cred_t *cr, int *eofp,
 	error = 0;
 	os = zfsvfs->z_os;
 	offset = zfs_uio_offset(uio);
-	orig_resid = zfs_uio_resid(uio);
 	prefetch = zp->z_zn_prefetch;
 	zap = zap_attribute_long_alloc();
 
@@ -1924,7 +1925,7 @@ update:
 		kmem_free(outbuf, bufsize);
 
 	if (error == ENOENT)
-		error = orig_resid == zfs_uio_resid(uio) ? EINVAL : 0;
+		error = 0;
 
 	ZFS_ACCESSTIME_STAMP(zfsvfs, zp);
 
@@ -2205,6 +2206,7 @@ zfs_setattr_dir(znode_t *dzp)
 		if (err)
 			break;
 
+		vn_seqc_write_begin(ZTOV(zp));
 		mutex_enter(&dzp->z_lock);
 
 		if (zp->z_uid != dzp->z_uid) {
@@ -2254,6 +2256,7 @@ sa_add_projid_err:
 			dmu_tx_abort(tx);
 		}
 		tx = NULL;
+		vn_seqc_write_end(ZTOV(zp));
 		if (err != 0 && err != ENOENT)
 			break;
 
@@ -4113,6 +4116,7 @@ zfs_pathconf(vnode_t *vp, int cmd, ulong_t *valp, cred_t *cr,
 {
 	znode_t *zp;
 	zfsvfs_t *zfsvfs;
+	uint_t blksize, iosize;
 	int error;
 
 	switch (cmd) {
@@ -4124,8 +4128,20 @@ zfs_pathconf(vnode_t *vp, int cmd, ulong_t *valp, cred_t *cr,
 		*valp = 64;
 		return (0);
 	case _PC_MIN_HOLE_SIZE:
-		*valp = (int)SPA_MINBLOCKSIZE;
-		return (0);
+		iosize = vp->v_mount->mnt_stat.f_iosize;
+		if (vp->v_type == VREG) {
+			zp = VTOZ(vp);
+			blksize = zp->z_blksz;
+			if (zp->z_size <= blksize)
+				blksize = MAX(blksize, iosize);
+			*valp = (int)blksize;
+			return (0);
+		}
+		if (vp->v_type == VDIR) {
+			*valp = (int)iosize;
+			return (0);
+		}
+		return (EINVAL);
 	case _PC_ACL_EXTENDED:
 #if 0		/* POSIX ACLs are not implemented for ZFS on FreeBSD yet. */
 		zp = VTOZ(vp);
@@ -4207,8 +4223,20 @@ zfs_getpages(struct vnode *vp, vm_page_t *ma, int count, int *rbehind,
 
 			zfs_vmobject_wlock(object);
 			(void) vm_page_grab_pages(object, OFF_TO_IDX(start),
-			    VM_ALLOC_NORMAL | VM_ALLOC_WAITOK | VM_ALLOC_ZERO,
+			    VM_ALLOC_NORMAL | VM_ALLOC_WAITOK,
 			    ma, count);
+			if (!vm_page_all_valid(ma[count - 1])) {
+				/*
+				 * Later in this function, we copy DMU data to
+				 * invalid pages only. The last page may not be
+				 * entirely filled though, if the file does not
+				 * end on a page boundary. Therefore, we zero
+				 * that last page here to make sure it does not
+				 * contain garbage after the end of file.
+				 */
+				ASSERT(vm_page_none_valid(ma[count - 1]));
+				vm_page_zero_invalid(ma[count - 1], FALSE);
+			}
 			zfs_vmobject_wunlock(object);
 		}
 		if (blksz == zp->z_blksz)
@@ -5729,6 +5757,9 @@ zfs_freebsd_pathconf(struct vop_pathconf_args *ap)
 {
 	ulong_t val;
 	int error;
+#ifdef _PC_CLONE_BLKSIZE
+	zfsvfs_t *zfsvfs;
+#endif
 
 	error = zfs_pathconf(ap->a_vp, ap->a_name, &val,
 	    curthread->td_ucred, NULL);
@@ -5773,6 +5804,21 @@ zfs_freebsd_pathconf(struct vop_pathconf_args *ap)
 #ifdef _PC_HAS_HIDDENSYSTEM
 	case _PC_HAS_HIDDENSYSTEM:
 		*ap->a_retval = 1;
+		return (0);
+#endif
+#ifdef _PC_CLONE_BLKSIZE
+	case _PC_CLONE_BLKSIZE:
+		zfsvfs = (zfsvfs_t *)ap->a_vp->v_mount->mnt_data;
+		if (zfs_bclone_enabled &&
+		    spa_feature_is_enabled(dmu_objset_spa(zfsvfs->z_os),
+		    SPA_FEATURE_BLOCK_CLONING))
+			*ap->a_retval = dsl_dataset_feature_is_active(
+			    zfsvfs->z_os->os_dsl_dataset,
+			    SPA_FEATURE_LARGE_BLOCKS) ?
+			    SPA_MAXBLOCKSIZE :
+			    SPA_OLD_MAXBLOCKSIZE;
+		else
+			*ap->a_retval = 0;
 		return (0);
 #endif
 	default:

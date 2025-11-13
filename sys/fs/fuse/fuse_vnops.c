@@ -795,10 +795,14 @@ fuse_vnop_close(struct vop_close_args *ap)
 	struct mount *mp = vnode_mount(vp);
 	struct ucred *cred = ap->a_cred;
 	int fflag = ap->a_fflag;
-	struct thread *td = ap->a_td;
-	pid_t pid = td->td_proc->p_pid;
+	struct thread *td;
 	struct fuse_vnode_data *fvdat = VTOFUD(vp);
+	pid_t pid;
 	int err = 0;
+
+	/* NB: a_td will be NULL from some async kernel contexts */
+	td = ap->a_td ? ap->a_td : curthread;
+	pid = td->td_proc->p_pid;
 
 	if (fuse_isdeadfs(vp))
 		return 0;
@@ -838,7 +842,7 @@ fuse_vnop_close(struct vop_close_args *ap)
 	}
 	/* TODO: close the file handle, if we're sure it's no longer used */
 	if ((fvdat->flag & FN_SIZECHANGE) != 0) {
-		fuse_vnode_savesize(vp, cred, td->td_proc->p_pid);
+		fuse_vnode_savesize(vp, cred, pid);
 	}
 	return err;
 }
@@ -2752,7 +2756,7 @@ fuse_vnop_setextattr(struct vop_setextattr_args *ap)
 		 */
 		if (fsess_not_impl(mp, FUSE_REMOVEXATTR))
 			return (EXTERROR(EOPNOTSUPP, "This server does not "
-			    "implement removing extended attributess"));
+			    "implement removing extended attributes"));
 		else
 			return (EXTERROR(EINVAL, "DELETEEXTATTR should be used "
 			    "to remove extattrs"));
@@ -2773,7 +2777,7 @@ fuse_vnop_setextattr(struct vop_setextattr_args *ap)
 	    strlen(ap->a_name) + 1;
 
 	/* older FUSE servers  use a smaller fuse_setxattr_in struct*/
-	if (fuse_libabi_geq(fuse_get_mpdata(mp), 7, 33))
+	if (fuse_get_mpdata(mp)->dataflags & FSESS_SETXATTR_EXT)
 		struct_size = sizeof(*set_xattr_in);
 
 	fdisp_init(&fdi, len + struct_size + uio->uio_resid);
@@ -2782,7 +2786,7 @@ fuse_vnop_setextattr(struct vop_setextattr_args *ap)
 	set_xattr_in = fdi.indata;
 	set_xattr_in->size = uio->uio_resid;
 
-	if (fuse_libabi_geq(fuse_get_mpdata(mp), 7, 33)) {
+	if (fuse_get_mpdata(mp)->dataflags & FSESS_SETXATTR_EXT) {
 		set_xattr_in->setxattr_flags = 0;
 		set_xattr_in->padding = 0;
 	}
