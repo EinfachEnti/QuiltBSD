@@ -50,7 +50,9 @@ extern "C" {
 #include <sys/cmn_err.h>
 #include <sys/kmem.h>
 #include <sys/kmem_cache.h>
+#ifndef __FreeBSD__
 #include <sys/vmem.h>
+#endif
 #include <sys/misc.h>
 #include <sys/taskq.h>
 #include <sys/param.h>
@@ -509,7 +511,7 @@ extern void	taskq_wait_id(taskq_t *, taskqid_t);
 extern void	taskq_wait_outstanding(taskq_t *, taskqid_t);
 extern int	taskq_member(taskq_t *, kthread_t *);
 extern taskq_t	*taskq_of_curthread(void);
-extern int	taskq_cancel_id(taskq_t *, taskqid_t);
+extern int	taskq_cancel_id(taskq_t *, taskqid_t, boolean_t);
 extern void	system_taskq_init(void);
 extern void	system_taskq_fini(void);
 

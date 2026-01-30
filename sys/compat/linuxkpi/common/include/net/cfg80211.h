@@ -55,10 +55,14 @@ extern int linuxkpi_debug_80211;
 #ifndef	D80211_IMPROVE
 #define	D80211_IMPROVE		0x2
 #endif
+#ifndef TODO
 #define	TODO(fmt, ...)		if (linuxkpi_debug_80211 & D80211_TODO)	\
     printf("%s:%d: XXX LKPI80211 TODO " fmt "\n", __func__, __LINE__, ##__VA_ARGS__)
+#endif
+#ifndef IMPROVE
 #define	IMPROVE(fmt, ...)	if (linuxkpi_debug_80211 & D80211_IMPROVE)	\
     printf("%s:%d: XXX LKPI80211 IMPROVE " fmt "\n", __func__, __LINE__, ##__VA_ARGS__)
+#endif
 
 enum rfkill_hard_block_reasons {
 	RFKILL_HARD_BLOCK_NOT_OWNER		= BIT(0),
@@ -1450,7 +1454,7 @@ cfg80211_chandef_create(struct cfg80211_chan_def *chandef,
 	KASSERT(chandef != NULL, ("%s: chandef is NULL\n", __func__));
 	KASSERT(chan != NULL, ("%s: chan is NULL\n", __func__));
 
-	/* memset(chandef, 0, sizeof(*chandef)); */
+	memset(chandef, 0, sizeof(*chandef));
 	chandef->chan = chan;
 	chandef->center_freq1 = chan->center_freq;
 	/* chandef->width, center_freq2, punctured */

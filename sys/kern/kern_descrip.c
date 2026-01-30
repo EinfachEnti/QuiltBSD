@@ -194,7 +194,6 @@ struct filedesc0 {
  */
 static int __exclusive_cache_line openfiles; /* actual number of open files */
 struct mtx sigio_lock;		/* mtx to protect pointers to sigio */
-void __read_mostly (*mq_fdclose)(struct thread *td, int fd, struct file *fp);
 
 /*
  * If low >= size, just return low. Otherwise find the first zero bit in the
@@ -658,6 +657,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 			error = EBADF;
 			break;
 		}
+		fsetfl_lock(fp);
 		do {
 			tmp = flg = fp->f_flag;
 			tmp &= ~FCNTLFLAGS;
@@ -665,26 +665,34 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		} while (atomic_cmpset_int(&fp->f_flag, flg, tmp) == 0);
 		got_set = tmp & ~flg;
 		got_cleared = flg & ~tmp;
-		tmp = fp->f_flag & FNONBLOCK;
-		error = fo_ioctl(fp, FIONBIO, &tmp, td->td_ucred, td);
-		if (error != 0)
-			goto revert_f_setfl;
-		tmp = fp->f_flag & FASYNC;
-		error = fo_ioctl(fp, FIOASYNC, &tmp, td->td_ucred, td);
-		if (error == 0) {
-			fdrop(fp, td);
-			break;
+		if (((got_set | got_cleared) & FNONBLOCK) != 0) {
+			tmp = fp->f_flag & FNONBLOCK;
+			error = fo_ioctl(fp, FIONBIO, &tmp, td->td_ucred, td);
+			if (error != 0)
+				goto revert_flags;
 		}
-		atomic_clear_int(&fp->f_flag, FNONBLOCK);
-		tmp = 0;
-		(void)fo_ioctl(fp, FIONBIO, &tmp, td->td_ucred, td);
-revert_f_setfl:
+		if (((got_set | got_cleared) & FASYNC) != 0) {
+			tmp = fp->f_flag & FASYNC;
+			error = fo_ioctl(fp, FIOASYNC, &tmp, td->td_ucred, td);
+			if (error != 0)
+				goto revert_nonblock;
+		}
+		fsetfl_unlock(fp);
+		fdrop(fp, td);
+		break;
+revert_nonblock:
+		if (((got_set | got_cleared) & FNONBLOCK) != 0) {
+			tmp = ~fp->f_flag & FNONBLOCK;
+			(void)fo_ioctl(fp, FIONBIO, &tmp, td->td_ucred, td);
+		}
+revert_flags:
 		do {
 			tmp = flg = fp->f_flag;
 			tmp &= ~FCNTLFLAGS;
 			tmp |= got_cleared;
 			tmp &= ~got_set;
 		} while (atomic_cmpset_int(&fp->f_flag, flg, tmp) == 0);
+		fsetfl_unlock(fp);
 		fdrop(fp, td);
 		break;
 
@@ -1404,11 +1412,8 @@ closefp_impl(struct filedesc *fdp, int fd, struct file *fp, struct thread *td,
 	if (__predict_false(!TAILQ_EMPTY(&fdp->fd_kqlist)))
 		knote_fdclose(td, fd);
 
-	/*
-	 * We need to notify mqueue if the object is of type mqueue.
-	 */
-	if (__predict_false(fp->f_type == DTYPE_MQUEUE))
-		mq_fdclose(td, fd, fp);
+	if (fp->f_ops->fo_fdclose != NULL)
+		fp->f_ops->fo_fdclose(fp, fd, td);
 	FILEDESC_XUNLOCK(fdp);
 
 #ifdef AUDIT

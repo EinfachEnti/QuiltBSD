@@ -3605,8 +3605,8 @@ pf_change_icmp(struct pf_addr *ia, u_int16_t *ip, struct pf_addr *oa,
 	}
 }
 
-int
-pf_translate_af(struct pf_pdesc *pd)
+static int
+pf_translate_af(struct pf_pdesc *pd, struct pf_krule *r)
 {
 #if defined(INET) && defined(INET6)
 	struct mbuf		*mp;
@@ -3616,6 +3616,21 @@ pf_translate_af(struct pf_pdesc *pd)
 	struct m_tag		*mtag;
 	struct pf_fragment_tag	*ftag;
 	int			 hlen;
+
+	if (pd->ttl == 1) {
+		/* We'd generate an ICMP error. Do so now rather than after af translation. */
+		if (pd->af == AF_INET) {
+			pf_send_icmp(pd->m, ICMP_TIMXCEED,
+			    ICMP_TIMXCEED_INTRANS, 0, pd->af, r,
+			    pd->act.rtableid);
+		} else {
+			pf_send_icmp(pd->m, ICMP6_TIME_EXCEEDED,
+			    ICMP6_TIME_EXCEED_TRANSIT, 0, pd->af, r,
+			    pd->act.rtableid);
+		}
+
+		return (-1);
+	}
 
 	hlen = pd->naf == AF_INET ? sizeof(*ip4) : sizeof(*ip6);
 
@@ -7362,7 +7377,11 @@ pf_sctp_track(struct pf_kstate *state, struct pf_pdesc *pd,
 	}
 
 	if (src->scrub != NULL) {
-		if (src->scrub->pfss_v_tag == 0)
+		/*
+		 * Allow tags to be updated, in case of retransmission of
+		 * INIT/INIT_ACK chunks.
+		 **/
+		if (src->state <= SCTP_COOKIE_WAIT)
 			src->scrub->pfss_v_tag = pd->hdr.sctp.v_tag;
 		else  if (src->scrub->pfss_v_tag != pd->hdr.sctp.v_tag)
 			return (PF_DROP);
@@ -9154,7 +9173,7 @@ pf_route(struct pf_krule *r, struct ifnet *oifp,
 
 	if (pd->dir == PF_IN) {
 		if (ip->ip_ttl <= IPTTLDEC) {
-			if (r->rt != PF_DUPTO)
+			if (r->rt != PF_DUPTO && pd->naf == pd->af)
 				pf_send_icmp(m0, ICMP_TIMXCEED,
 				    ICMP_TIMXCEED_INTRANS, 0, pd->af, r,
 				    pd->act.rtableid);
@@ -9324,7 +9343,8 @@ pf_route(struct pf_krule *r, struct ifnet *oifp,
 			   ifp->if_mtu, pd->af, r, pd->act.rtableid);
 		}
 		SDT_PROBE1(pf, ip, route_to, drop, __LINE__);
-		action = PF_DROP;
+		/* Return pass, so we return PFIL_CONSUMED to the stack. */
+		action = PF_PASS;
 		goto bad;
 	}
 
@@ -9479,7 +9499,7 @@ pf_route6(struct pf_krule *r, struct ifnet *oifp,
 
 	if (pd->dir == PF_IN) {
 		if (ip6->ip6_hlim <= IPV6_HLIMDEC) {
-			if (r->rt != PF_DUPTO)
+			if (r->rt != PF_DUPTO && pd->naf == pd->af)
 				pf_send_icmp(m0, ICMP6_TIME_EXCEEDED,
 				    ICMP6_TIME_EXCEED_TRANSIT, 0, pd->af, r,
 				    pd->act.rtableid);
@@ -9646,7 +9666,8 @@ pf_route6(struct pf_krule *r, struct ifnet *oifp,
 				pf_send_icmp(m0, ICMP6_PACKET_TOO_BIG, 0,
 				    ifp->if_mtu, pd->af, r, pd->act.rtableid);
 		}
-		action = PF_DROP;
+		/* Return pass, so we return PFIL_CONSUMED to the stack. */
+		action = PF_PASS;
 		SDT_PROBE1(pf, ip6, route_to, drop, __LINE__);
 		goto bad;
 	}
@@ -11020,10 +11041,12 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 			break;
 		action = pf_test_state(&s, &pd, &reason);
 		if (action == PF_PASS || action == PF_AFRT) {
-			if (V_pfsync_update_state_ptr != NULL)
-				V_pfsync_update_state_ptr(s);
-			r = s->rule;
-			a = s->anchor;
+			if (s != NULL) {
+				if (V_pfsync_update_state_ptr != NULL)
+					V_pfsync_update_state_ptr(s);
+				r = s->rule;
+				a = s->anchor;
+			}
 		} else if (s == NULL) {
 			/* Validate remote SYN|ACK, re-create original SYN if
 			 * valid. */
@@ -11072,10 +11095,12 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 	default:
 		action = pf_test_state(&s, &pd, &reason);
 		if (action == PF_PASS || action == PF_AFRT) {
-			if (V_pfsync_update_state_ptr != NULL)
-				V_pfsync_update_state_ptr(s);
-			r = s->rule;
-			a = s->anchor;
+			if (s != NULL) {
+				if (V_pfsync_update_state_ptr != NULL)
+					V_pfsync_update_state_ptr(s);
+				r = s->rule;
+				a = s->anchor;
+			}
 		} else if (s == NULL) {
 			action = pf_test_rule(&r, &s,
 			    &pd, &a, &ruleset, &reason, inp, &match_rules);
@@ -11100,10 +11125,12 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		}
 		action = pf_test_state_icmp(&s, &pd, &reason);
 		if (action == PF_PASS || action == PF_AFRT) {
-			if (V_pfsync_update_state_ptr != NULL)
-				V_pfsync_update_state_ptr(s);
-			r = s->rule;
-			a = s->anchor;
+			if (s != NULL) {
+				if (V_pfsync_update_state_ptr != NULL)
+					V_pfsync_update_state_ptr(s);
+				r = s->rule;
+				a = s->anchor;
+			}
 		} else if (s == NULL)
 			action = pf_test_rule(&r, &s, &pd,
 			    &a, &ruleset, &reason, inp, &match_rules);
@@ -11291,7 +11318,7 @@ done:
 		*m0 = NULL;
 		break;
 	case PF_AFRT:
-		if (pf_translate_af(&pd)) {
+		if (pf_translate_af(&pd, r)) {
 			*m0 = pd.m;
 			action = PF_DROP;
 			break;

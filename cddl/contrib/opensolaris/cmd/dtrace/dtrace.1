@@ -20,7 +20,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd November 3, 2025
+.Dd November 30, 2025
 .Dt DTRACE 1
 .Os
 .Sh NAME
@@ -837,10 +837,6 @@ __unix
 .It
 __SVR4
 .It
-__sparc (on SPARC systems only)
-.It
-__sparcv9 (on SPARC systems only when 64-bit programs are compiled)
-.It
 __i386 (on x86 systems only when 32-bit programs are compiled)
 .It
 __amd64 (on x86 systems only when 64-bit programs are compiled)
@@ -1252,6 +1248,14 @@ command line to define a set of macro variables and so forth).
 The additional arguments can be used in D programs specified using the
 .Fl s
 option or on the command line.
+.Sh ENVIRONMENT
+.Bl -tag -width 'DTRACE_DEBUG'
+.It Ev DTRACE_DEBUG
+When defined,
+.Nm
+will output debug log messages to
+.Xr stderr 4 .
+.El
 .Sh FILES
 .Bl -tag -width /boot/dtrace.dof -compact
 .It Pa /boot/dtrace.dof
@@ -1292,13 +1296,16 @@ in
 .Xr cpp 1 ,
 .Xr dwatch 1 ,
 .Xr dtrace_audit 4 ,
+.Xr dtrace_callout_execute 4 ,
 .Xr dtrace_dtrace 4 ,
 .Xr dtrace_fbt 4 ,
 .Xr dtrace_io 4 ,
 .Xr dtrace_ip 4 ,
 .Xr dtrace_kinst 4 ,
 .Xr dtrace_lockstat 4 ,
+.Xr dtrace_pid 4 ,
 .Xr dtrace_proc 4 ,
+.Xr dtrace_priv 4 ,
 .Xr dtrace_profile 4 ,
 .Xr dtrace_sched 4 ,
 .Xr dtrace_sctp 4 ,

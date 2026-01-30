@@ -434,6 +434,7 @@ OLD_FILES+=usr/libexec/bsdinstall/jail
 OLD_FILES+=usr/libexec/bsdinstall/keymap
 OLD_FILES+=usr/libexec/bsdinstall/mirrorselect
 OLD_FILES+=usr/libexec/bsdinstall/mount
+OLD_FILES+=usr/libexec/bsdinstall/mount_aux
 OLD_FILES+=usr/libexec/bsdinstall/netconfig
 OLD_FILES+=usr/libexec/bsdinstall/netconfig_ipv4
 OLD_FILES+=usr/libexec/bsdinstall/netconfig_ipv6
@@ -891,12 +892,14 @@ OLD_FILES+=usr/share/man/man4/ccd.4.gz
 OLD_FILES+=usr/share/man/man8/ccdconfig.8.gz
 .endif
 
-.if ${MK_CLANG} == no && ${MK_CLANG_FORMAT} == no && ${MK_LLDB} == no
+.if (${MK_CLANG} == no && ${MK_CLANG_FORMAT} == no && ${MK_LLDB} == no) || \
+    ${MK_LLVM_LINK_STATIC_LIBRARIES} != no
 OLD_LIBS+=usr/lib/libprivateclang.so.19
 .endif
 
-.if ${MK_CLANG_EXTRAS} == no && ${MK_CLANG} == no && ${MK_LLDB} == no && \
-    ${MK_LLD} == no && ${MK_LLVM_BINUTILS} == no && ${MK_LLVM_COV} == no
+.if (${MK_CLANG_EXTRAS} == no && ${MK_CLANG} == no && ${MK_LLDB} == no && \
+    ${MK_LLD} == no && ${MK_LLVM_BINUTILS} == no && ${MK_LLVM_COV} == no) || \
+    ${MK_LLVM_LINK_STATIC_LIBRARIES} != no
 OLD_LIBS+=usr/lib/libprivatellvm.so.19
 .endif
 
@@ -2627,6 +2630,10 @@ OLD_FILES+=usr/share/man/man8/ipnat.8.gz
 OLD_FILES+=usr/share/man/man8/ippool.8.gz
 .endif
 
+.if ${MK_IPFILTER_IPFS} == no
+OLD_FILES+=sbin/ipfs
+.endif
+
 .if ${MK_IPFW} == no
 OLD_FILES+=etc/rc.d/ipfw
 OLD_FILES+=etc/rc.d/natd
@@ -3831,7 +3838,7 @@ OLD_DIRS+=usr/share/moused
 .for LIBCOMPAT libcompat in ${_ALL_LIBCOMPATS_libcompats}
 .  if ${MK_LIB${LIBCOMPAT}} == no
 OLD_FILES+=etc/mtree/BSD.lib${libcompat}.dist
-OLD_FILES+=libexec/ld-elf${libcompat}.so.1
+OLD_LIBS+=libexec/ld-elf${libcompat}.so.1
 .    if exists(${DESTDIR}/usr/lib${libcompat})
 LIB${LIBCOMPAT}_DIRS!=find ${DESTDIR}/usr/lib${libcompat} -type d \
     | sed -e 's,^${DESTDIR}/,,'; echo
@@ -3863,10 +3870,13 @@ OLD_LIBS+=${DEBUG_LIB${LIBCOMPAT}_LIBS}
 OLD_FILES+=usr/bin/ld.lld
 .endif
 
+.if ${MK_LLDB} == no || ${MK_LLVM_LINK_STATIC_LIBRARIES} != no
+OLD_LIBS+=usr/lib/libprivatelldb.so.19
+.endif
+
 .if ${MK_LLDB} == no
 OLD_FILES+=usr/bin/lldb
 OLD_FILES+=usr/bin/lldb-server
-OLD_LIBS+=usr/lib/libprivatelldb.so.19
 OLD_FILES+=usr/share/man/man1/lldb-server.1.gz
 OLD_FILES+=usr/share/man/man1/lldb.1.gz
 .endif
@@ -7375,6 +7385,19 @@ OLD_DIRS+=var/spool/clientmqueue
 
 .if ${MK_SERVICESDB} == no
 OLD_FILES+=var/db/services.db
+.endif
+
+.if ${MK_SOUND} == no
+OLD_DIRS+=lib/mixer
+OLD_DIRS+=lib/virtual_oss
+OLD_DIRS+=usr.bin/beep
+OLD_DIRS+=usr.bin/mididump
+OLD_DIRS+=usr.sbin/mixer
+OLD_DIRS+=usr.sbin/sndctl
+OLD_DIRS+=usr.sbin/virtual_oss
+OLD_FILES+=libexec/rc/rc.d/mixer
+OLD_FILES+=libexec/rc/rc.d/virtual_oss
+OLD_FILES+=sbin/devd/snd.conf
 .endif
 
 .if ${MK_NUAGEINIT} == no

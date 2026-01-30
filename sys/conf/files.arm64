@@ -73,6 +73,7 @@ arm64/arm64/pmap.c				standard
 arm64/arm64/ptrace_machdep.c			standard
 arm64/arm64/sdt_machdep.c			optional kdtrace_hooks
 arm64/arm64/sigtramp.S				standard
+arm64/arm64/spec_workaround.c			standard
 arm64/arm64/stack_machdep.c			optional ddb | stack
 arm64/arm64/strcmp.S				standard
 arm64/arm64/strncmp.S				standard
@@ -127,9 +128,11 @@ arm64/vmm/vmm_reset.c				optional vmm
 arm64/vmm/vmm_handlers.c			optional vmm
 arm64/vmm/vmm_call.S				optional vmm
 arm64/vmm/vmm_nvhe_exception.S			optional vmm		\
+	dependency	"$S/arm64/vmm/vmm_hyp_exception.S"		\
 	compile-with "${NOSAN_C} -fpie"					\
 	no-obj
 arm64/vmm/vmm_nvhe.c				optional vmm		\
+	dependency	"$S/arm64/vmm/vmm_hyp.c"			\
 	compile-with "${NOSAN_C} -fpie"					\
 	no-obj
 vmm_hyp_blob.elf.full				optional vmm		\
@@ -591,7 +594,7 @@ contrib/vchiq/interface/compat/vchi_bsd.c		optional vchiq soc_brcm_bcm2837 \
 contrib/vchiq/interface/vchiq_arm/vchiq_2835_arm.c	optional vchiq soc_brcm_bcm2837 \
 	compile-with "${NORMAL_C} -Wno-unused -DUSE_VCHIQ_ARM -D__VCCOREVER__=0x04000000 -I$S/contrib/vchiq"
 contrib/vchiq/interface/vchiq_arm/vchiq_arm.c		optional vchiq soc_brcm_bcm2837 \
-	compile-with "${NORMAL_C} -Wno-unused -DUSE_VCHIQ_ARM -D__VCCOREVER__=0x04000000 -I$S/contrib/vchiq"
+	compile-with "${NORMAL_C} -Wno-unused ${NO_WDEFAULT_CONST_INIT_FIELD_UNSAFE} -DUSE_VCHIQ_ARM -D__VCCOREVER__=0x04000000 -I$S/contrib/vchiq"
 contrib/vchiq/interface/vchiq_arm/vchiq_connected.c	optional vchiq soc_brcm_bcm2837 \
 	compile-with "${NORMAL_C} -DUSE_VCHIQ_ARM -D__VCCOREVER__=0x04000000 -I$S/contrib/vchiq"
 contrib/vchiq/interface/vchiq_arm/vchiq_core.c		optional vchiq soc_brcm_bcm2837 \

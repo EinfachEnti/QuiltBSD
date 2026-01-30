@@ -103,8 +103,8 @@
         ..
         ossl-modules
         ..
-	virtual_oss
-	..
+        virtual_oss
+        ..
     ..
     libdata
         ldscripts
@@ -473,6 +473,12 @@
         ..
         keys
             pkg
+                revoked         tags=package=runtime
+                ..
+                trusted         tags=package=runtime
+                ..
+            ..
+            pkgbase-15
                 revoked         tags=package=runtime
                 ..
                 trusted         tags=package=runtime

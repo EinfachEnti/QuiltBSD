@@ -124,10 +124,8 @@ if [ ! -d "$SRCTOP" -o ! -f "$SRCTOP/Makefile.inc1" ]; then
 fi
 
 : ${CLEANMK=""}
-if [ -n "$CLEANMK" ]; then
-	if [ -z "${MAKE+set}" ]; then
-		err "MAKE not set"
-	fi
+if [ -z "${MAKE+set}" ]; then
+	err "MAKE not set"
 fi
 
 if [ -z "${MACHINE+set}" ]; then
@@ -163,13 +161,13 @@ run()
 # $4 optional regex for egrep -w
 clean_dep()
 {
+	local dirprfx dir
 	for libcompat in "" $ALL_libcompats; do
-		dirprfx=${libcompat:+obj-lib${libcompat}/}
-		if egrep -qw "${4:-$2\.$3}" "$OBJTOP"/$dirprfx$1/.depend.$2.*o 2>/dev/null; then
+		dirprfx=${libcompat:+obj-lib${libcompat}}
+		dir="${OBJTOP%/}/${dirprfx}/$1"
+		if egrep -qw "${4:-$2\.$3}" "${dir}"/.depend.$2.*o 2>/dev/null; then
 			echo "Removing stale ${libcompat:+lib${libcompat} }dependencies and objects for $2.$3"
-			run rm -fv \
-			    "$OBJTOP"/$dirprfx$1/.depend.$2.* \
-			    "$OBJTOP"/$dirprfx$1/$2.*o
+			run rm -fv "${dir}"/.depend.$2.* "${dir}"/$2.*o
 		fi
 	done
 }
@@ -185,12 +183,13 @@ clean_dep()
 # $4 regex for egrep -w
 clean_obj()
 {
+	local dirprfx dir
 	for libcompat in "" $ALL_libcompats; do
-		dirprfx=${libcompat:+obj-lib${libcompat}/}
-		if strings "$OBJTOP"/$dirprfx$1/$2.*o 2>/dev/null | egrep -qw "${4}"; then
+		dirprfx=${libcompat:+obj-lib${libcompat}}
+		dir="${OBJTOP%/}/${dirprfx}/$1"
+		if strings "${dir}"/$2.*o 2>/dev/null | egrep -qw "${4}"; then
 			echo "Removing stale ${libcompat:+lib${libcompat} }objects for $2.$3"
-			run rm -fv \
-			    "$OBJTOP"/$dirprfx$1/$2.*o
+			run rm -fv "${dir}"/$2.*o
 		fi
 	done
 }
@@ -202,9 +201,42 @@ extract_epoch()
 	awk 'int($1) > 0 { epoch = $1 } END { print epoch }' "$1"
 }
 
+# Regular expression matching the names of src.conf(5) options which
+# don't affect the build.
+#
+# This filter is applied to both the current options and the cached
+# options so we don't force a rebuild just because the filter itself
+# changed.
+IGNORED_OPTS="CLEAN|DEPEND_CLEANUP|EXAMPLES|MAN|TESTS|WARNS|WERROR"
+IGNORED_OPTS="${IGNORED_OPTS}|INSTALL.*|STAGING.*"
+# Also ignore TOOLCHAIN and the options it forces if set.  It is
+# commonly used to speed up a build and is safe to toggle.
+IGNORED_OPTS="${IGNORED_OPTS}|TOOLCHAIN|CLANG.*|LLDB?|LLVM_(BIN|COV).*"
+
+extract_src_opts()
+{
+	$MAKE -C "$SRCTOP" -f "$SRCTOP"/Makefile.inc1 \
+	    -V $'SRC_OPT_LIST:O:ts\n' |
+	egrep -v "^WITH(OUT)?_(${IGNORED_OPTS})="
+}
+
+extract_obj_opts()
+{
+	local fn
+	for fn; do
+		if [ -f "${fn}" ]; then
+			cat "${fn}"
+		else
+			echo "# ${fn}"
+		fi
+	done |
+	egrep -v "^WITH(OUT)?_(${IGNORED_OPTS})="
+}
+
 clean_world()
 {
 	local buildepoch="$1"
+	local srcopts="$2"
 
 	# The caller may set CLEANMK in the environment to make target(s) that
 	# should be invoked instead of just destroying everything.  This is
@@ -227,17 +259,24 @@ clean_world()
 
 	mkdir -p "$OBJTOP"
 	echo "$buildepoch" > "$OBJTOP"/.clean_build_epoch
+	echo "$srcopts" > "$OBJTOP"/.src_opts
 
 	exit 0
 }
 
-check_epoch()
+check_epoch_and_opts()
 {
 	local srcepoch objepoch
+	local srcopts objopts
 
 	srcepoch=$(extract_epoch "$SRCTOP"/.clean_build_epoch)
 	if [ -z "$srcepoch" ]; then
 		err "Malformed .clean_build_epoch; please validate the last line"
+	fi
+
+	srcopts=$(extract_src_opts)
+	if [ -z "$srcopts" ]; then
+		err "Unable to extract source options"
 	fi
 
 	# We don't discriminate between the varying degrees of difference
@@ -245,16 +284,20 @@ check_epoch()
 	# epochs, in which case the original need to clean likely still stands.
 	objepoch=$(extract_epoch "$OBJTOP"/.clean_build_epoch)
 	if [ -z "$objepoch" ] || [ "$srcepoch" -ne "$objepoch" ]; then
-		if [ "$VERBOSE" ]; then
-			echo "Cleaning - src epoch: $srcepoch, objdir epoch: ${objepoch:-unknown}"
-		fi
+		echo "Cleaning - src epoch: $srcepoch, objdir epoch: ${objepoch:-unknown}"
+		clean_world "$srcepoch" "$srcopts"
+		# NORETURN
+	fi
 
-		clean_world "$srcepoch"
+	objopts=$(extract_obj_opts "$OBJTOP"/.src_opts)
+	if [ "$srcopts" != "$objopts" ]; then
+		echo "Cleaning - build options have changed"
+		clean_world "$srcepoch" "$srcopts"
 		# NORETURN
 	fi
 }
 
-check_epoch
+check_epoch_and_opts
 
 #### Typical dependency cleanup begins here.
 
@@ -475,4 +518,31 @@ clean_dep   usr.bin/tcopy   tcopy c
 if [ -f "$OBJTOP"/usr.sbin/moused/moused ]; then
 	echo "Removing old moused binary"
         run rm -fv "$OBJTOP"/usr.sbin/moused/moused
+fi
+
+if [ ${MACHINE} = riscv ]; then
+	# 20251031  df21a004be23  libc: scalar strrchr() in RISC-V assembly
+	clean_dep   lib/libc strrchr c
+
+	# 20251031  563efdd3bd5d  libc: scalar memchr() in RISC-V assembly
+	clean_dep   lib/libc memchr c
+
+	# 20251031  40a958d5850d  libc: scalar memset() in RISC-V assembly
+	clean_dep   lib/libc memset c
+
+	# 20251031  e09c1583eddd  libc: scalar strlen() in RISC-V assembly
+	clean_dep   lib/libc strlen c
+
+	# 20251031  25fdd86a4c92  libc: scalar memcpy() in RISC-V assembly
+	clean_dep   lib/libc memcpy c
+
+	# 20251031  5a52f0704435  libc: scalar strnlen() in RISC-V assembly
+	clean_dep   lib/libc strnlen c
+
+	# 20251031  08af0bbc9c7d  libc: scalar strchrnul() in RISC-V assembly
+	clean_dep   lib/libc strchrnul c
+
+	# 20251031  b5dbf3de5611  libc/riscv64: implement bcopy() and bzero() through memcpy() and memset()
+	clean_dep   lib/libc bcopy c "libc.string.bcopy.c"
+	clean_dep   lib/libc bzero c "libc.string.bzero.c"
 fi

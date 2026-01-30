@@ -189,6 +189,7 @@ MAN=	aac.4 \
 	geom.4 \
 	geom_linux_lvm.4 \
 	geom_uzip.4 \
+	geom_zero.4 \
 	gif.4 \
 	${_gve.4} \
 	gpio.4 \
@@ -459,7 +460,6 @@ MAN=	aac.4 \
 	p9fs.4 \
 	pass.4 \
 	pca954x.4 \
-	pccard.4 \
 	pccbb.4 \
 	pcf.4 \
 	pcf8574.4 \
@@ -467,7 +467,6 @@ MAN=	aac.4 \
 	${_pchtherm.4} \
 	pci.4 \
 	pcib.4 \
-	pcic.4 \
 	pcm.4 \
 	${_pf.4} \
 	${_pflog.4} \
@@ -1005,12 +1004,15 @@ _ccd.4=		ccd.4
 
 .if ${MK_CDDL} != "no"
 _dtrace_provs=	dtrace_audit.4 \
+		dtrace_callout_execute.4 \
 		dtrace_dtrace.4 \
 		dtrace_fbt.4 \
 		dtrace_io.4 \
 		dtrace_ip.4 \
 		dtrace_kinst.4 \
 		dtrace_lockstat.4 \
+		dtrace_priv.4 \
+		dtrace_pid.4 \
 		dtrace_proc.4 \
 		dtrace_profile.4 \
 		dtrace_sched.4 \
@@ -1121,6 +1123,7 @@ MAN+=	\
 	veriexec.4 \
 	zyd.4
 
+MLINKS+=geom_zero.4 gzero.4
 MLINKS+=mtw.4 if_mtw.4
 MLINKS+=otus.4 if_otus.4
 MLINKS+=rsu.4 if_rsu.4
