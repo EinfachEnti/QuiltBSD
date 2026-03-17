@@ -4202,7 +4202,7 @@ nfsrv_getclientipaddr(struct nfsrv_descript *nd, struct nfsclient *clp)
 		/*
 		 * Parse out the address fields. We expect 6 decimal numbers
 		 * separated by '.'s for AF_INET and two decimal numbers
-		 * preceeded by '.'s for AF_INET6.
+		 * preceded by '.'s for AF_INET6.
 		 */
 		cp = NULL;
 		switch (af) {
@@ -4689,7 +4689,7 @@ errout:
 		} else if (error == 0 && procnum == NFSV4OP_CBGETATTR)
 			error = nfsv4_loadattr(nd, NULL, nap, NULL, NULL, 0,
 			    NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL,
-			    NULL, NULL, p, NULL);
+			    NULL, NULL, NULL, p, NULL);
 		m_freem(nd->nd_mrep);
 	}
 	NFSLOCKSTATE();

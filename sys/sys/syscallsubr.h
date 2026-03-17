@@ -285,6 +285,8 @@ int	kern_posix_fallocate(struct thread *td, int fd, off_t offset,
 	    off_t len);
 int	kern_fspacectl(struct thread *td, int fd, int cmd,
 	    const struct spacectl_range *, int flags, struct spacectl_range *);
+int	kern_pdwait(struct thread *td, int fd, int *status,
+	    int options, struct __wrusage *wrusage, siginfo_t *sip);
 int	kern_procctl(struct thread *td, enum idtype idtype, id_t id, int com,
 	    void *data);
 int	kern_pread(struct thread *td, int fd, void *buf, size_t nbyte,
@@ -303,7 +305,7 @@ int	kern_readv(struct thread *td, int fd, struct uio *auio);
 int	kern_recvit(struct thread *td, int s, struct msghdr *mp,
 	    enum uio_seg fromseg, struct mbuf **controlp);
 int	kern_renameat(struct thread *td, int oldfd, const char *old, int newfd,
-	    const char *new, enum uio_seg pathseg);
+	    const char *new, enum uio_seg pathseg, u_int flags);
 int	kern_frmdirat(struct thread *td, int dfd, const char *path, int fd,
 	    enum uio_seg pathseg, int flag);
 int	kern_sched_getparam(struct thread *td, struct thread *targettd,
@@ -400,7 +402,7 @@ int	kern_wait6(struct thread *td, enum idtype idtype, id_t id, int *status,
 int	kern_writev(struct thread *td, int fd, struct uio *auio);
 int	kern_socketpair(struct thread *td, int domain, int type, int protocol,
 	    int *rsv);
-int	kern_unmount(struct thread *td, const char *path, int flags);
+int	kern_unmount(struct thread *td, const char *path, uint64_t flags);
 
 /* flags for kern_sigaction */
 #define	KSA_OSIGSET	0x0001	/* uses osigact_t */

@@ -51,6 +51,27 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260114: remove ncurses html documentation
+OLD_FILES+=usr/share/doc/ncurses/hackguide.html
+OLD_FILES+=usr/share/doc/ncurses/ncurses-intro.html
+OLD_DIRS+=usr/share/doc/ncurses
+
+# 20260204: replaced with ATF test
+OLD_FILES+=usr/tests/usr.bin/m4/legacy_test
+OLD_FILES+=usr/tests/usr.bin/m4/regress.sh
+
+# 20260202: remove obsolete MIT KRB5 plugin files
+OLD_LIBS+=usr/lib/krb5/plugins/kdb/db2.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/otp.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/pkinit.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/spake.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/preauth/test.so.121
+OLD_LIBS+=usr/lib/krb5/plugins/tls/k5tls.so.121
+
+# 20260202: Made libkrb5profile INTERNALLIB
+OLD_LIBS+=usr/lib/libkrb5profile.so.122
+OLD_FILES+=usr/lib/libkrb5profile.so
+
 # 20251218: Remove old MLINK to apmconf(8)
 OLD_FILES+=usr/share/man/man8/apmconf.8.gz
 
@@ -309,6 +330,8 @@ OLD_FILES+=usr/lib/libalias_skinny_p.a
 OLD_FILES+=usr/lib/libalias_smedia_p.a
 OLD_FILES+=usr/lib/libarchive_p.a
 OLD_FILES+=usr/lib/libasn1_p.a
+OLD_FILES+=usr/lib/libatf-c++_p.a
+OLD_FILES+=usr/lib/libatf-c_p.a
 OLD_FILES+=usr/lib/libavl_p.a
 OLD_FILES+=usr/lib/libbe_p.a
 OLD_FILES+=usr/lib/libbegemot_p.a
@@ -317,6 +340,7 @@ OLD_FILES+=usr/lib/libbluetooth_p.a
 OLD_FILES+=usr/lib/libbsdxml_p.a
 OLD_FILES+=usr/lib/libbsm_p.a
 OLD_FILES+=usr/lib/libbsnmp_p.a
+OLD_FILES+=usr/lib/libbsnmptools_p.a
 OLD_FILES+=usr/lib/libbz2_p.a
 OLD_FILES+=usr/lib/libc++_p.a
 OLD_FILES+=usr/lib/libc_p.a
@@ -1956,8 +1980,9 @@ OLD_FILES+=usr/share/examples/diskless/README.BOOTP
 OLD_FILES+=usr/share/examples/diskless/README.TEMPLATING
 OLD_FILES+=usr/share/examples/diskless/clone_root
 
-# 20230905
+# 20230905: Removed rtw8x firmware files from src.git
 OLD_FILES+=usr/share/doc/legal/realtek_rtw88_firmware.LICENCE
+OLD_FILES+=usr/share/man/man4/rtw88fw.4.gz
 
 # 20230828
 MOVED_LIBS+=usr/lib/librt.so.1

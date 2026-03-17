@@ -523,25 +523,6 @@ BUILDENV_SHELL?=/bin/sh
 .endif
 
 .if !defined(_MKSHOWCONFIG)
-.if !defined(VCS_REVISION) || empty(VCS_REVISION)
-.if !defined(SVNVERSION_CMD) || empty(SVNVERSION_CMD)
-. for _D in ${PATH:S,:, ,g}
-.  if exists(${_D}/svnversion)
-SVNVERSION_CMD?=${_D}/svnversion
-.  endif
-.  if exists(${_D}/svnliteversion)
-SVNVERSION_CMD?=${_D}/svnliteversion
-.  endif
-. endfor
-.endif
-.if defined(SVNVERSION_CMD) && !empty(SVNVERSION_CMD)
-_VCS_REVISION?=	$$(eval ${SVNVERSION_CMD} ${SRCDIR})
-. if !empty(_VCS_REVISION)
-VCS_REVISION=	$$(echo r${_VCS_REVISION})
-.export VCS_REVISION
-. endif
-.endif
-.endif
 
 .if !defined(GIT_CMD) || empty(GIT_CMD)
 . for _P in /usr/bin /usr/local/bin
@@ -603,6 +584,7 @@ EXTRA_REVISION=	p${_BRANCH:C/.*-p([0-9]+$)/\1/}
 .if !defined(PKG_VERSION)
 PKG_VERSION:=	${_PKG_REVISION}${EXTRA_REVISION:C/[[:space:]]//g}
 .endif
+
 .endif	# !defined(_MKSHOWCONFIG)
 
 PKG_NAME_PREFIX?=	FreeBSD
@@ -1374,28 +1356,6 @@ __installcheck_DESTDIR: .PHONY
 .endif
 .endif
 
-#
-# Don't allow installworld or installkernel on a pkgbase system.  This avoids
-# accidentally updating a pkgbase system with install{world,kernel}, causing
-# the installed system to become out of date with the package database.
-#
-# Skip the check if DESTDIR is defined on the assumption the user knows what
-# they're doing.  This means the check can be disabled for the running system
-# using DESTDIR=/.
-#
-.if !make(distributeworld) && !defined(DESTDIR)
-_installcheck_world: __installcheck_PKG
-_installcheck_kernel: __installcheck_PKG
-__installcheck_PKG: .PHONY
-.if exists(${LOCALBASE}/sbin/pkg-static)
-	@if ${LOCALBASE}/sbin/pkg-static info -e ${PKG_NAME_PREFIX}-runtime; then \
-		echo >&2 "ERROR: This target should not be used on a system installed from packages." ; \
-		echo >&2 "       To override this check, set DESTDIR=/."; \
-		false; \
-	fi
-.endif
-.endif
-
 .if !defined(DB_FROM_SRC)
 #
 # Check for missing UIDs/GIDs.
@@ -1773,10 +1733,6 @@ KERNCONF?=	${GENERIC_KERNCONF}
 
 BUILDKERNELS=
 INSTALLKERNEL=
-.if defined(NO_INSTALLKERNEL)
-# All of the BUILDKERNELS loops start at index 1.
-BUILDKERNELS+= dummy
-.endif
 .for _kernel in ${KERNCONF}
 .if !defined(_MKSHOWCONFIG) && exists(${KERNCONFDIR}/${_kernel})
 BUILDKERNELS+=	${_kernel}
@@ -1818,12 +1774,12 @@ _BUILDKERNEL_START!= date '+%s'
 # Builds all kernels defined by BUILDKERNELS.
 #
 buildkernel: .MAKE .PHONY
-.if empty(BUILDKERNELS:Ndummy)
+.if empty(BUILDKERNELS)
 	@echo "ERROR: Missing kernel configuration file(s) (${KERNCONF})."; \
 	false
 .endif
 	@echo
-.for _kernel in ${BUILDKERNELS:Ndummy}
+.for _kernel in ${BUILDKERNELS}
 	@echo "--------------------------------------------------------------"
 	@echo ">>> Kernel build for ${_kernel} started on `LC_ALL=C date`"
 	@echo "--------------------------------------------------------------"
@@ -1885,6 +1841,79 @@ NO_INSTALLEXTRAKERNELS?=	yes
 NO_INSTALLEXTRAKERNELS?=	no
 .endif
 
+.if ${NO_INSTALLEXTRAKERNELS} != "yes"
+.if defined(NO_INSTALLKERNEL)
+INSTALLEXTRAKERNELS=	${BUILDKERNELS}
+.elif ${BUILDKERNELS:[#]} > 1
+# First kernel is installed separately by INSTALLKERNEL, typically to
+# /boot/kernel, rather than to a config-suffixed directory.
+INSTALLEXTRAKERNELS=	${BUILDKERNELS:[2..-1]}
+.else
+INSTALLEXTRAKERNELS=
+.endif
+.endif
+
+#
+# Don't allow installworld or installkernel on a pkgbase system.  This avoids
+# accidentally updating a pkgbase system with install{world,kernel}, causing
+# the installed system to become out of date with the package database.
+#
+# Skip the check if DESTDIR is defined on the assumption the user knows what
+# they're doing.  This means the check can be disabled for the running system
+# using DESTDIR=/.
+#
+# People who want to disable this check permanently may set two variables in
+# /etc/make.conf, ALLOW_PKGBASE_INSTALLKERNEL and ALLOW_PKGBASE_INSTALLWORLD,
+# to disable these checks.  That doesn't stop this from breaking your system,
+# it just stops make from warning about it.
+#
+.if !make(distributeworld) && !defined(DESTDIR)
+
+. if !defined(ALLOW_PKGBASE_INSTALLKERNEL) && exists(${LOCALBASE}/sbin/pkg-static)
+# For installkernel, we check if this specific kernel was installed by pkg.
+# This means people can continue to use installkernel for non-packaged
+# kernels, which is useful for development.
+
+_installcheck_kernel: __installcheck_kernel_pkgbase
+__installcheck_kernel_pkgbase: .PHONY
+.  for _kernel in ${NO_INSTALLKERNEL:D:U${INSTKERNNAME}} \
+		${INSTALLEXTRAKERNELS:S/^/${INSTKERNNAME}./}
+	@if ${LOCALBASE}/sbin/pkg-static which /boot/${_kernel}/kernel \
+	    >/dev/null 2>&1; then \
+		echo >&2 "ERROR: The kernel at /boot/${_kernel} was installed from packages." ; \
+		echo >&2 "       A packaged kernel should never be updated using installkernel;" ; \
+		echo >&2 "       this will cause the package database to become out of sync with" ; \
+		echo >&2 "       the live system state.  Either uninstall the packaged kernel," ; \
+		echo >&2 "       or install this kernel to a different path using INSTKERNNAME." ; \
+		echo >&2 "" ; \
+		echo >&2 "       If you understand the risks and wish to proceed anyway, you may" ; \
+		echo >&2 "       set ALLOW_PKGBASE_INSTALLKERNEL=yes to override this safety check." ; \
+		echo >&2 "       After doing so, you should not use the pkg(8) utility until you" ; \
+		echo >&2 "       have resolved the inconsistency between the installed system and" ; \
+		echo >&2 "       the package database." ; \
+		false; \
+	fi
+.  endfor
+. endif	# !defined(ALLOW_PKGBASE_INSTALLKERNEL) && exists(pkg-static)
+
+. if !defined(ALLOW_PKGBASE_INSTALLWORLD) && exists(${LOCALBASE}/sbin/pkg-static)
+_installcheck_world: __installcheck_world_pkgbase
+__installcheck_world_pkgbase: .PHONY
+	@if ${LOCALBASE}/sbin/pkg-static info -e ${PKG_NAME_PREFIX}-runtime; then \
+		echo >&2 "ERROR: This target should never be used on a system installed from packages;" ; \
+		echo >&2 "       doing so will cause the package database to become out of sync with" ; \
+		echo >&2 "       the live system state." ; \
+		echo >&2 "" ; \
+		echo >&2 "       If you understand the risks and wish to proceed anyway, you may" ; \
+		echo >&2 "       set ALLOW_PKGBASE_INSTALLWORLD=yes to override this safety check." ; \
+		echo >&2 "       After doing so, you should not use the pkg(8) utility until you" ; \
+		echo >&2 "       have resolved the inconsistency between the installed system and" ; \
+		echo >&2 "       the package database." ; \
+		false; \
+	fi
+. endif	# !defined(ALLOW_PKGBASE_INSTALLWORLD) && exists(pkg-static)
+.endif	# !make(distributeworld) && !defined(DESTDIR)
+
 #
 # installkernel, etc.
 #
@@ -1911,8 +1940,8 @@ reinstallkernel reinstallkernel.debug: _installcheck_kernel .PHONY
 	  echo ">>> Install kernel(s) ${INSTALLKERNEL} completed in $$seconds seconds, ncpu: $$(${_ncpu_cmd})${.MAKE.JOBS:S/^/, make -j/}"
 	@echo "--------------------------------------------------------------"
 .endif
-.if ${BUILDKERNELS:[#]} > 1 && ${NO_INSTALLEXTRAKERNELS} != "yes"
-.for _kernel in ${BUILDKERNELS:[2..-1]}
+.if !empty(INSTALLEXTRAKERNELS)
+.for _kernel in ${INSTALLEXTRAKERNELS}
 	@echo "--------------------------------------------------------------"
 	@echo ">>> Installing kernel ${_kernel} $$(LC_ALL=C date)"
 	@echo "--------------------------------------------------------------"
@@ -1949,8 +1978,8 @@ distributekernel distributekernel.debug: .PHONY
 	    ${METALOG_SORT_CMD} >> ${DESTDIR}/${DISTDIR}/kernel.meta
 .endif
 .endif
-.if ${BUILDKERNELS:[#]} > 1 && ${NO_INSTALLEXTRAKERNELS} != "yes"
-.for _kernel in ${BUILDKERNELS:[2..-1]}
+.if !empty(INSTALLEXTRAKERNELS)
+.for _kernel in ${INSTALLEXTRAKERNELS}
 	rm -f ${DESTDIR}/${DISTDIR}/kernel.${_kernel}.premeta
 	${_+_}cd ${KRNLOBJDIR}/${_kernel}; \
 	    ${IMAKEENV} ${IMAKE_INSTALL:S/METALOG/kernel.${_kernel}.premeta/} \
@@ -1981,8 +2010,8 @@ packagekernel: .PHONY
 	    @${DESTDIR}/${DISTDIR}/kernel.meta | \
 	    ${XZ_CMD} > ${DESTDIR}/${DISTDIR}/kernel-dbg.txz
 .endif
-.if ${BUILDKERNELS:[#]} > 1 && ${NO_INSTALLEXTRAKERNELS} != "yes"
-.for _kernel in ${BUILDKERNELS:[2..-1]}
+.if !empty(INSTALLEXTRAKERNELS)
+.for _kernel in ${INSTALLEXTRAKERNELS}
 	cd ${DESTDIR}/${DISTDIR}/kernel.${_kernel}; \
 	    ${TAR_CMD} cvf - --exclude '*.debug' \
 	    @${DESTDIR}/${DISTDIR}/kernel.${_kernel}.meta | \
@@ -2248,20 +2277,24 @@ create-world-packages-jobs: create-world-package-${pkgname}
 create-world-package-${pkgname}: .PHONY
 	@sh ${SRCDIR}/release/packages/generate-ucl.sh -o ${pkgname} \
 		-s ${SRCDIR} -u ${WSTAGEDIR}/${pkgname}.ucl
-	@awk -F\" ' \
-		/^name/ { printf("===> Creating %s-", $$2); next } \
-		/^version/ { print $$2; next } \
-		' ${WSTAGEDIR}/${pkgname}.ucl
-	@if [ "${pkgname}" == "runtime" ]; then \
-		sed -i '' -e "s/%VCS_REVISION%/${VCS_REVISION}/" ${WSTAGEDIR}/${pkgname}.ucl ; \
+	@if [ "$$(grep -vc '^@dir' ${WSTAGEDIR}/${pkgname}.plist)" -gt 0 ]; then \
+		awk -F\" ' \
+			/^name/ { printf("===> Creating %s-", $$2); next } \
+			/^version/ { print $$2; next } \
+			' ${WSTAGEDIR}/${pkgname}.ucl && \
+		${PKG_CMD} -o ABI=${PKG_ABI} -o ALLOW_BASE_SHLIBS=yes \
+			-o OSVERSION="${SRCRELDATE}" \
+			create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
+			-M ${WSTAGEDIR}/${pkgname}.ucl \
+			-p ${WSTAGEDIR}/${pkgname}.plist \
+			-r ${WSTAGEDIR} \
+			-o ${REPODIR}/${PKG_ABI}/${PKG_OUTPUT_DIR}; \
+	else \
+		awk -F\" ' \
+			/^name/ { printf("===> Skipping %s-", $$2); next } \
+			/^version/ { print $$2; next } \
+			' ${WSTAGEDIR}/${pkgname}.ucl; \
 	fi
-	${PKG_CMD} -o ABI=${PKG_ABI} -o ALLOW_BASE_SHLIBS=yes \
-		-o OSVERSION="${SRCRELDATE}" \
-		create -f ${PKG_FORMAT} ${PKG_CLEVEL} -T${PKG_CTHREADS} \
-		-M ${WSTAGEDIR}/${pkgname}.ucl \
-		-p ${WSTAGEDIR}/${pkgname}.plist \
-		-r ${WSTAGEDIR} \
-		-o ${REPODIR}/${PKG_ABI}/${PKG_OUTPUT_DIR}
 .endfor
 
 create-sets-packages-jobs: .PHONY create-sets-packages
@@ -2350,8 +2383,8 @@ create-kernel-packages-flavor${flavor:C,^""$,${_default_flavor},}: _pkgbootstrap
 		-o ${REPODIR}/${PKG_ABI}/${PKG_OUTPUT_DIR}
 . endfor
 .endif
-.if ${BUILDKERNELS:[#]} > 1 && ${NO_INSTALLEXTRAKERNELS} != "yes"
-. for _kernel in ${BUILDKERNELS:[2..-1]}
+.if !empty(INSTALLEXTRAKERNELS)
+.for _kernel in ${INSTALLEXTRAKERNELS}
 .  if exists(${KSTAGEDIR}/kernel.${_kernel}.meta)
 .   if ${MK_DEBUG_FILES} != "no"
 _debug=-dbg
@@ -2433,6 +2466,14 @@ checkworld: .PHONY
 doxygen: .PHONY
 	@if [ ! -x "${LOCALBASE}/bin/doxygen" ]; then \
 		echo "You need doxygen (devel/doxygen) to generate the API documentation of the kernel." | /usr/bin/fmt; \
+		exit 1; \
+	fi
+	@if [ ! -x "${LOCALBASE}/bin/tex" ]; then \
+		echo "You need TeX (print/texlive-full) to generate the API documentation of the kernel." | /usr/bin/fmt; \
+		exit 1; \
+	fi
+	@if [ ! -x "${LOCALBASE}/bin/dot" ]; then \
+		echo "You need graphviz (graphics/graphviz) to generate the API documentation of the kernel." | /usr/bin/fmt; \
 		exit 1; \
 	fi
 	${_+_}cd ${.CURDIR}/tools/kerneldoc/subsys; ${MAKE} obj all
@@ -3142,6 +3183,7 @@ NXBMAKEARGS+= \
 	MK_DEBUG_FILES=no \
 	MK_HTML=no \
 	MK_LLDB=no \
+	MK_LLVM_LINK_STATIC_LIBRARIES=yes \
 	MK_MAN=no \
 	MK_MAN_UTILS=yes \
 	MK_OFED=no \
@@ -3365,10 +3407,12 @@ _prebuild_libs+= \
 	lib/ofed/libibmad \
 	lib/ofed/libibumad \
 	lib/ofed/complib \
+	lib/ofed/libbnxtre \
 	lib/ofed/libmlx5
 
 lib/ofed/libibmad__L:	lib/ofed/libibumad__L
 lib/ofed/complib__L:	lib/libthr__L
+lib/ofed/libbnxtre__L:	lib/ofed/libibverbs__L lib/libthr__L
 lib/ofed/libmlx5__L:	lib/ofed/libibverbs__L lib/libthr__L
 .endif
 

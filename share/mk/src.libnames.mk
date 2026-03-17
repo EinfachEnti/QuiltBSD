@@ -59,6 +59,7 @@ _INTERNALLIBS=	\
 		kadmin_common \
 		kprop_util \
 		krb5apputils \
+		krb5profile \
 		krb5ss \
 		lpr \
 		lua \
@@ -285,6 +286,7 @@ _LIBRARIES+= \
 		irdma \
 		mlx4 \
 		mlx5 \
+		bnxtre \
 		rdmacm \
 		osmcomp \
 		opensm \
@@ -338,7 +340,7 @@ _DP_archive+=	md
 .endif
 .endif
 _DP_sqlite3=	pthread
-_DP_ssl=	crypto
+_DP_ssl=	pthread crypto
 _DP_ssh=	crypto crypt z
 .if ${MK_LDNS} != "no"
 _DP_ssh+=	ldns
@@ -360,7 +362,7 @@ _DP_cap_sysctl=	nv
 _DP_cap_syslog=	nv
 _DP_crypt=	md
 .if ${MK_OFED} != "no"
-_DP_pcap=	ibverbs mlx5
+_DP_pcap=	ibverbs mlx5 bnxtre
 .endif
 _DP_pjdlog=	util
 _DP_usb=	pthread
@@ -420,7 +422,6 @@ _DP_pam+=	ypclnt
 # _DP_apputils=		no dependencies except for libc
 _DP_com_err=		krb5support
 _DP_k5crypto=		com_err krb5support crypto
-_DP_krb5profile=	com_err krb5support
 _DP_gssapi_krb5=	krb5 k5crypto com_err krb5profile krb5support
 _DP_kadm5clnt_mit=	gssrpc gssapi_krb5 krb5 k5crypto krb5support com_err krb5profile
 _DP_kadm5srv_mit=	krb5profile gssrpc gssapi_krb5 kdb5 krb5 k5crypto krb5support com_err
@@ -504,6 +505,7 @@ _DP_netmap=
 _DP_ifconfig=	m
 _DP_pfctl=	nv
 _DP_krb5ss=		edit
+_DP_iscsiutil=	md
 
 # OFED support
 .if ${MK_OFED} != "no"
@@ -516,6 +518,7 @@ _DP_ibverbs=
 _DP_irdma=	ibverbs pthread
 _DP_mlx4=	ibverbs pthread
 _DP_mlx5=	ibverbs pthread
+_DP_bnxtre=	ibverbs pthread
 _DP_rdmacm=	ibverbs
 _DP_osmcomp=	pthread
 _DP_opensm=	pthread
@@ -810,6 +813,7 @@ LIBIBVERBSDIR=	${_LIB_OBJTOP}/lib/ofed/libibverbs
 LIBIRDMADIR=	${_LIB_OBJTOP}/lib/ofed/libirdma
 LIBMLX4DIR=	${_LIB_OBJTOP}/lib/ofed/libmlx4
 LIBMLX5DIR=	${_LIB_OBJTOP}/lib/ofed/libmlx5
+LIBBNXTREDIR=	${_LIB_OBJTOP}/lib/ofed/libbnxtre
 LIBRDMACMDIR=	${_LIB_OBJTOP}/lib/ofed/librdmacm
 LIBOSMCOMPDIR=	${_LIB_OBJTOP}/lib/ofed/complib
 LIBOPENSMDIR=	${_LIB_OBJTOP}/lib/ofed/libopensm

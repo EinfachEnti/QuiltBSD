@@ -646,7 +646,7 @@ ncl_pager_setsize(struct vnode *vp, u_quad_t *nsizep)
 		    (curthread->td_pflags2 & TDP2_SBPAGES) == 0)
 			setnsize = true;
 		else
-			np->n_flag |= NVNSETSZSKIP;
+			vn_delayed_setsize(vp);
 	}
 	if (nsizep == NULL) {
 		NFSUNLOCKNODE(np);
@@ -828,7 +828,7 @@ nfscl_wcc_data(struct nfsrv_descript *nd, struct vnode *vp,
 	    == (ND_NFSV4 | ND_V4WCCATTR)) {
 		error = nfsv4_loadattr(nd, NULL, &nfsva, NULL,
 		    NULL, 0, NULL, NULL, NULL, NULL, NULL, 0,
-		    NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+		    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 		if (error)
 			return (error);
 		/*

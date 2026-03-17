@@ -273,6 +273,17 @@ static char acpi_remove_interface[256];
 TUNABLE_STR("hw.acpi.remove_interface", acpi_remove_interface,
     sizeof(acpi_remove_interface));
 
+/*
+ * Automatically apply the Darwin OSI on Apple Mac hardware to obtain
+ * access to full ACPI hardware support on supported platforms.
+ *
+ * This flag automatically overrides any values set by
+ * `hw.acpi.acpi_install_interface` and unset by
+ * `hw.acpi.acpi_remove_interface`.
+ */
+static int acpi_apple_darwin_osi = 1;
+TUNABLE_INT("hw.acpi.apple_darwin_osi", &acpi_apple_darwin_osi);
+
 /* Allow users to dump Debug objects without ACPI debugger. */
 static int acpi_debug_objects;
 TUNABLE_INT("debug.acpi.enable_debug_objects", &acpi_debug_objects);
@@ -470,7 +481,6 @@ acpi_attach(device_t dev)
     ACPI_STATUS		status;
     int			error, state;
     UINT32		flags;
-    UINT8		TypeA, TypeB;
     char		*env;
 
     ACPI_FUNCTION_TRACE((char *)(uintptr_t)__func__);
@@ -648,19 +658,18 @@ acpi_attach(device_t dev)
     if (AcpiGbl_FADT.Flags & ACPI_FADT_RESET_REGISTER)
 	sc->acpi_handle_reboot = 1;
 
-#if !ACPI_REDUCED_HARDWARE
     /* Only enable S4BIOS by default if the FACS says it is available. */
     if (AcpiGbl_FACS != NULL && AcpiGbl_FACS->Flags & ACPI_FACS_S4_BIOS_PRESENT)
 	sc->acpi_s4bios = 1;
-#endif
 
     /* Probe all supported sleep states. */
     acpi_sleep_states[ACPI_STATE_S0] = TRUE;
-    for (state = ACPI_STATE_S1; state < ACPI_S_STATE_COUNT; state++)
-	if (ACPI_SUCCESS(AcpiEvaluateObject(ACPI_ROOT_OBJECT,
-	    __DECONST(char *, AcpiGbl_SleepStateNames[state]), NULL, NULL)) &&
-	    ACPI_SUCCESS(AcpiGetSleepTypeData(state, &TypeA, &TypeB)))
+    for (state = ACPI_STATE_S1; state <= ACPI_STATE_S5; state++) {
+	UINT8 TypeA, TypeB;
+
+	if (ACPI_SUCCESS(AcpiGetSleepTypeData(state, &TypeA, &TypeB)))
 	    acpi_sleep_states[state] = TRUE;
+    }
 
     /*
      * Dispatch the default sleep state to devices.  The lid switch is set
@@ -4617,6 +4626,65 @@ acpi_reset_interfaces(device_t dev)
 				    list.data[i]);
 		}
 		acpi_free_interfaces(&list);
+	}
+
+	/*
+	 * Apple Mac hardware quirk: install Darwin OSI.
+	 *
+	 * On Apple hardware, install the Darwin OSI and remove the Windows OSI
+	 * to match Linux behavior.
+	 *
+	 * This is required for dual-GPU MacBook Pro systems
+	 * (Intel iGPU + AMD/NVIDIA dGPU) where the iGPU is hidden when the
+	 * firmware doesn't see Darwin OSI, but it also unlocks additional ACPI
+	 * support on non-MacBook Pro Apple platforms.
+	 *
+	 * Apple's ACPI firmware checks _OSI("Darwin") and sets OSYS=10000
+	 * for macOS. Many device methods use OSDW() which checks OSYS==10000
+	 * for macOS-specific behavior including GPU visibility and power
+	 * management.
+	 *
+	 * Linux enables Darwin OSI by default on Apple hardware and disables
+	 * all Windows OSI strings (drivers/acpi/osi.c). Users can override
+	 * this behavior with acpi_osi=!Darwin to get Windows-like behavior,
+	 * in general, but this logic makes that process unnecessary.
+	 *
+	 * Detect Apple via SMBIOS and enable Darwin while disabling Windows
+	 * vendor strings. This makes both GPUs visible on dual-GPU MacBook Pro
+	 * systems (Intel iGPU + AMD dGPU) and unlocks full platform
+	 * ACPI support.
+	 */
+	if (acpi_apple_darwin_osi) {
+		char *vendor = kern_getenv("smbios.system.maker");
+		if (vendor != NULL) {
+			if (strcmp(vendor, "Apple Inc.") == 0 ||
+			    strcmp(vendor, "Apple Computer, Inc.") == 0) {
+				/* Disable all other OSI vendor strings. */
+				status = AcpiUpdateInterfaces(
+				    ACPI_DISABLE_ALL_VENDOR_STRINGS);
+				if (ACPI_SUCCESS(status)) {
+					/* Install Darwin OSI */
+					status = AcpiInstallInterface("Darwin");
+				}
+				if (bootverbose) {
+					if (ACPI_SUCCESS(status)) {
+						device_printf(dev,
+						    "disabled non-Darwin OSI & "
+						    "installed Darwin OSI\n");
+					} else {
+						device_printf(dev,
+						    "could not install "
+						    "Darwin OSI: %s\n",
+						    AcpiFormatException(status));
+					}
+				}
+			} else if (bootverbose) {
+				device_printf(dev,
+				    "Not installing Darwin OSI on unsupported platform: %s\n",
+				    vendor);
+			}
+			freeenv(vendor);
+		}
 	}
 }
 

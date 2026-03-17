@@ -56,7 +56,6 @@
  */
 
 #include "assym.inc"
-#include "opt_sched.h"
 
 #include <sys/syscall.h>
 
@@ -129,7 +128,7 @@ ENTRY(cpu_switch)
 	sync				/* Make sure all of that finished */
 
 cpu_switchin:
-#if defined(SMP) && defined(SCHED_ULE)
+#if defined(SMP)
 	/* Wait for the new thread to become unblocked */
 	bl	1f
 1:

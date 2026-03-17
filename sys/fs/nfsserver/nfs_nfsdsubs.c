@@ -1644,8 +1644,8 @@ out:
  */
 void
 nfsrv_fixattr(struct nfsrv_descript *nd, vnode_t vp,
-    struct nfsvattr *nvap, NFSACL_T *aclp, NFSPROC_T *p, nfsattrbit_t *attrbitp,
-    struct nfsexstuff *exp)
+    struct nfsvattr *nvap, NFSACL_T *aclp, NFSACL_T *daclp, NFSPROC_T *p,
+    nfsattrbit_t *attrbitp, bool atime_done)
 {
 	int change = 0;
 	struct nfsvattr nva;
@@ -1675,7 +1675,7 @@ nfsrv_fixattr(struct nfsrv_descript *nd, vnode_t vp,
 		}
 	}
 	if (NFSISSET_ATTRBIT(attrbitp, NFSATTRBIT_TIMEACCESSSET) &&
-	    NFSVNO_ISSETATIME(nvap)) {
+	    !atime_done && NFSVNO_ISSETATIME(nvap)) {
 		nva.na_atime = nvap->na_atime;
 		change++;
 		NFSSETBIT_ATTRBIT(&nattrbits, NFSATTRBIT_TIMEACCESSSET);
@@ -1736,7 +1736,7 @@ nfsrv_fixattr(struct nfsrv_descript *nd, vnode_t vp,
 		}
 	}
 	if (change) {
-		error = nfsvno_setattr(vp, &nva, nd->nd_cred, p, exp);
+		error = nfsvno_setattr(vp, &nva, nd->nd_cred, p, NULL);
 		if (error) {
 			NFSCLRALL_ATTRBIT(attrbitp, &nattrbits);
 		}
@@ -1747,16 +1747,34 @@ nfsrv_fixattr(struct nfsrv_descript *nd, vnode_t vp,
 	}
 #ifdef NFS4_ACL_EXTATTR_NAME
 	if (NFSISSET_ATTRBIT(attrbitp, NFSATTRBIT_ACL) &&
-	    nfsrv_useacl != 0 && aclp != NULL) {
-		if (aclp->acl_cnt > 0) {
-			error = nfsrv_setacl(vp, aclp, nd->nd_cred, p);
-			if (error) {
-				NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_ACL);
-			}
-		}
+	    nfsrv_useacl != 0 && aclp != NULL && aclp->acl_cnt > 0) {
+		error = nfsrv_setacl(vp, aclp, ACL_TYPE_NFS4,
+		    nd->nd_cred, p);
+		if (error != 0)
+			NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_ACL);
 	} else
-#endif
+		NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_ACL);
+	if (NFSISSET_ATTRBIT(attrbitp, NFSATTRBIT_POSIXACCESSACL) &&
+	    nfsrv_useacl != 0 && aclp != NULL && aclp->acl_cnt > 0) {
+		error = nfsrv_setacl(vp, aclp, ACL_TYPE_ACCESS,
+		    nd->nd_cred, p);
+		if (error != 0)
+			NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_POSIXACCESSACL);
+	} else
+		NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_POSIXACCESSACL);
+	if (NFSISSET_ATTRBIT(attrbitp, NFSATTRBIT_POSIXDEFAULTACL) &&
+	    nfsrv_useacl != 0 && daclp != NULL && daclp->acl_cnt > 0) {
+		error = nfsrv_setacl(vp, daclp, ACL_TYPE_DEFAULT,
+		    nd->nd_cred, p);
+		if (error != 0)
+			NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_POSIXDEFAULTACL);
+	} else
+		NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_POSIXDEFAULTACL);
+#else
 	NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_ACL);
+	NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_POSIXACCESSACL);
+	NFSCLRBIT_ATTRBIT(attrbitp, NFSATTRBIT_POSIXDEFAULTACL);
+#endif
 	nd->nd_cred->cr_uid = tuid;
 
 out:

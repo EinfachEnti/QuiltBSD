@@ -514,6 +514,15 @@ fi
 # 20250813  4f766afc1ca0    tcopy converted to C++
 clean_dep   usr.bin/tcopy   tcopy c
 
+# 20251219 # libkrb5profile is now internal
+for libcompat in "" $ALL_libcompats; do
+	dirprfx=${libcompat:+obj-lib${libcompat}}
+	dir="${OBJTOP%/}/${dirprfx}"/krb5/util/profile
+	if [ -L "${dir}"/libkrb5profile.so ]; then
+		run rm -rfv "${dir}"
+	fi
+done
+
 # 20250904  aef807876c30    moused binary to directory
 if [ -f "$OBJTOP"/usr.sbin/moused/moused ]; then
 	echo "Removing old moused binary"
@@ -537,7 +546,7 @@ if [ ${MACHINE} = riscv ]; then
 	clean_dep   lib/libc memcpy c
 
 	# 20251031  5a52f0704435  libc: scalar strnlen() in RISC-V assembly
-	clean_dep   lib/libc strnlen c
+	#clean_dep   lib/libc strnlen c
 
 	# 20251031  08af0bbc9c7d  libc: scalar strchrnul() in RISC-V assembly
 	clean_dep   lib/libc strchrnul c
@@ -545,4 +554,13 @@ if [ ${MACHINE} = riscv ]; then
 	# 20251031  b5dbf3de5611  libc/riscv64: implement bcopy() and bzero() through memcpy() and memset()
 	clean_dep   lib/libc bcopy c "libc.string.bcopy.c"
 	clean_dep   lib/libc bzero c "libc.string.bzero.c"
+
+	# 20260307  2a4e3112c811   libc/riscv64: temporarily disable strnlen() implementation until a fix is developed
+	clean_dep   lib/libc strnlen S
+fi
+
+if [ ${MACHINE_ARCH} = "aarch64" ]; then
+	# 20260113  41ccf82b29f3  libc/aarch64: Use MOPS implementations of memcpy/memmove/memset where availble
+	clean_dep   lib/libc memset S "[^/]memset.S"
+	run rm -fv "$OBJTOP"/lib/libc/memset.S
 fi

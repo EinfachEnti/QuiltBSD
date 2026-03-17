@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2020-2025 The FreeBSD Foundation
+ * Copyright (c) 2020-2026 The FreeBSD Foundation
  * Copyright (c) 2020-2025 Bjoern A. Zeeb
  *
  * This software was developed by Björn Zeeb under sponsorship from
@@ -431,7 +431,6 @@ enum ieee80211_hw_flags {
 	IEEE80211_HW_BUFF_MMPDU_TXQ,
 	IEEE80211_HW_CHANCTX_STA_CSA,
 	IEEE80211_HW_CONNECTION_MONITOR,
-	IEEE80211_HW_DEAUTH_NEED_MGD_TX_PREP,
 	IEEE80211_HW_HAS_RATE_CONTROL,
 	IEEE80211_HW_MFP_CAPABLE,
 	IEEE80211_HW_NEEDS_UNIQUE_STA_ADDR,
@@ -789,10 +788,21 @@ struct ieee80211_tx_queue_params {
 	struct ieee80211_he_mu_edca_param_ac_rec	mu_edca_param_rec;
 };
 
+enum mac80211_rate_control_flags {
+	IEEE80211_TX_RC_40_MHZ_WIDTH		= BIT(0),
+	IEEE80211_TX_RC_80_MHZ_WIDTH		= BIT(1),
+	IEEE80211_TX_RC_160_MHZ_WIDTH		= BIT(2),
+	IEEE80211_TX_RC_GREEN_FIELD		= BIT(3),
+	IEEE80211_TX_RC_MCS			= BIT(4),
+	IEEE80211_TX_RC_SHORT_GI		= BIT(5),
+	IEEE80211_TX_RC_VHT_MCS			= BIT(6),
+	IEEE80211_TX_RC_USE_SHORT_PREAMBLE	= BIT(7),
+};
+
 struct ieee80211_tx_rate {
 	uint8_t		idx;
 	uint16_t	count:5,
-			flags:11;
+			flags:11;	/* enum mac80211_rate_control_flags */
 };
 
 enum ieee80211_vif_driver_flags {
@@ -1091,6 +1101,8 @@ struct ieee80211_ops {
 	enum ieee80211_neg_ttlm_res (*can_neg_ttlm)(struct ieee80211_hw *, struct ieee80211_vif *, struct ieee80211_neg_ttlm *);
 
 	void (*rfkill_poll)(struct ieee80211_hw *);
+
+	int (*net_fill_forward_path)(struct ieee80211_hw *, struct ieee80211_vif *, struct ieee80211_sta *, struct net_device_path_ctx *, struct net_device_path *);
 
 /* #ifdef CONFIG_MAC80211_DEBUGFS */	/* Do not change depending on compile-time option. */
 	void (*sta_add_debugfs)(struct ieee80211_hw *, struct ieee80211_vif *, struct ieee80211_sta *, struct dentry *);
