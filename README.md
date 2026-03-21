@@ -68,21 +68,29 @@ A FreeBSD-specific helper also exists in `release/scripts/quiltbsd-usb-installer
 
 ### Build installer images
 
-If you want one command that builds both installer formats from the release tree, use:
+If you want one command that builds QuiltBSD installer media from the release tree, use:
 
 ```sh
-./release/scripts/quiltbsd-installer-builder.sh --both
+./release/scripts/quiltbsd-installer-builder.sh --both --profile offline
 ```
 
 The release build uses BSD make syntax, so on Linux you should install `bmake`
 first or pass it explicitly with `--make /path/to/bmake`.
 
-This wrapper builds:
+The builder now supports installer profiles so you can choose the right ISO and
+USB image set for the workflow:
 
-- `memstick.img` for USB installer media
-- `dvd1.iso` for installer ISO media
+- `--profile offline` builds `dvd1.iso` plus `memstick.img` for a fuller offline installer bundle
+- `--profile online` builds `disc1.iso` plus `memstick.img` for a network-oriented installer
+- `--profile minimal` builds `bootonly.iso` plus `mini-memstick.img` for the smallest installer media
 
-You can also limit it to one format with `--img-only` or `--iso-only`, force a clean rebuild with `--clean`, control parallelism with `--jobs N`, skip the package preflight with `--no-stage-packages`, and copy finished artifacts to another directory with `--output-dir /path/to/out`.
+You can still limit the build to one format with `--img-only` or `--iso-only`,
+force a clean rebuild with `--clean`, control parallelism with `--jobs N`, skip
+the package preflight with `--no-stage-packages`, rename copied artifacts with
+`--iso-name` / `--img-name`, and copy finished artifacts to another directory
+with `--output-dir /path/to/out`. By default the script also writes an
+`installer-artifacts-<profile>.txt` manifest with artifact paths, sizes, and
+checksums.
 
 ### Use the desktop installer profile
 
