@@ -82,14 +82,14 @@ This wrapper builds:
 - `memstick.img` for USB installer media
 - `dvd1.iso` for installer ISO media
 
-You can also limit it to one format with `--img-only` or `--iso-only`, and you can copy finished artifacts to another directory with `--output-dir /path/to/out`.
+You can also limit it to one format with `--img-only` or `--iso-only`, force a clean rebuild with `--clean`, control parallelism with `--jobs N`, skip the package preflight with `--no-stage-packages`, and copy finished artifacts to another directory with `--output-dir /path/to/out`.
 
 ### Use the desktop installer profile
 
 QuiltBSD now installs the **QuiltBSD Aurora** desktop profile with **KDE Plasma** automatically during the installer flow.
 If you ever need to rerun or repair it, open the final configuration menu and select **Desktop Environment**.
 
-The desktop installer profile adds common desktop packages such as Firefox, LibreOffice, PrismLauncher, sudo, bash, vim, tmux, rsync, zip/unzip, stronger Aurora KDE defaults, desktop shortcuts, a rebranded QuiltBSD Aurora wallpaper, a first-network package refresh, and desktop launchers.
+The desktop installer profile adds common desktop packages such as Firefox, KDE Plasma/GNOME/MATE/XFCE options, sudo, bash, vim, tmux, rsync, zip/unzip, a QuiltBSD wallpaper, a first-network package refresh, QuiltBSD PKG GUI, and desktop launchers.
 
 ### QuiltBSD PKG GUI
 
@@ -133,7 +133,13 @@ You can launch it from the desktop menu or run:
 /usr/local/bin/quiltblaster
 ```
 
-This opens the local game in Firefox from the QuiltBSD shared data directory. It now includes local co-op controls for two players on one keyboard with camera switching.
+This opens the local game in Firefox from the QuiltBSD shared data directory. The current version includes wave escalation, boss rounds every third wave, pickups, streak scoring, armor, pause support, and an improved HUD/minimap presentation.
+
+Tips:
+
+- Clear waves quickly to keep your streak bonus alive.
+- Boss kills can drop extra healing pickups.
+- Reload before pushing into tight corridors, because close-range enemies hit hard.
 
 ### First-boot maintenance helper
 
