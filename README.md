@@ -74,6 +74,9 @@ If you want one command that builds both installer formats from the release tree
 ./release/scripts/quiltbsd-installer-builder.sh --both
 ```
 
+The release build uses BSD make syntax, so on Linux you should install `bmake`
+first or pass it explicitly with `--make /path/to/bmake`.
+
 This wrapper builds:
 
 - `memstick.img` for USB installer media
@@ -83,15 +86,10 @@ You can also limit it to one format with `--img-only` or `--iso-only`, and you c
 
 ### Use the desktop installer profile
 
-Inside the installer, open the final configuration menu and select **Desktop Environment**.
-From there you can choose one of these QuiltBSD desktop profiles:
+QuiltBSD now installs the **QuiltBSD Aurora** desktop profile with **KDE Plasma** automatically during the installer flow.
+If you ever need to rerun or repair it, open the final configuration menu and select **Desktop Environment**.
 
-- KDE Plasma
-- GNOME
-- MATE
-- XFCE
-
-The desktop installer profile adds common desktop packages such as Firefox, sudo, bash, vim, tmux, rsync, zip/unzip, a QuiltBSD wallpaper, a first-network package refresh, and desktop launchers.
+The desktop installer profile adds common desktop packages such as Firefox, LibreOffice, PrismLauncher, sudo, bash, vim, tmux, rsync, zip/unzip, stronger Aurora KDE defaults, desktop shortcuts, a rebranded QuiltBSD Aurora wallpaper, a first-network package refresh, and desktop launchers.
 
 ### QuiltBSD PKG GUI
 
@@ -104,16 +102,38 @@ It is available from the desktop application menu, and can also be started manua
 
 It provides GUI actions for common `pkg` operations such as install, remove, search, info, update, upgrade, clean, audit, and an advanced free-form command mode.
 
-### QuiltBlaster 3D
+### QuiltBSD PKG Store
 
-The desktop profile also installs a local browser-based game named **QuiltBlaster 3D**.
+The desktop profile also installs a curated software storefront named **QuiltBSD PKG Store**.
+It is available from the application menu, and can also be started manually with:
+
+```sh
+/usr/local/bin/quiltbsd-pkg-store
+```
+
+It provides curated package picks for common categories like web, office, media, graphics, chat, development, and utilities, plus manual repository search.
+
+### QuiltBSD Aurora Welcome
+
+The desktop profile also installs an **Aurora Welcome** screen that starts automatically on first login.
+It can also be launched manually with:
+
+```sh
+/usr/local/bin/quiltbsd-welcome --force
+```
+
+It provides quick entry points for the PKG Store, PKG GUI, Firefox, LibreOffice, PrismLauncher, QuiltBlaster Multiplayer, the Aurora features overview, and post-install maintenance.
+
+### QuiltBlaster Multiplayer
+
+The desktop profile also installs a local browser-based game named **QuiltBlaster Multiplayer**.
 You can launch it from the desktop menu or run:
 
 ```sh
 /usr/local/bin/quiltblaster
 ```
 
-This opens the local game in Firefox from the QuiltBSD shared data directory.
+This opens the local game in Firefox from the QuiltBSD shared data directory. It now includes local co-op controls for two players on one keyboard with camera switching.
 
 ### First-boot maintenance helper
 

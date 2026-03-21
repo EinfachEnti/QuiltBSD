@@ -19,7 +19,9 @@ archivers/zip
 comms/usbmuxd
 devel/git@lite
 editors/emacs@nox
+editors/libreoffice
 editors/vim
+games/prismlauncher
 misc/freebsd-doc-all
 x11/plasma6-plasma
 x11/plasma6-sddm-kcm
