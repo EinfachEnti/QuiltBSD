@@ -108,10 +108,10 @@ vm_install_base() {
 		fi
 		$pkg_cmd update
 		selected=$(vm_base_packages_list | vm_extra_filter_base_packages)
-		$pkg_cmd install -U -r FreeBSD-base $selected
+		$pkg_cmd install -U -r QuiltBSD-base $selected
 		metalog_add_data ./var/db/pkg/local.sqlite
 		mkdir -p ${DESTDIR}/usr/local/etc/pkg/repos
-		echo 'FreeBSD-base: { enabled: yes }' > ${DESTDIR}/usr/local/etc/pkg/repos/FreeBSD.conf
+		echo 'QuiltBSD-base: { enabled: yes }' > ${DESTDIR}/usr/local/etc/pkg/repos/FreeBSD.conf
 		metalog_add_data ./usr/local/etc/pkg/repos
 		metalog_add_data ./usr/local/etc/pkg/repos/FreeBSD.conf
 	else

@@ -1,4 +1,4 @@
-OSNAME?=	FreeBSD
+OSNAME?=	QuiltBSD
 GENHDRS=	opt_osname.h
 SRCS+=		${GENHDRS}
 CLEANFILES+=	${GENHDRS}

@@ -75,7 +75,10 @@ if [ $DHCP -eq 1 ]; then
 		ifconfig $INTERFACE down
 		ifconfig $INTERFACE up
 		bsddialog --backtitle "$OSNAME Installer" --infobox "Acquiring DHCP lease..." 0 0
-		err=$( pkill -F /var/run/dhclient/dhclient.${INTERFACE}.pid; dhclient $INTERFACE 2>&1 )
+		pidfile=/var/run/dhclient/dhclient.${INTERFACE}.pid
+		[ -f "$pidfile" ] && pkill -F "$pidfile" 2>/dev/null
+		rm -f "$pidfile"
+		err=$( dhclient -1 $INTERFACE 2>&1 )
 		if [ $? -ne 0 ]; then
 			f_dprintf "%s" "$err"
 			if [ -n "$AUTO" ]; then
@@ -86,6 +89,9 @@ if [ $DHCP -eq 1 ]; then
 		fi
 	fi
 	sysrc -f $BSDINSTALL_TMPETC/._rc.conf.net ifconfig_$INTERFACE="${IFCONFIG_PREFIX}DHCP"
+	if [ -f /etc/resolv.conf ]; then
+		cp -f /etc/resolv.conf $BSDINSTALL_TMPETC/resolv.conf
+	fi
 	exit 0
 fi
 

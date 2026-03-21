@@ -20,6 +20,7 @@ SCRIPTS=auto \
 	netconfig \
 	netconfig_ipv4 \
 	netconfig_ipv6 \
+	desktop \
 	pkgbase \
 	rootpass \
 	script \

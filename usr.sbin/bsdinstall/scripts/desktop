@@ -1,0 +1,805 @@
+#!/bin/sh
+#-
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Install a QuiltBSD desktop environment into the target system.
+
+BSDCFG_SHARE="/usr/share/bsdconfig"
+. $BSDCFG_SHARE/common.subr || exit 1
+f_include $BSDCFG_SHARE/dialog.subr
+
+: ${BSDDIALOG_OK=0}
+: ${BSDDIALOG_CANCEL=1}
+
+COMMON_PACKAGES="\
+	x11/xorg \
+	x11/zenity \
+	www/firefox \
+	security/sudo \
+	shells/bash \
+	editors/vim \
+	sysutils/tmux \
+	net/rsync \
+	archivers/unzip \
+	archivers/zip\
+"
+WALLPAPER_DIR="/usr/local/share/wallpapers/QuiltBSD/contents/images"
+WALLPAPER_FILE="$WALLPAPER_DIR/1920x1080.svg"
+FIRSTBOOT_SCRIPT="/usr/local/libexec/quiltbsd-firstboot-network"
+FIRSTBOOT_RC="/usr/local/etc/rc.d/quiltbsd_firstboot_network"
+POSTINSTALL_SCRIPT="/usr/local/bin/quiltbsd-postinstall"
+PKG_GUI_SCRIPT="/usr/local/bin/quiltbsd-pkg-gui"
+PKG_GUI_DESKTOP="/usr/local/share/applications/quiltbsd-pkg-gui.desktop"
+GAME_DIR="/usr/local/share/quiltbsd/games/quiltblaster"
+GAME_LAUNCHER="/usr/local/bin/quiltblaster"
+GAME_DESKTOP="/usr/local/share/applications/quiltblaster.desktop"
+FEATURES_DIR="/usr/local/share/quiltbsd"
+FEATURES_FILE="$FEATURES_DIR/FEATURES.txt"
+PLYMOUTH_THEME_DIR="/usr/local/share/plymouth/themes/quiltboot"
+PLYMOUTH_HELPER="/usr/local/bin/quiltboot-enable"
+DESKTOP_FLAVOR=
+DESKTOP_NAME=
+DESKTOP_PACKAGES=
+DISPLAY_MANAGER=
+
+select_desktop_environment()
+{
+	exec 5>&1
+	choice=$(bsddialog --backtitle "$OSNAME Installer" \
+	    --title "Desktop Environment" \
+	    --menu "Choose the QuiltBSD desktop environment to install." 0 0 0 \
+	    "kde" "KDE Plasma" \
+	    "gnome" "GNOME" \
+	    "mate" "MATE" \
+	    "xfce" "XFCE" 2>&1 1>&5)
+	retval=$?
+	exec 5>&-
+	[ $retval -eq $BSDDIALOG_OK ] || return 1
+
+	case "$choice" in
+	kde)
+		DESKTOP_FLAVOR=kde
+		DESKTOP_NAME="KDE Plasma"
+		DESKTOP_PACKAGES="x11/plasma6-plasma x11/plasma6-sddm-kcm x11/sddm"
+		DISPLAY_MANAGER=sddm
+		;;
+	gnome)
+		DESKTOP_FLAVOR=gnome
+		DESKTOP_NAME="GNOME"
+		DESKTOP_PACKAGES="x11/gnome x11/gdm"
+		DISPLAY_MANAGER=gdm
+		;;
+	mate)
+		DESKTOP_FLAVOR=mate
+		DESKTOP_NAME="MATE"
+		DESKTOP_PACKAGES="x11/mate x11/sddm"
+		DISPLAY_MANAGER=sddm
+		;;
+	xfce)
+		DESKTOP_FLAVOR=xfce
+		DESKTOP_NAME="XFCE"
+		DESKTOP_PACKAGES="x11/xfce4 x11/sddm"
+		DISPLAY_MANAGER=sddm
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+install_wallpaper()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p "$WALLPAPER_DIR"
+	cat > "$BSDINSTALL_CHROOT$WALLPAPER_FILE" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="55%" stop-color="#1d4ed8"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <circle cx="1550" cy="220" r="260" fill="#ffffff" fill-opacity="0.08"/>
+  <circle cx="260" cy="880" r="320" fill="#ffffff" fill-opacity="0.06"/>
+  <path d="M0 860 C 300 740, 560 980, 860 860 S 1440 700, 1920 860 L 1920 1080 L 0 1080 Z" fill="#020617" fill-opacity="0.35"/>
+  <text x="140" y="430" fill="#e2e8f0" font-size="150" font-family="Noto Sans, DejaVu Sans, sans-serif" font-weight="700">QuiltBSD</text>
+  <text x="146" y="515" fill="url(#accent)" font-size="44" font-family="Noto Sans, DejaVu Sans, sans-serif">Desktop Edition</text>
+  <text x="146" y="585" fill="#cbd5e1" font-size="30" font-family="Noto Sans, DejaVu Sans, sans-serif">100% QuiltBSD installer profile with browser, tools, package GUI, and first-network refresh</text>
+</svg>
+SVG
+}
+
+install_user_defaults()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/share/skel/.local/share/quiltbsd
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/share/skel/.config/autostart-scripts
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/.config/autostart-scripts/quiltbsd-apply-wallpaper.sh" <<'WALL'
+#!/bin/sh
+wallpaper="/usr/local/share/wallpapers/QuiltBSD/contents/images/1920x1080.svg"
+flag="$HOME/.local/share/quiltbsd/wallpaper-applied"
+mkdir -p "$HOME/.local/share/quiltbsd"
+[ -f "$flag" ] && exit 0
+command -v plasma-apply-wallpaperimage >/dev/null 2>&1 || exit 0
+plasma-apply-wallpaperimage "$wallpaper" >/dev/null 2>&1 && touch "$flag"
+WALL
+	chmod 0755 "$BSDINSTALL_CHROOT/usr/share/skel/.config/autostart-scripts/quiltbsd-apply-wallpaper.sh"
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/.bashrc" <<'BASHRC'
+# QuiltBSD interactive shell defaults
+alias ll='ls -lah'
+alias la='ls -A'
+alias l='ls -CF'
+alias update-system='sudo pkg update -f && sudo pkg upgrade -f'
+alias quiltbsd-postinstall='sudo /usr/local/bin/quiltbsd-postinstall'
+alias pkg-gui='/usr/local/bin/quiltbsd-pkg-gui'
+BASHRC
+}
+
+install_pkg_gui()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/local/bin /usr/local/share/applications
+	cat > "$BSDINSTALL_CHROOT$PKG_GUI_SCRIPT" <<'PKGGUI'
+#!/bin/sh
+set -eu
+
+PASSWORD_CACHE=""
+
+prompt_password()
+{
+	PASSWORD_CACHE=$(zenity --password --title="QuiltBSD PKG GUI") || exit 0
+}
+
+run_pkg()
+{
+	cmd=$1
+	while :; do
+		[ -n "$PASSWORD_CACHE" ] || prompt_password
+		output=$(printf '%s\n' "$PASSWORD_CACHE" | sudo -S sh -c "$cmd" 2>&1) && break
+		PASSWORD_CACHE=""
+		zenity --error --width=700 --title="QuiltBSD PKG GUI" \
+		    --text="Authentication failed or the pkg command returned an error. Retry if needed." --no-wrap
+	done
+	printf '%s\n' "$output" | zenity --text-info --title="QuiltBSD PKG GUI" --width=900 --height=650
+}
+
+prompt_package()
+{
+	zenity --entry --title="QuiltBSD PKG GUI" --text="Enter package/origin:" --entry-text="$1"
+}
+
+prompt_text()
+{
+	zenity --entry --title="QuiltBSD PKG GUI" --text="$1" --entry-text="$2"
+}
+
+while :; do
+	choice=$(zenity --list --radiolist \
+		--title="QuiltBSD PKG GUI" \
+		--width=760 --height=620 \
+		--text="Choose a pkg action. For anything else, use Advanced and enter any pkg subcommand you want." \
+		--column="Pick" --column="Action" --column="Description" \
+		TRUE install "Install a package" \
+		FALSE remove "Remove a package" \
+		FALSE search "Search packages" \
+		FALSE info "Show package info" \
+		FALSE update "Run pkg update -f" \
+		FALSE upgrade "Run pkg upgrade -f -y" \
+		FALSE autoremove "Run pkg autoremove -y" \
+		FALSE clean "Run pkg clean -ay" \
+		FALSE audit "Run pkg audit -F" \
+		FALSE stats "Show pkg stats" \
+		FALSE lock "Lock a package" \
+		FALSE unlock "Unlock a package" \
+		FALSE which "Find which package owns a file" \
+		FALSE advanced "Run any custom pkg subcommand" \
+		FALSE quit "Exit the GUI") || exit 0
+
+	case "$choice" in
+	install)
+		pkgname=$(prompt_package "firefox") || continue
+		[ -n "$pkgname" ] || continue
+		run_pkg "pkg install -y $pkgname"
+		;;
+	remove)
+		pkgname=$(prompt_package "firefox") || continue
+		[ -n "$pkgname" ] || continue
+		run_pkg "pkg remove -y $pkgname"
+		;;
+	search)
+		pkgname=$(prompt_package "firefox") || continue
+		[ -n "$pkgname" ] || continue
+		run_pkg "pkg search $pkgname"
+		;;
+	info)
+		pkgname=$(prompt_package "firefox") || continue
+		[ -n "$pkgname" ] || continue
+		run_pkg "pkg info $pkgname"
+		;;
+	update)
+		run_pkg "pkg update -f"
+		;;
+	upgrade)
+		run_pkg "pkg upgrade -f -y"
+		;;
+	autoremove)
+		run_pkg "pkg autoremove -y"
+		;;
+	clean)
+		run_pkg "pkg clean -ay"
+		;;
+	audit)
+		run_pkg "pkg audit -F"
+		;;
+	stats)
+		run_pkg "pkg stats"
+		;;
+	lock)
+		pkgname=$(prompt_package "firefox") || continue
+		[ -n "$pkgname" ] || continue
+		run_pkg "pkg lock -y $pkgname"
+		;;
+	unlock)
+		pkgname=$(prompt_package "firefox") || continue
+		[ -n "$pkgname" ] || continue
+		run_pkg "pkg unlock -y $pkgname"
+		;;
+	which)
+		filepath=$(prompt_text "Enter a filesystem path to query with pkg which:" "/usr/local/bin/firefox") || continue
+		[ -n "$filepath" ] || continue
+		run_pkg "pkg which $filepath"
+		;;
+	advanced)
+		args=$(prompt_text "Enter any pkg subcommand and arguments:" "search firefox") || continue
+		[ -n "$args" ] || continue
+		run_pkg "pkg $args"
+		;;
+	quit)
+		exit 0
+		;;
+	esac
+done
+PKGGUI
+	chmod 0755 "$BSDINSTALL_CHROOT$PKG_GUI_SCRIPT"
+	cat > "$BSDINSTALL_CHROOT$PKG_GUI_DESKTOP" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=QuiltBSD PKG GUI
+Comment=Graphical frontend for pkg commands
+Exec=/usr/local/bin/quiltbsd-pkg-gui
+Icon=system-software-install
+Terminal=false
+Categories=System;Settings;PackageManager;
+DESKTOP
+}
+
+install_game()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p "$GAME_DIR" /usr/local/bin /usr/local/share/applications
+	cat > "$BSDINSTALL_CHROOT$GAME_DIR/index.html" <<'GAME'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QuiltBlaster 3D</title>
+<style>
+body { margin: 0; background: #020617; color: #e2e8f0; font-family: sans-serif; overflow: hidden; }
+#hud { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; z-index: 2; font-size: 14px; text-shadow: 0 0 6px #000; }
+#help { position: fixed; bottom: 12px; left: 12px; z-index: 2; font-size: 13px; max-width: 560px; background: rgba(15,23,42,.55); padding: 8px 10px; border-radius: 10px; }
+#crosshair { position: fixed; left: 50%; top: 50%; width: 18px; height: 18px; margin-left: -9px; margin-top: -9px; z-index: 2; }
+#crosshair::before, #crosshair::after { content: ""; position: absolute; background: #f8fafc; }
+#crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
+#crosshair::after { left: 0; top: 8px; width: 18px; height: 2px; }
+#minimap { position: fixed; right: 16px; bottom: 16px; width: 180px; height: 180px; border: 2px solid rgba(255,255,255,.25); background: rgba(2,6,23,.55); z-index: 2; }
+canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div><strong>QuiltBlaster 3D</strong> — Wave <span id="wave">1</span> — Ammo <span id="ammo">12</span></div>
+  <div>HP <span id="hp">100</span> | Score <span id="score">0</span> | Enemies <span id="enemies">0</span></div>
+</div>
+<div id="crosshair"></div>
+<div id="help">WASD bewegen, Shift sprinten, Pfeile drehen, Leertaste schießen, R nachladen. Boss alle 3 Wellen. Klick startet/restartet.</div>
+<canvas id="game" width="960" height="540"></canvas>
+<canvas id="minimap" width="180" height="180"></canvas>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const minimap = document.getElementById("minimap");
+const mctx = minimap.getContext("2d");
+const hud = {
+  wave: document.getElementById("wave"),
+  hp: document.getElementById("hp"),
+  ammo: document.getElementById("ammo"),
+  score: document.getElementById("score"),
+  enemies: document.getElementById("enemies"),
+};
+const map = [
+  "################",
+  "#..............#",
+  "#..##..E.......#",
+  "#..............#",
+  "#......####....#",
+  "#..............#",
+  "#....E.........#",
+  "#..............#",
+  "#.........##...#",
+  "#..............#",
+  "#...####.......#",
+  "#...........E..#",
+  "#..............#",
+  "#......P.......#",
+  "#..............#",
+  "################",
+];
+const fov = Math.PI / 3;
+const keys = {};
+let enemies = [];
+let shots = [];
+let player;
+let score;
+let wave;
+let lastTime = 0;
+let running = false;
+let reloadTimer = 0;
+
+function resetGame() {
+  enemies = [];
+  shots = [];
+  score = 0;
+  wave = 1;
+  reloadTimer = 0;
+  player = { x: 7.5, y: 13.5, angle: -Math.PI / 2, hp: 100, ammo: 12, maxAmmo: 12 };
+  spawnWave();
+  running = true;
+}
+
+function spawnWave() {
+  const spawnPoints = [];
+  for (let y = 0; y < map.length; y++) {
+    for (let x = 0; x < map[y].length; x++) {
+      if (map[y][x] === "E") spawnPoints.push({ x: x + 0.5, y: y + 0.5 });
+    }
+  }
+  const count = Math.min(spawnPoints.length, 2 + wave);
+  enemies = spawnPoints.slice(0, count).map((p, i) => ({
+    x: p.x + (i % 2) * 0.2,
+    y: p.y + (i % 3) * 0.15,
+    alive: true,
+    cooldown: Math.random() * 1.5,
+    hp: 1,
+    boss: false,
+  }));
+  if (wave % 3 === 0 && enemies.length) {
+    enemies[0].boss = true;
+    enemies[0].hp = 4 + wave;
+  }
+}
+
+function isWall(x, y) {
+  const gx = Math.floor(x), gy = Math.floor(y);
+  if (gy < 0 || gy >= map.length || gx < 0 || gx >= map[0].length) return true;
+  return map[gy][gx] === "#";
+}
+
+function castRay(angle) {
+  let distance = 0;
+  while (distance < 20) {
+    const x = player.x + Math.cos(angle) * distance;
+    const y = player.y + Math.sin(angle) * distance;
+    if (isWall(x, y)) return distance;
+    distance += 0.02;
+  }
+  return 20;
+}
+
+function reload() {
+  if (reloadTimer > 0 || player.ammo === player.maxAmmo) return;
+  reloadTimer = 1.1;
+}
+
+function update(dt) {
+  if (!running) return;
+  if (reloadTimer > 0) {
+    reloadTimer -= dt;
+    if (reloadTimer <= 0) player.ammo = player.maxAmmo;
+  }
+  const sprint = keys["shift"] ? 1.7 : 1;
+  const moveSpeed = 2.2 * dt * sprint;
+  const turnSpeed = 1.9 * dt;
+  if (keys["arrowleft"]) player.angle -= turnSpeed;
+  if (keys["arrowright"]) player.angle += turnSpeed;
+  let dx = 0, dy = 0;
+  if (keys["w"]) { dx += Math.cos(player.angle) * moveSpeed; dy += Math.sin(player.angle) * moveSpeed; }
+  if (keys["s"]) { dx -= Math.cos(player.angle) * moveSpeed; dy -= Math.sin(player.angle) * moveSpeed; }
+  if (keys["a"]) { dx += Math.cos(player.angle - Math.PI / 2) * moveSpeed; dy += Math.sin(player.angle - Math.PI / 2) * moveSpeed; }
+  if (keys["d"]) { dx += Math.cos(player.angle + Math.PI / 2) * moveSpeed; dy += Math.sin(player.angle + Math.PI / 2) * moveSpeed; }
+  if (!isWall(player.x + dx, player.y)) player.x += dx;
+  if (!isWall(player.x, player.y + dy)) player.y += dy;
+
+  enemies.forEach((enemy) => {
+    if (!enemy.alive) return;
+    const angleToPlayer = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+    const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+    const speed = enemy.boss ? 0.45 : 0.8;
+    if (dist > 0.8) {
+      const ex = enemy.x + Math.cos(angleToPlayer) * dt * speed;
+      const ey = enemy.y + Math.sin(angleToPlayer) * dt * speed;
+      if (!isWall(ex, enemy.y)) enemy.x = ex;
+      if (!isWall(enemy.x, ey)) enemy.y = ey;
+    }
+    enemy.cooldown -= dt;
+    if (dist < 1.2 && enemy.cooldown <= 0) {
+      player.hp = Math.max(0, player.hp - (enemy.boss ? 16 : 8));
+      enemy.cooldown = enemy.boss ? 0.8 : 1.0;
+      if (player.hp <= 0) running = false;
+    }
+  });
+
+  shots = shots.filter((shot) => {
+    shot.life -= dt;
+    return shot.life > 0;
+  });
+
+  if (enemies.every((e) => !e.alive)) {
+    wave += 1;
+    spawnWave();
+  }
+}
+
+function shoot() {
+  if (!running || reloadTimer > 0) return;
+  if (player.ammo <= 0) { reload(); return; }
+  player.ammo -= 1;
+  shots.push({ life: 0.08 });
+  let best = null;
+  enemies.forEach((enemy) => {
+    if (!enemy.alive) return;
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    const ang = Math.atan2(dy, dx);
+    let diff = ang - player.angle;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    if (Math.abs(diff) < 0.12 && (!best || dist < best.dist)) best = { enemy, dist };
+  });
+  if (best) {
+    best.enemy.hp -= 1;
+    if (best.enemy.hp <= 0) {
+      best.enemy.alive = false;
+      score += best.enemy.boss ? 500 : 100;
+    }
+  }
+}
+
+function renderMinimap() {
+  const scale = minimap.width / map[0].length;
+  mctx.fillStyle = "rgba(2,6,23,.92)";
+  mctx.fillRect(0, 0, minimap.width, minimap.height);
+  for (let y = 0; y < map.length; y++) {
+    for (let x = 0; x < map[y].length; x++) {
+      mctx.fillStyle = map[y][x] === "#" ? "#334155" : "#0f172a";
+      mctx.fillRect(x * scale, y * scale, scale - 1, scale - 1);
+    }
+  }
+  enemies.filter((e) => e.alive).forEach((enemy) => {
+    mctx.fillStyle = enemy.boss ? "#f59e0b" : "#ef4444";
+    mctx.beginPath();
+    mctx.arc(enemy.x * scale, enemy.y * scale, enemy.boss ? 5 : 3, 0, Math.PI * 2);
+    mctx.fill();
+  });
+  mctx.fillStyle = "#38bdf8";
+  mctx.beginPath();
+  mctx.arc(player.x * scale, player.y * scale, 4, 0, Math.PI * 2);
+  mctx.fill();
+}
+
+function render() {
+  const w = canvas.width, h = canvas.height;
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, w, h / 2);
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(0, h / 2, w, h / 2);
+
+  for (let x = 0; x < w; x++) {
+    const rayAngle = player.angle - fov / 2 + (x / w) * fov;
+    const distance = castRay(rayAngle);
+    const corrected = distance * Math.cos(rayAngle - player.angle);
+    const wallHeight = Math.min(h, h / Math.max(corrected, 0.001));
+    const shade = Math.max(40, 220 - corrected * 22);
+    ctx.fillStyle = `rgb(${shade * 0.25}, ${shade * 0.45}, ${shade})`;
+    ctx.fillRect(x, h / 2 - wallHeight / 2, 1, wallHeight);
+  }
+
+  enemies
+    .filter((e) => e.alive)
+    .map((enemy) => {
+      const dx = enemy.x - player.x;
+      const dy = enemy.y - player.y;
+      const dist = Math.hypot(dx, dy);
+      let ang = Math.atan2(dy, dx) - player.angle;
+      while (ang < -Math.PI) ang += Math.PI * 2;
+      while (ang > Math.PI) ang -= Math.PI * 2;
+      return { enemy, dist, ang };
+    })
+    .filter((s) => Math.abs(s.ang) < fov / 1.5)
+    .sort((a, b) => b.dist - a.dist)
+    .forEach((sprite) => {
+      const size = Math.max(12, (sprite.enemy.boss ? 420 : 260) / sprite.dist);
+      const sx = (sprite.ang / fov + 0.5) * w;
+      const sy = h / 2;
+      ctx.fillStyle = sprite.enemy.boss ? "#f59e0b" : "#ef4444";
+      ctx.beginPath();
+      ctx.arc(sx, sy, size / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(sx - 8, sy - 4, 4, 4);
+      ctx.fillRect(sx + 4, sy - 4, 4, 4);
+    });
+
+  if (shots.length) {
+    ctx.strokeStyle = "#fde68a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(w / 2, h / 2);
+    ctx.lineTo(w / 2, h / 2 - 40);
+    ctx.stroke();
+  }
+
+  if (!running) {
+    ctx.fillStyle = "rgba(2,6,23,.75)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "bold 34px sans-serif";
+    ctx.fillText(player.hp <= 0 ? "Game Over" : "QuiltBlaster 3D", w / 2 - 120, h / 2 - 10);
+    ctx.font = "20px sans-serif";
+    ctx.fillText("Klick zum Starten / Neustarten", w / 2 - 125, h / 2 + 28);
+  }
+
+  renderMinimap();
+  hud.wave.textContent = wave;
+  hud.hp.textContent = player.hp;
+  hud.ammo.textContent = reloadTimer > 0 ? "..." : player.ammo;
+  hud.score.textContent = score;
+  hud.enemies.textContent = enemies.filter((e) => e.alive).length;
+}
+
+function loop(ts) {
+  const dt = Math.min(0.033, (ts - lastTime) / 1000 || 0);
+  lastTime = ts;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener("keydown", (e) => {
+  const key = e.key.toLowerCase();
+  keys[key] = true;
+  if (e.code === "Space") shoot();
+  if (key === "r") reload();
+});
+window.addEventListener("keyup", (e) => {
+  keys[e.key.toLowerCase()] = false;
+});
+window.addEventListener("click", () => {
+  if (!running) resetGame();
+});
+
+resetGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+GAME
+	cat > "$BSDINSTALL_CHROOT$GAME_LAUNCHER" <<'LAUNCH'
+#!/bin/sh
+exec firefox "file:///usr/local/share/quiltbsd/games/quiltblaster/index.html"
+LAUNCH
+	chmod 0755 "$BSDINSTALL_CHROOT$GAME_LAUNCHER"
+	cat > "$BSDINSTALL_CHROOT$GAME_DESKTOP" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=QuiltBlaster 3D
+Comment=Local QuiltBSD 3D shooter game
+Exec=/usr/local/bin/quiltblaster
+Icon=applications-games
+Terminal=false
+Categories=Game;ActionGame;
+DESKTOP
+}
+
+install_plymouth_theme()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p "$PLYMOUTH_THEME_DIR" /usr/local/bin
+	cat > "$BSDINSTALL_CHROOT$PLYMOUTH_THEME_DIR/quiltboot.plymouth" <<'PLYMOUTH'
+[Plymouth Theme]
+Name=QuiltBoot
+Description=QuiltBoot splash theme
+ModuleName=script
+
+[script]
+ImageDir=/usr/local/share/plymouth/themes/quiltboot
+ScriptFile=/usr/local/share/plymouth/themes/quiltboot/quiltbsd.script
+PLYMOUTH
+	cat > "$BSDINSTALL_CHROOT$PLYMOUTH_THEME_DIR/quiltbsd.script" <<'SCRIPT'
+Window.SetBackgroundTopColor (0.06, 0.09, 0.16);
+Window.SetBackgroundBottomColor (0.11, 0.20, 0.85);
+message = "QuiltBSD";
+progress = 0;
+fun refresh_callback () {
+  progress = progress + 0.01;
+  if (progress > 1) progress = 0;
+  Window.SetBackgroundTopColor (0.06, 0.09 + progress * 0.02, 0.16 + progress * 0.03);
+}
+Plymouth.SetRefreshFunction (refresh_callback);
+SCRIPT
+	cat > "$BSDINSTALL_CHROOT$PLYMOUTH_HELPER" <<'HELPER'
+#!/bin/sh
+set -eu
+if ! command -v plymouth-set-default-theme >/dev/null 2>&1; then
+	echo "plymouth-set-default-theme not found. Install Plymouth support first, then rerun this helper."
+	exit 1
+fi
+plymouth-set-default-theme -R quiltboot
+echo "QuiltBoot theme enabled."
+HELPER
+	chmod 0755 "$BSDINSTALL_CHROOT$PLYMOUTH_HELPER"
+	chroot "$BSDINSTALL_CHROOT" sh -c "command -v plymouth-set-default-theme >/dev/null 2>&1 && plymouth-set-default-theme -R quiltboot || true"
+}
+
+install_support_files()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p "$FEATURES_DIR" /usr/local/bin
+	cat > "$BSDINSTALL_CHROOT$FEATURES_FILE" <<EOF2
+QuiltBSD desktop profile
+========================
+
+Selected desktop environment: $DESKTOP_NAME
+
+Included by the QuiltBSD desktop installer path:
+- $DESKTOP_NAME desktop environment
+- Firefox preinstalled
+- QuiltBSD wallpaper asset and per-user wallpaper apply helper
+- sudo enabled for wheel users
+- bash, vim, tmux, rsync, zip and unzip preinstalled
+- QuiltBSD PKG GUI for graphical package management
+- QuiltBlaster 3D local shooter game
+- QuiltBoot boot theme files and helper
+- one-shot first-network package refresh and upgrade job
+- /usr/local/bin/quiltbsd-postinstall helper to rerun package maintenance later
+EOF2
+	cat > "$BSDINSTALL_CHROOT$POSTINSTALL_SCRIPT" <<'POST'
+#!/bin/sh
+set -eu
+pkg update -f
+pkg upgrade -f -y
+pkg autoremove -y || true
+pkg clean -ay || true
+POST
+	chmod 0755 "$BSDINSTALL_CHROOT$POSTINSTALL_SCRIPT"
+	cat >> "$BSDINSTALL_CHROOT/etc/motd" <<EOF2
+
+QuiltBSD desktop additions installed:
+- $DESKTOP_NAME
+- Firefox
+- QuiltBSD wallpaper
+- QuiltBSD PKG GUI
+- QuiltBlaster 3D
+- QuiltBoot theme helper
+- Run /usr/local/bin/quiltbsd-postinstall for a manual package refresh later.
+EOF2
+}
+
+install_firstboot_update()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/local/libexec /usr/local/etc/rc.d /var/db
+	cat > "$BSDINSTALL_CHROOT$FIRSTBOOT_SCRIPT" <<'SCRIPT'
+#!/bin/sh
+set -eu
+sentinel="/var/db/quiltbsd-firstboot-network.done"
+[ -f "$sentinel" ] && exit 0
+for _try in $(jot 90); do
+	if [ -x /usr/local/bin/quiltboot-enable ]; then
+		/usr/local/bin/quiltboot-enable >>/tmp/quiltbsd-firstboot-update.log 2>&1 || true
+	fi
+	if pkg update -f >/tmp/quiltbsd-firstboot-update.log 2>&1; then
+		pkg upgrade -f -y >>/tmp/quiltbsd-firstboot-update.log 2>&1 || exit 1
+		pkg autoremove -y >>/tmp/quiltbsd-firstboot-update.log 2>&1 || true
+		pkg clean -ay >>/tmp/quiltbsd-firstboot-update.log 2>&1 || true
+		touch "$sentinel"
+		sysrc quiltbsd_firstboot_network_enable=NO >/dev/null
+		rm -f /firstboot
+		exit 0
+	fi
+	sleep 10
+done
+exit 0
+SCRIPT
+	chmod 0755 "$BSDINSTALL_CHROOT$FIRSTBOOT_SCRIPT"
+	cat > "$BSDINSTALL_CHROOT$FIRSTBOOT_RC" <<'RC'
+#!/bin/sh
+# PROVIDE: quiltbsd_firstboot_network
+# REQUIRE: NETWORKING
+# KEYWORD: firstboot
+
+. /etc/rc.subr
+
+name=quiltbsd_firstboot_network
+rcvar=${name}_enable
+start_cmd="${name}_start"
+stop_cmd=":"
+
+quiltbsd_firstboot_network_start()
+{
+	[ -x /usr/local/libexec/quiltbsd-firstboot-network ] || return 0
+	/usr/sbin/daemon -f /usr/local/libexec/quiltbsd-firstboot-network
+}
+
+load_rc_config $name
+: ${quiltbsd_firstboot_network_enable:=YES}
+run_rc_command "$1"
+RC
+	chmod 0755 "$BSDINSTALL_CHROOT$FIRSTBOOT_RC"
+	touch "$BSDINSTALL_CHROOT/firstboot"
+}
+
+enable_services()
+{
+	chroot "$BSDINSTALL_CHROOT" sysrc dbus_enable=YES
+	chroot "$BSDINSTALL_CHROOT" sysrc moused_enable=YES
+	chroot "$BSDINSTALL_CHROOT" sysrc quiltbsd_firstboot_network_enable=YES
+	case "$DISPLAY_MANAGER" in
+	gdm)
+		chroot "$BSDINSTALL_CHROOT" sysrc gdm_enable=YES
+		chroot "$BSDINSTALL_CHROOT" sysrc sddm_enable=NO
+		;;
+	*)
+		chroot "$BSDINSTALL_CHROOT" sysrc sddm_enable=YES
+		chroot "$BSDINSTALL_CHROOT" sysrc gdm_enable=NO 2>/dev/null || true
+		;;
+	esac
+}
+
+select_desktop_environment || exit 1
+
+bsddialog --backtitle "$OSNAME Installer" --title "Desktop Environment" \
+    --yesno "Install the QuiltBSD desktop profile with $DESKTOP_NAME, Firefox, wallpaper, QuiltBSD PKG GUI, maintenance tools, and first-network package updates into the target system?" 0 0
+if [ $? -ne $BSDDIALOG_OK ]; then
+	exit 1
+fi
+
+if [ -f "$BSDINSTALL_TMPETC/resolv.conf" ]; then
+	cp -f "$BSDINSTALL_TMPETC/resolv.conf" "$BSDINSTALL_CHROOT/etc/resolv.conf"
+fi
+
+if ! chroot "$BSDINSTALL_CHROOT" pkg update -f; then
+	bsddialog --backtitle "$OSNAME Installer" --title "Desktop Environment" \
+	    --msgbox "Package repository update failed. Check the network configuration and try again." 0 0
+	exit 1
+fi
+
+if ! ASSUME_ALWAYS_YES=YES chroot "$BSDINSTALL_CHROOT" pkg install -y $COMMON_PACKAGES $DESKTOP_PACKAGES; then
+	bsddialog --backtitle "$OSNAME Installer" --title "Desktop Environment" \
+	    --msgbox "The QuiltBSD desktop package set for $DESKTOP_NAME could not be installed." 0 0
+	exit 1
+fi
+
+install_wallpaper
+install_user_defaults
+install_pkg_gui
+install_game
+install_plymouth_theme
+install_support_files
+install_firstboot_update
+enable_services
+
+bsddialog --backtitle "$OSNAME Installer" --title "Desktop Environment" \
+    --msgbox "The 100% QuiltBSD desktop profile was installed with $DESKTOP_NAME, Firefox, wallpaper assets, QuiltBSD PKG GUI, the improved QuiltBlaster 3D shooter, an always-on QuiltBoot boot theme helper, shell/tooling defaults, and a first-network pkg update/upgrade job." 0 0

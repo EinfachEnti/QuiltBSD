@@ -1,21 +1,20 @@
-FreeBSD Source:
+QuiltBSD Source:
 ---------------
-This is the top level of the FreeBSD source directory.
+This is the top level of the QuiltBSD source directory.
 
-FreeBSD is an operating system used to power modern servers, desktops, and embedded platforms.
+QuiltBSD is an operating system used to power modern servers, desktops, and embedded platforms.
 A large community has continually developed it for more than thirty years.
-Its advanced networking, security, and storage features have made FreeBSD the platform of choice for many of the busiest web sites and most pervasive embedded networking and storage devices.
+Its advanced networking, security, and storage features make QuiltBSD a strong platform for modern systems, including developer workstations and network-connected machines.
 
 For copyright information, please see [the file COPYRIGHT](COPYRIGHT) in this directory.
 Additional copyright information also exists for some sources in this tree - please see the specific source directories for more information.
 
-The Makefile in this directory supports a number of targets for building components (or all) of the FreeBSD source tree.
-See build(7), config(8), [FreeBSD handbook on building userland](https://docs.freebsd.org/en/books/handbook/cutting-edge/#makeworld), and [Handbook for kernels](https://docs.freebsd.org/en/books/handbook/kernelconfig/) for more information, including setting make(1) variables.
+The Makefile in this directory supports a number of targets for building components (or all) of the QuiltBSD source tree.
+See build(7), config(8), and the system documentation for more information, including setting make(1) variables.
 
-For information on the CPU architectures and platforms supported by FreeBSD, see the [FreeBSD
-website's Platforms page](https://www.freebsd.org/platforms/).
+For information on supported CPU architectures and platforms, review the platform support documentation that accompanies this tree.
 
-For official FreeBSD bootable images, see the [release page](https://download.freebsd.org/ftp/releases/ISO-IMAGES/).
+For official QuiltBSD bootable images, use the release artifacts produced from this source tree.
 
 Source Roadmap:
 ---------------
@@ -44,4 +43,84 @@ Source Roadmap:
 | usr.bin | User commands. |
 | usr.sbin | System administration commands. |
 
-For information on synchronizing your source tree with one or more of the FreeBSD Project's development branches, please see [FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/cutting-edge/#current-stable).
+For information on synchronizing your source tree with QuiltBSD development branches, follow your project workflow and release engineering documentation.
+
+QuiltBSD Tooling Guide:
+-----------------------
+
+### Write installer images to USB
+
+From the repository root, you can use the cross-platform USB writer:
+
+```sh
+./quiltbsd-usb-installer.py /path/to/QuiltBSD-installer.img.xz
+```
+
+If you want a simple shell entrypoint, you can also run:
+
+```sh
+./usb-installer-installer.sh /path/to/QuiltBSD-installer.img.xz
+```
+
+The script detects removable targets on Linux, macOS, FreeBSD, and Windows-style environments, prompts for the destination device, and writes `.img`, `.iso`, or `.xz`-compressed installer images.
+
+A FreeBSD-specific helper also exists in `release/scripts/quiltbsd-usb-installer.sh` for release engineering workflows.
+
+### Build installer images
+
+If you want one command that builds both installer formats from the release tree, use:
+
+```sh
+./release/scripts/quiltbsd-installer-builder.sh --both
+```
+
+This wrapper builds:
+
+- `memstick.img` for USB installer media
+- `dvd1.iso` for installer ISO media
+
+You can also limit it to one format with `--img-only` or `--iso-only`, and you can copy finished artifacts to another directory with `--output-dir /path/to/out`.
+
+### Use the desktop installer profile
+
+Inside the installer, open the final configuration menu and select **Desktop Environment**.
+From there you can choose one of these QuiltBSD desktop profiles:
+
+- KDE Plasma
+- GNOME
+- MATE
+- XFCE
+
+The desktop installer profile adds common desktop packages such as Firefox, sudo, bash, vim, tmux, rsync, zip/unzip, a QuiltBSD wallpaper, a first-network package refresh, and desktop launchers.
+
+### QuiltBSD PKG GUI
+
+The desktop profile installs a custom graphical package manager frontend named **QuiltBSD PKG GUI**.
+It is available from the desktop application menu, and can also be started manually with:
+
+```sh
+/usr/local/bin/quiltbsd-pkg-gui
+```
+
+It provides GUI actions for common `pkg` operations such as install, remove, search, info, update, upgrade, clean, audit, and an advanced free-form command mode.
+
+### QuiltBlaster 3D
+
+The desktop profile also installs a local browser-based game named **QuiltBlaster 3D**.
+You can launch it from the desktop menu or run:
+
+```sh
+/usr/local/bin/quiltblaster
+```
+
+This opens the local game in Firefox from the QuiltBSD shared data directory.
+
+### First-boot maintenance helper
+
+Desktop installs also include a manual maintenance helper:
+
+```sh
+/usr/local/bin/quiltbsd-postinstall
+```
+
+This runs `pkg update -f`, `pkg upgrade -f -y`, and cleanup actions manually after installation. In addition, the desktop profile schedules a one-shot first-network package refresh automatically on first boot.
