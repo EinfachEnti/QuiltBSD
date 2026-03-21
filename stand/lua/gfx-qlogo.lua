@@ -30,23 +30,22 @@
 return {
 	logo = {
 		graphic = {
-		    "            ,gggggg.   ",
-		    "         ,agg9*   .g)  ",
-		    "       .agg* ._.,gg*   ",
-		    "     ,gga*  (ggg*'     ",
-		    "    ,ga*      ,ga*     ",
-		    "   ,ga'     .ag*       ",
-		    "  ,ga'   .agga'        ",
-		    "  9g' .agg'g*,a        ",
-		    "  'gggg*',gga'         ",
-		    "       .gg*'           ",
-		    "     .gga*             ",
-		    "   .gga*               ",
-		    "  (ga*                 "
+		    "         QQQQQQQ          ",
+		    "      QQQ       QQQ       ",
+		    "    QQQ   #####   QQQ     ",
+		    "   QQ   #########   QQ    ",
+		    "  QQ   ###     ###   QQ   ",
+		    " QQ   ###  QQQ  ###   QQ  ",
+		    " QQ   ### Q   Q ###   QQ  ",
+		    " QQ   ### Q   Q ###   QQ  ",
+		    " QQ   ###  QQQ  ###   QQ  ",
+		    "  QQ   ###     ###   QQ   ",
+		    "   QQ   #########   QQ    ",
+		    "    QQQ   #####   QQQ     ",
+		    "      QQQ     ##QQQ       ",
+		    "         QQQQQQQ  ##      "
 		},
 		requires_color = false,
-		shift = {x = 5, y = 3},
-		image = "/boot/images/ghostbsd-logo.png",
-		image_rl = 15
+		shift = {x = 5, y = 3}
 	}
 }

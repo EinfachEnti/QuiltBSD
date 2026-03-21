@@ -34,7 +34,7 @@ local screen = require("screen")
 
 local drawer = {}
 
-local fbsd_brand
+local quiltbsd_text_brand
 local none
 
 local menu_name_handlers
@@ -320,7 +320,7 @@ local function drawbox()
 	local y = menu_position.y - 1
 	local w = frame_size.w
 	local menu_header = loader.getenv("loader_menu_title") or
-	    "Welcome to FreeBSD"
+	    "Welcome to QuiltBSD"
 	local menu_header_align = loader.getenv("loader_menu_title_align")
 	local menu_header_x
 
@@ -455,24 +455,22 @@ local function drawitem(func)
 	loader.setenv("console", console)
 end
 
-fbsd_brand = {
-"  ______               ____   _____ _____  ",
-" |  ____|             |  _ \\ / ____|  __ \\ ",
-" | |___ _ __ ___  ___ | |_) | (___ | |  | |",
-" |  ___| '__/ _ \\/ _ \\|  _ < \\___ \\| |  | |",
-" | |   | | |  __/  __/| |_) |____) | |__| |",
-" | |   | | |    |    ||     |      |      |",
-" |_|   |_|  \\___|\\___||____/|_____/|_____/ "
+quiltbsd_text_brand = {
+	"  QQQ   U   U  III  L      TTTTT  BBBB    SSS   DDDD  ",
+	" Q   Q  U   U   I   L        T    B   B  S      D   D ",
+	" Q   Q  U   U   I   L        T    BBBB    SSS   D   D ",
+	" Q  QQ  U   U   I   L        T    B   B      S  D   D ",
+	"  QQQQ   UUU   III  LLLLL    T    BBBB    SSS   DDDD  ",
 }
 
-ghostbsd_brand = {
-	"   ____ _               _    ____   _____ _____  ",
-	"  / ___| |             | |_ |  _ \\ / ____|  __ \\ ",
-	" | |   | |__   ___  ___| __|| |_) | (___ | |  | |",
-	" | |  _| '_ \\ / _ \\/ __| |  |  _ < \\___ \\| |  | |",
-	" | |_| | | | | (_) \\__ \\ |_ | |_) |____) | |__| |",
-	"  \\____|_| |_|\\___/|___/\\__||____/|_____/|_____/ "
-	}
+quiltbsd_brand = {
+	"   ____        _ _ _   ____  ____   ____  ",
+	"  / __ \\      (_) | | |  _ \\|  _ \\ / __ \\ ",
+	" | |  | |_   _ _| | |_| |_) | |_) | |  | |",
+	" | |  | | | | | | | __|  _ <|  _ <| |  | |",
+	" | |__| | |_| | | | |_| |_) | |_) | |__| |",
+	"  \\___\\_\\\\__,_|_|_|\\__|____/|____/ \\____/ ",
+}
 
 none = {""}
 
@@ -508,17 +506,8 @@ menu_name_handlers = {
 branddefs = {
 	-- Indexed by valid values for loader_brand in loader.conf(5). Valid
 	-- keys are: graphic (table depicting graphic)
-	["fbsd"] = {
-		ascii = {
-			image = fbsd_brand,
-		},
-		fb = {
-			image = "/boot/images/freebsd-brand-rev.png",
-		},
-	},
-	["ghostbsd"] = {
-		graphic = ghostbsd_brand,
-		image = "/boot/images/ghostbsd-brand.png",
+	["quiltbsd"] = {
+		graphic = quiltbsd_brand,
 	},
 	["none"] = {
 		ascii = { image = none },
@@ -531,12 +520,12 @@ logodefs = {
 	-- shift (table containing x and y).
 	["tribute"] = {
 		ascii = {
-			image = fbsd_brand,
+			image = quiltbsd_text_brand,
 		},
 	},
 	["tributebw"] = {
 		ascii = {
-			image = fbsd_brand,
+			image = quiltbsd_text_brand,
 		},
 	},
 	["none"] = {
@@ -555,7 +544,7 @@ default_shift = {x = 0, y = 0}
 shift = default_shift
 
 -- Module exports
-drawer.default_brand = 'fbsd'
+drawer.default_brand = 'quiltbsd'
 drawer.default_color_logodef = 'orb'
 drawer.default_bw_logodef = 'orbbw'
 -- For when things go terribly wrong; this def should be present here in the
