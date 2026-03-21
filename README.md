@@ -66,6 +66,20 @@ The script detects removable targets on Linux, macOS, FreeBSD, and Windows-style
 
 A FreeBSD-specific helper also exists in `release/scripts/quiltbsd-usb-installer.sh` for release engineering workflows.
 
+### Ubuntu builder edition
+
+If you are building from an Ubuntu or Debian-style host, use the dedicated wrapper:
+
+```sh
+./release/scripts/quiltbsd-ubuntu-builder.sh --check-only
+./release/scripts/quiltbsd-ubuntu-builder.sh --both --profile online
+```
+
+This Ubuntu builder edition checks for the expected Linux-side dependencies, can
+install them with `--install-deps`, defaults to the more Ubuntu-friendly
+`online` installer profile, and disables FreeBSD-only package staging unless you
+explicitly opt back in with `--with-stage-packages`.
+
 ### Build installer images
 
 If you want one command that builds QuiltBSD installer media from the release tree, use:

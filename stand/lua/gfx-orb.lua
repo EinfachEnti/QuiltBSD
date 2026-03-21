@@ -48,10 +48,5 @@ return {
 			requires_color = true,
 			shift = {x = 5, y = -1},
 		},
-		fb = {
-			image = "/boot/images/freebsd-logo-rev.png",
-			width = 15,
-			shift = {x = 2, y = -2},
-		},
 	}
 }

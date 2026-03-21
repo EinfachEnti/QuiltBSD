@@ -8,17 +8,13 @@ return {
 	brand = {
 		ascii = {
 			image = {
-			    " _____              ____ ____  ____     ___           _        _ _",
-			    "|  ___| __ ___  ___| __ ) ___||  _ \\   |_ _|_ __  ___| |_ __ _| | | ___ _ __",
-			    "| |_ | '__/ _ \\/ _ \\  _ \\___ \\| | | |   | || '_ \\/ __| __/ _` | | |/ _ \\ '__|",
-			    "|  _|| | |  __/  __/ |_) |__) | |_| |   | || | | \\__ \\ || (_| | | |  __/ |",
-			    "|_|  |_|  \\___|\\___|____/____/|____/   |___|_| |_|___/\\__\\__,_|_|_|\\___|_|",
+			    "  QQQ   U   U  III  L      TTTTT  BBBB    SSS   DDDD      III  N   N  SSS  TTTTT   AAA   L      L      EEEEE RRRR ",
+			    " Q   Q  U   U   I   L        T    B   B  S      D   D      I   NN  N S       T    A   A  L      L      E     R   R",
+			    " Q   Q  U   U   I   L        T    BBBB    SSS   D   D      I   N N N  SSS    T    AAAAA  L      L      EEE   RRRR ",
+			    " Q  QQ  U   U   I   L        T    B   B      S  D   D      I   N  NN     S   T    A   A  L      L      E     R  R ",
+			    "  QQQQ   UUU   III  LLLLL    T    BBBB    SSS   DDDD      III  N   N  SSS    T    A   A  LLLLL  LLLLL  EEEEE R   R",
 			},
 			requires_color = false,
-		},
-		fb = {
-			image = "/boot/images/freebsd-install-brand-rev.png",
-			width = 80,
 		},
 	}
 }
