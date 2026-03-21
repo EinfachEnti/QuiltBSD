@@ -79,7 +79,7 @@ This wrapper builds:
 - `memstick.img` for USB installer media
 - `dvd1.iso` for installer ISO media
 
-You can also limit it to one format with `--img-only` or `--iso-only`, and you can copy finished artifacts to another directory with `--output-dir /path/to/out`.
+You can also limit it to one format with `--img-only` or `--iso-only`, force a clean rebuild with `--clean`, control parallelism with `--jobs N`, skip the package preflight with `--no-stage-packages`, and copy finished artifacts to another directory with `--output-dir /path/to/out`.
 
 ### Use the desktop installer profile
 
@@ -91,7 +91,7 @@ From there you can choose one of these QuiltBSD desktop profiles:
 - MATE
 - XFCE
 
-The desktop installer profile adds common desktop packages such as Firefox, sudo, bash, vim, tmux, rsync, zip/unzip, a QuiltBSD wallpaper, a first-network package refresh, and desktop launchers.
+The desktop installer profile adds common desktop packages such as Firefox, KDE Plasma/GNOME/MATE/XFCE options, sudo, bash, vim, tmux, rsync, zip/unzip, a QuiltBSD wallpaper, a first-network package refresh, QuiltBSD PKG GUI, and desktop launchers.
 
 ### QuiltBSD PKG GUI
 
@@ -113,7 +113,13 @@ You can launch it from the desktop menu or run:
 /usr/local/bin/quiltblaster
 ```
 
-This opens the local game in Firefox from the QuiltBSD shared data directory.
+This opens the local game in Firefox from the QuiltBSD shared data directory. The current version includes wave escalation, boss rounds every third wave, pickups, streak scoring, armor, pause support, and an improved HUD/minimap presentation.
+
+Tips:
+
+- Clear waves quickly to keep your streak bonus alive.
+- Boss kills can drop extra healing pickups.
+- Reload before pushing into tight corridors, because close-range enemies hit hard.
 
 ### First-boot maintenance helper
 
