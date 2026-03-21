@@ -31,7 +31,7 @@ local function select_packages(pkg, media, all_libcompats)
 	}
 
 	local components = {}
-	local rquery = capture(pkg .. "rquery -U -r FreeBSD-base %n")
+	local rquery = capture(pkg .. "rquery -U -r QuiltBSD-base %n")
 	for package in rquery:gmatch("[^\n]+") do
 		local set = package:match("^FreeBSD%-set%-(.*)$")
 		if set then
@@ -81,7 +81,7 @@ local function main()
 	-- Determines package subset selected
 	local media = assert(arg[1])
 	assert(media == "disc" or media == "dvd")
-	-- Directory containing FreeBSD-base repository config
+	-- Directory containing QuiltBSD-base repository config
 	local repo_dir = assert(arg[2])
 	-- Directory to create new repository
 	local target = assert(arg[3])

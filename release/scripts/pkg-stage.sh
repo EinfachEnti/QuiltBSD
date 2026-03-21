@@ -14,11 +14,17 @@ export ROOTDIR="$PWD/dvd"
 export PORTSDIR="${PORTSDIR:-/usr/ports}"
 
 _DVD_PACKAGES_MAIN="
+archivers/unzip
+archivers/zip
 comms/usbmuxd
 devel/git@lite
 editors/emacs@nox
 editors/vim
 misc/freebsd-doc-all
+x11/plasma6-plasma
+x11/plasma6-sddm-kcm
+x11/xfce4
+x11/mate
 net/mpd5
 net/rsync
 ports-mgmt/pkg
@@ -31,6 +37,8 @@ sysutils/tmux
 www/firefox
 www/links
 x11/gnome
+x11/gdm
+x11/zenity
 x11/sddm
 x11/xorg
 x11-wm/sway

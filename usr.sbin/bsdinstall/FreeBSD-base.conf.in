@@ -1,5 +1,5 @@
-FreeBSD-base: {
-  url: "pkg+https://%%PKGHOST%%.FreeBSD.org/${ABI}/%%SUBURL%%",
+QuiltBSD-base: {
+  url: "pkg+https://%%PKGHOST%%.quiltbsd.org/${ABI}/%%SUBURL%%",
   mirror_type: "srv",
   signature_type: "fingerprints",
   fingerprints: "/usr/share/keys/%%KEYSDIR%%",

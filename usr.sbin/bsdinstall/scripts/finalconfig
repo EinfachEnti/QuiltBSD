@@ -46,6 +46,7 @@ while true; do
 		"Services" "Set daemons to run on startup" \
 		"System Hardening" "Set security options" \
 		"Time Zone" "Set system timezone" \
+		"Desktop Environment" "Install GNOME, KDE, MATE, or XFCE (requires packages)" \
 		"Firmware" "Install Firmware (requires network)" \
 		"Handbook" "Install $OSNAME Handbook (requires network)" 2>&1 1>&5)
 	retval=$?
@@ -79,6 +80,9 @@ while true; do
 		;;
 	"Time Zone")
 		bsdinstall time
+		;;
+	"Desktop Environment")
+		bsdinstall desktop
 		;;
 	"Firmware")
 		bsdinstall firmware

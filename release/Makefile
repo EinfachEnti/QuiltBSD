@@ -224,9 +224,9 @@ pkgbase-repo.tar: pkgbase-repo
 
 pkgbase-repo-dir: pkgbase-repo
 	mkdir -p pkgbase-repo-dir
-	printf "FreeBSD-base: { url: "file://%s", enabled: yes }" \
+	printf "QuiltBSD-base: { url: "file://%s", enabled: yes }" \
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest \
-	    > pkgbase-repo-dir/FreeBSD-base.conf
+	    > pkgbase-repo-dir/QuiltBSD-base.conf
 
 disc1:
 # Install system
@@ -245,7 +245,7 @@ disc1:
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/freebsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-disc1
-	cp ${.CURDIR}/scripts/FreeBSD-base-offline.conf \
+	cp ${.CURDIR}/scripts/QuiltBSD-base-offline.conf \
 		${.TARGET}/usr/freebsd-packages/repos/
 	mtree -c -p ${.TARGET}/usr/freebsd-packages | \
 	    mtree -C -k type,mode,link,size | \
@@ -346,7 +346,7 @@ dvd:
 	    ${.OBJDIR}/pkgbase-repo-dir \
 	    ${.TARGET}/usr/freebsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-dvd
-	cp ${.CURDIR}/scripts/FreeBSD-base-offline.conf \
+	cp ${.CURDIR}/scripts/QuiltBSD-base-offline.conf \
 		${.TARGET}/usr/freebsd-packages/repos/
 	mtree -c -p ${.TARGET}/usr/freebsd-packages | \
 	    mtree -C -k type,mode,link,size | \

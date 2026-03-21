@@ -236,7 +236,7 @@ local function select_packages(pkg, options)
 		["FreeBSD-kernel-generic64le"] = true,
 	}
 
-	local rquery = capture(pkg .. "rquery -U -r FreeBSD-base %n")
+	local rquery = capture(pkg .. "rquery -U -r QuiltBSD-base %n")
 	for package in rquery:gmatch("[^\n]+") do
 		local setname = package:match("^FreeBSD%-set%-(.+)$")
 
@@ -346,19 +346,19 @@ local function pkgbase()
 
 	local packages = table.concat(select_packages(pkg, options), " ")
 
-	while not os.execute(pkg .. "install -U -F -y -r FreeBSD-base " .. packages) do
+	while not os.execute(pkg .. "install -U -F -y -r QuiltBSD-base " .. packages) do
 		if not prompt_yn("Fetching packages failed, try again?") then
 			os.exit(1)
 		end
 	end
 
-	if not os.execute(pkg .. "install -U -y -r FreeBSD-base " .. packages) then
+	if not os.execute(pkg .. "install -U -y -r QuiltBSD-base " .. packages) then
 		os.exit(1)
 	end
 
-	-- Enable the FreeBSD-base repository for this system.
+	-- Enable the QuiltBSD-base repository for this system.
 	assert(os.execute("mkdir -p " .. chroot .. "/usr/local/etc/pkg/repos"))
-	assert(os.execute("echo 'FreeBSD-base: { enabled: yes }' > " .. chroot .. "/usr/local/etc/pkg/repos/FreeBSD.conf"))
+	assert(os.execute("echo 'QuiltBSD-base: { enabled: yes }' > " .. chroot .. "/usr/local/etc/pkg/repos/FreeBSD.conf"))
 end
 
 pkgbase()
