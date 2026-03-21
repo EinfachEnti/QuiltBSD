@@ -32,6 +32,10 @@ BSDCFG_SHARE="/usr/share/bsdconfig"
 
 : ${BSDDIALOG_OK=0}
 
+if [ ! -f "$BSDINSTALL_CHROOT/var/db/quiltbsd-aurora-desktop.installed" ]; then
+	QUILTBSD_DESKTOP_AUTO=YES bsdinstall desktop || true
+fi
+
 while true; do
 	exec 5>&1
 	REVISIT=$(bsddialog --backtitle "$OSNAME Installer" \
@@ -46,7 +50,7 @@ while true; do
 		"Services" "Set daemons to run on startup" \
 		"System Hardening" "Set security options" \
 		"Time Zone" "Set system timezone" \
-		"Desktop Environment" "Install GNOME, KDE, MATE, or XFCE (requires packages)" \
+		"Desktop Environment" "Reinstall or repair QuiltBSD Aurora KDE, Welcome, PKG Store, and multiplayer QuiltBlaster" \
 		"Firmware" "Install Firmware (requires network)" \
 		"Handbook" "Install $OSNAME Handbook (requires network)" 2>&1 1>&5)
 	retval=$?

@@ -15,6 +15,8 @@ COMMON_PACKAGES="\
 	x11/xorg \
 	x11/zenity \
 	www/firefox \
+	editors/libreoffice \
+	games/prismlauncher \
 	security/sudo \
 	shells/bash \
 	editors/vim \
@@ -30,6 +32,11 @@ FIRSTBOOT_RC="/usr/local/etc/rc.d/quiltbsd_firstboot_network"
 POSTINSTALL_SCRIPT="/usr/local/bin/quiltbsd-postinstall"
 PKG_GUI_SCRIPT="/usr/local/bin/quiltbsd-pkg-gui"
 PKG_GUI_DESKTOP="/usr/local/share/applications/quiltbsd-pkg-gui.desktop"
+PKG_STORE_SCRIPT="/usr/local/bin/quiltbsd-pkg-store"
+PKG_STORE_DESKTOP="/usr/local/share/applications/quiltbsd-pkg-store.desktop"
+WELCOME_SCRIPT="/usr/local/bin/quiltbsd-welcome"
+WELCOME_DESKTOP="/usr/local/share/applications/quiltbsd-welcome.desktop"
+WELCOME_AUTOSTART="/usr/share/skel/.config/autostart/quiltbsd-welcome.desktop"
 GAME_DIR="/usr/local/share/quiltbsd/games/quiltblaster"
 GAME_LAUNCHER="/usr/local/bin/quiltblaster"
 GAME_DESKTOP="/usr/local/share/applications/quiltblaster.desktop"
@@ -41,50 +48,14 @@ DESKTOP_FLAVOR=
 DESKTOP_NAME=
 DESKTOP_PACKAGES=
 DISPLAY_MANAGER=
+DESKTOP_SENTINEL="/var/db/quiltbsd-aurora-desktop.installed"
 
-select_desktop_environment()
+configure_desktop_environment()
 {
-	exec 5>&1
-	choice=$(bsddialog --backtitle "$OSNAME Installer" \
-	    --title "Desktop Environment" \
-	    --menu "Choose the QuiltBSD desktop environment to install." 0 0 0 \
-	    "kde" "KDE Plasma" \
-	    "gnome" "GNOME" \
-	    "mate" "MATE" \
-	    "xfce" "XFCE" 2>&1 1>&5)
-	retval=$?
-	exec 5>&-
-	[ $retval -eq $BSDDIALOG_OK ] || return 1
-
-	case "$choice" in
-	kde)
-		DESKTOP_FLAVOR=kde
-		DESKTOP_NAME="KDE Plasma"
-		DESKTOP_PACKAGES="x11/plasma6-plasma x11/plasma6-sddm-kcm x11/sddm"
-		DISPLAY_MANAGER=sddm
-		;;
-	gnome)
-		DESKTOP_FLAVOR=gnome
-		DESKTOP_NAME="GNOME"
-		DESKTOP_PACKAGES="x11/gnome x11/gdm"
-		DISPLAY_MANAGER=gdm
-		;;
-	mate)
-		DESKTOP_FLAVOR=mate
-		DESKTOP_NAME="MATE"
-		DESKTOP_PACKAGES="x11/mate x11/sddm"
-		DISPLAY_MANAGER=sddm
-		;;
-	xfce)
-		DESKTOP_FLAVOR=xfce
-		DESKTOP_NAME="XFCE"
-		DESKTOP_PACKAGES="x11/xfce4 x11/sddm"
-		DISPLAY_MANAGER=sddm
-		;;
-	*)
-		return 1
-		;;
-	esac
+	DESKTOP_FLAVOR=kde
+	DESKTOP_NAME="KDE Plasma"
+	DESKTOP_PACKAGES="x11/plasma6-plasma x11/plasma6-sddm-kcm x11/sddm"
+	DISPLAY_MANAGER=sddm
 }
 
 install_wallpaper()
@@ -94,22 +65,33 @@ install_wallpaper()
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0f172a"/>
-      <stop offset="55%" stop-color="#1d4ed8"/>
-      <stop offset="100%" stop-color="#7c3aed"/>
+      <stop offset="0%" stop-color="#050816"/>
+      <stop offset="45%" stop-color="#112a6b"/>
+      <stop offset="100%" stop-color="#6d28d9"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="100%" stop-color="#fde68a"/>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="45%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#f472b6"/>
     </linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="20"/></filter>
   </defs>
   <rect width="1920" height="1080" fill="url(#bg)"/>
-  <circle cx="1550" cy="220" r="260" fill="#ffffff" fill-opacity="0.08"/>
-  <circle cx="260" cy="880" r="320" fill="#ffffff" fill-opacity="0.06"/>
-  <path d="M0 860 C 300 740, 560 980, 860 860 S 1440 700, 1920 860 L 1920 1080 L 0 1080 Z" fill="#020617" fill-opacity="0.35"/>
-  <text x="140" y="430" fill="#e2e8f0" font-size="150" font-family="Noto Sans, DejaVu Sans, sans-serif" font-weight="700">QuiltBSD</text>
-  <text x="146" y="515" fill="url(#accent)" font-size="44" font-family="Noto Sans, DejaVu Sans, sans-serif">Desktop Edition</text>
-  <text x="146" y="585" fill="#cbd5e1" font-size="30" font-family="Noto Sans, DejaVu Sans, sans-serif">100% QuiltBSD installer profile with browser, tools, package GUI, and first-network refresh</text>
+  <ellipse cx="1450" cy="220" rx="420" ry="120" fill="#67e8f9" fill-opacity="0.16" filter="url(#blur)"/>
+  <ellipse cx="530" cy="220" rx="340" ry="90" fill="#c084fc" fill-opacity="0.14" filter="url(#blur)"/>
+  <ellipse cx="1020" cy="300" rx="520" ry="110" fill="#f472b6" fill-opacity="0.08" filter="url(#blur)"/>
+  <g fill-opacity="0.18">
+    <path d="M0 780 L220 600 L440 780 L220 960 Z" fill="#38bdf8"/>
+    <path d="M220 600 L440 420 L660 600 L440 780 Z" fill="#818cf8"/>
+    <path d="M440 780 L660 600 L880 780 L660 960 Z" fill="#f472b6"/>
+    <path d="M880 780 L1100 600 L1320 780 L1100 960 Z" fill="#22d3ee"/>
+    <path d="M1320 780 L1540 600 L1760 780 L1540 960 Z" fill="#a78bfa"/>
+  </g>
+  <path d="M0 840 C 280 720, 520 980, 820 840 S 1460 700, 1920 860 L 1920 1080 L 0 1080 Z" fill="#020617" fill-opacity="0.48"/>
+  <text x="140" y="400" fill="#f8fafc" font-size="154" font-family="Noto Sans, DejaVu Sans, sans-serif" font-weight="700">QuiltBSD Aurora</text>
+  <text x="146" y="488" fill="url(#aurora)" font-size="46" font-family="Noto Sans, DejaVu Sans, sans-serif">KDE Edition</text>
+  <text x="146" y="555" fill="#cbd5e1" font-size="32" font-family="Noto Sans, DejaVu Sans, sans-serif">Firefox, LibreOffice, PrismLauncher, package tools, and first-boot refresh included</text>
+  <text x="146" y="610" fill="#94a3b8" font-size="24" font-family="Noto Sans, DejaVu Sans, sans-serif">Rebranded QuiltBSD desktop with aurora wallpaper, QuiltBoot splash, and upgraded motion effects</text>
 </svg>
 SVG
 }
@@ -118,6 +100,9 @@ install_user_defaults()
 {
 	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/share/skel/.local/share/quiltbsd
 	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/share/skel/.config/autostart-scripts
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/share/skel/.config
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/share/skel/.config/autostart
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/share/skel/Desktop
 	cat > "$BSDINSTALL_CHROOT/usr/share/skel/.config/autostart-scripts/quiltbsd-apply-wallpaper.sh" <<'WALL'
 #!/bin/sh
 wallpaper="/usr/local/share/wallpapers/QuiltBSD/contents/images/1920x1080.svg"
@@ -135,8 +120,109 @@ alias la='ls -A'
 alias l='ls -CF'
 alias update-system='sudo pkg update -f && sudo pkg upgrade -f'
 alias quiltbsd-postinstall='sudo /usr/local/bin/quiltbsd-postinstall'
+alias quiltbsd-welcome='/usr/local/bin/quiltbsd-welcome'
 alias pkg-gui='/usr/local/bin/quiltbsd-pkg-gui'
+alias pkg-store='/usr/local/bin/quiltbsd-pkg-store'
+alias prism='prismlauncher'
 BASHRC
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/.config/kdeglobals" <<'KDEGLOBALS'
+[General]
+Name=QuiltBSD Aurora
+ColorScheme=BreezeDark
+
+[KDE]
+LookAndFeelPackage=org.kde.breezedark.desktop
+SingleClick=false
+
+[Icons]
+Theme=breeze-dark
+
+[WM]
+activeBackground=#1d4ed8
+inactiveBackground=#0f172a
+KDEGLOBALS
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/.config/kwinrc" <<'KWINRC'
+[Compositing]
+Enabled=true
+AnimationSpeed=3
+Backend=OpenGL
+
+[Plugins]
+blurEnabled=true
+desktopchangeosdEnabled=true
+fadingpopupsEnabled=true
+glideEnabled=true
+loginEnabled=true
+magiclampEnabled=true
+scaleEnabled=true
+slidingpopupsEnabled=true
+overviewEnabled=true
+
+[TabBox]
+LayoutName=thumbnail_grid
+KWINRC
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/.config/kscreenlockerrc" <<'LOCK'
+[Greeter]
+WallpaperPlugin=org.kde.image
+WallpaperPluginConfig={"Image":"file:///usr/local/share/wallpapers/QuiltBSD/contents/images/1920x1080.svg","FillMode":2}
+LOCK
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/.config/dolphinrc" <<'DOLPHIN'
+[General]
+RememberOpenedTabs=false
+
+[UiSettings]
+ColorScheme=BreezeDark
+DOLPHIN
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/Desktop/Firefox.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Firefox
+Exec=firefox
+Icon=firefox
+Terminal=false
+Categories=Network;WebBrowser;
+DESKTOP
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/Desktop/LibreOffice.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=LibreOffice
+Exec=libreoffice --writer
+Icon=libreoffice-startcenter
+Terminal=false
+Categories=Office;
+DESKTOP
+	cat > "$BSDINSTALL_CHROOT/usr/share/skel/Desktop/PrismLauncher.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=PrismLauncher
+Exec=prismlauncher
+Icon=prismlauncher
+Terminal=false
+Categories=Game;
+DESKTOP
+	chmod 0755 "$BSDINSTALL_CHROOT/usr/share/skel/Desktop/Firefox.desktop"
+	chmod 0755 "$BSDINSTALL_CHROOT/usr/share/skel/Desktop/LibreOffice.desktop"
+	chmod 0755 "$BSDINSTALL_CHROOT/usr/share/skel/Desktop/PrismLauncher.desktop"
+}
+
+install_kde_branding()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /etc/sddm.conf.d
+	cat > "$BSDINSTALL_CHROOT/etc/sddm.conf.d/quiltbsd-aurora.conf" <<'SDDM'
+[General]
+DisplayServer=x11
+Numlock=on
+
+[Theme]
+Current=breeze
+CursorTheme=breeze_cursors
+
+[Users]
+RememberLastUser=true
+
+[Wayland]
+EnableHiDPI=true
+SDDM
 }
 
 install_pkg_gui()
@@ -286,7 +372,7 @@ install_game()
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>QuiltBlaster 3D</title>
+<title>QuiltBlaster Multiplayer</title>
 <style>
 :root {
   color-scheme: dark;
@@ -507,6 +593,7 @@ const overlayText = document.getElementById("overlayText");
 const banner = document.getElementById("banner");
 const statusFill = document.getElementById("statusFill");
 const hud = {
+  view: document.getElementById("view"),
   wave: document.getElementById("wave"),
   hp: document.getElementById("hp"),
   armor: document.getElementById("armor"),
@@ -621,6 +708,7 @@ function isWall(x, y) {
 }
 
 function castRay(angle) {
+  const player = currentPlayer();
   let distance = 0;
   while (distance < maxViewDistance) {
     const x = player.x + Math.cos(angle) * distance;
@@ -990,6 +1078,7 @@ function render() {
     ctx.lineTo(width / 2, height / 2 - 54);
     ctx.stroke();
   }
+  flash.style.opacity = flashTimer > 0 ? String(flashTimer * 0.65) : "0";
 
   if (paused && running) {
     ctx.fillStyle = "rgba(2,6,23,.58)";
@@ -1002,6 +1091,7 @@ function render() {
   }
 
   renderMinimap();
+  hud.view.textContent = players[activeView].name;
   hud.wave.textContent = wave;
   hud.hp.textContent = player.hp;
   hud.armor.textContent = player.armor;
@@ -1070,13 +1160,186 @@ LAUNCH
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=QuiltBlaster 3D
-Comment=Local QuiltBSD 3D shooter game
+Name=QuiltBlaster Multiplayer
+Comment=Local QuiltBSD multiplayer arena shooter
 Exec=/usr/local/bin/quiltblaster
 Icon=applications-games
 Terminal=false
 Categories=Game;ActionGame;
 DESKTOP
+}
+
+install_pkg_store()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/local/bin /usr/local/share/applications
+	cat > "$BSDINSTALL_CHROOT$PKG_STORE_SCRIPT" <<'STORE'
+#!/bin/sh
+set -eu
+
+PASSWORD_CACHE=""
+
+prompt_password()
+{
+	PASSWORD_CACHE=$(zenity --password --title="QuiltBSD PKG Store") || exit 0
+}
+
+run_pkg()
+{
+	cmd=$1
+	while :; do
+		[ -n "$PASSWORD_CACHE" ] || prompt_password
+		output=$(printf '%s\n' "$PASSWORD_CACHE" | sudo -S sh -c "$cmd" 2>&1) && break
+		PASSWORD_CACHE=""
+		zenity --error --width=760 --title="QuiltBSD PKG Store" \
+		    --text="Authentication failed or the pkg command returned an error. Retry if needed." --no-wrap
+	done
+	printf '%s\n' "$output" | zenity --text-info --title="QuiltBSD PKG Store" --width=900 --height=650
+}
+
+while :; do
+	choice=$(zenity --list --radiolist \
+		--title="QuiltBSD PKG Store" \
+		--width=980 --height=720 \
+		--text="Browse a curated QuiltBSD software store. Pick a package set to install, remove, or inspect." \
+		--column="Pick" --column="Package" --column="Category" --column="Name" --column="Description" \
+		TRUE "www/firefox" "Web" "Firefox" "Fast default browser" \
+		FALSE "editors/libreoffice" "Office" "LibreOffice" "Documents, spreadsheets, and presentations" \
+		FALSE "games/prismlauncher" "Games" "PrismLauncher" "Minecraft launcher with modpack support" \
+		FALSE "multimedia/vlc" "Media" "VLC" "Versatile video and audio player" \
+		FALSE "graphics/gimp" "Graphics" "GIMP" "Image editing" \
+		FALSE "graphics/inkscape" "Graphics" "Inkscape" "Vector illustration" \
+		FALSE "net-im/telegram-desktop" "Chat" "Telegram Desktop" "Messaging client" \
+		FALSE "net-im/discord" "Chat" "Discord" "Gaming and community chat" \
+		FALSE "editors/vscodium" "Dev" "VS Codium" "Code editor without Microsoft branding" \
+		FALSE "devel/git@lite" "Dev" "Git" "Distributed version control" \
+		FALSE "editors/neovim" "Dev" "Neovim" "Modern Vim-based editor" \
+		FALSE "multimedia/audacious" "Audio" "Audacious" "Lightweight music player" \
+		FALSE "multimedia/obs-studio" "Utility" "OBS Studio" "Streaming and recording" \
+		FALSE "ftp/filezilla" "Utility" "FileZilla" "FTP and SFTP transfers" \
+		FALSE "__search__" "Store" "Search manually" "Search the package repository manually" \
+		FALSE "__quit__" "Store" "Quit" "Exit the PKG Store") || exit 0
+
+	case "$choice" in
+	__quit__)
+		exit 0
+		;;
+	__search__)
+		query=$(zenity --entry --title="QuiltBSD PKG Store" \
+		    --text="Search the package repository:" --entry-text="browser") || continue
+		[ -n "$query" ] || continue
+		run_pkg "pkg search $query"
+		continue
+		;;
+	esac
+
+	action=$(zenity --list --radiolist \
+		--title="QuiltBSD PKG Store" \
+		--width=520 --height=320 \
+		--text="What do you want to do with $choice?" \
+		--column="Pick" --column="Action" \
+		TRUE install \
+		FALSE remove \
+		FALSE info \
+		FALSE search) || continue
+
+	case "$action" in
+	install) run_pkg "pkg install -y $choice" ;;
+	remove) run_pkg "pkg remove -y $choice" ;;
+	info) run_pkg "pkg info $choice" ;;
+	search) run_pkg "pkg search $choice" ;;
+	esac
+done
+STORE
+	chmod 0755 "$BSDINSTALL_CHROOT$PKG_STORE_SCRIPT"
+	cat > "$BSDINSTALL_CHROOT$PKG_STORE_DESKTOP" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=QuiltBSD PKG Store
+Comment=Curated software storefront for QuiltBSD packages
+Exec=/usr/local/bin/quiltbsd-pkg-store
+Icon=system-software-install
+Terminal=false
+Categories=System;Settings;PackageManager;
+DESKTOP
+}
+
+install_welcome_screen()
+{
+	chroot "$BSDINSTALL_CHROOT" mkdir -p /usr/local/bin /usr/local/share/applications /usr/share/skel/.config/autostart
+	cat > "$BSDINSTALL_CHROOT$WELCOME_SCRIPT" <<'WELCOME'
+#!/bin/sh
+set -eu
+
+flag="${HOME}/.local/share/quiltbsd/welcome-seen"
+mkdir -p "${HOME}/.local/share/quiltbsd"
+
+if [ "${1:-}" != "--force" ] && [ -f "$flag" ]; then
+	exit 0
+fi
+
+while :; do
+	choice=$(zenity --list --radiolist \
+		--title="Welcome to QuiltBSD Aurora" \
+		--width=880 --height=640 \
+		--text="Welcome to QuiltBSD Aurora.\n\nChoose what you want to do next." \
+		--column="Pick" --column="Action" --column="Description" \
+		TRUE store "Open the QuiltBSD PKG Store" \
+		FALSE packages "Open the QuiltBSD PKG GUI" \
+		FALSE browser "Launch Firefox" \
+		FALSE office "Launch LibreOffice" \
+		FALSE prism "Launch PrismLauncher" \
+		FALSE game "Launch QuiltBlaster Multiplayer" \
+		FALSE handbook "Open Aurora features overview" \
+		FALSE maintenance "Run post-install maintenance" \
+		FALSE done "Close and do not show automatically again") || exit 0
+
+	case "$choice" in
+	store) /usr/local/bin/quiltbsd-pkg-store ;;
+	packages) /usr/local/bin/quiltbsd-pkg-gui ;;
+	browser) firefox >/dev/null 2>&1 & ;;
+	office) libreoffice >/dev/null 2>&1 & ;;
+	prism) prismlauncher >/dev/null 2>&1 & ;;
+	game) /usr/local/bin/quiltblaster >/dev/null 2>&1 & ;;
+	handbook) zenity --text-info --title="QuiltBSD Aurora Features" --width=900 --height=680 --filename=/usr/local/share/quiltbsd/FEATURES.txt ;;
+	maintenance)
+		if command -v konsole >/dev/null 2>&1; then
+			konsole -e /usr/local/bin/quiltbsd-postinstall >/dev/null 2>&1 &
+		elif command -v xterm >/dev/null 2>&1; then
+			xterm -e /usr/local/bin/quiltbsd-postinstall >/dev/null 2>&1 &
+		else
+			zenity --info --title="QuiltBSD Aurora" \
+			    --text="Open a terminal and run /usr/local/bin/quiltbsd-postinstall to perform maintenance."
+		fi
+		;;
+	done)
+		touch "$flag"
+		exit 0
+		;;
+	esac
+done
+WELCOME
+	chmod 0755 "$BSDINSTALL_CHROOT$WELCOME_SCRIPT"
+	cat > "$BSDINSTALL_CHROOT$WELCOME_DESKTOP" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=QuiltBSD Aurora Welcome
+Comment=Welcome screen and first-run launcher for QuiltBSD Aurora
+Exec=/usr/local/bin/quiltbsd-welcome --force
+Icon=preferences-desktop-theme
+Terminal=false
+Categories=System;Settings;
+DESKTOP
+	cat > "$BSDINSTALL_CHROOT$WELCOME_AUTOSTART" <<'AUTOSTART'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=QuiltBSD Aurora Welcome
+Exec=/usr/local/bin/quiltbsd-welcome
+X-GNOME-Autostart-enabled=true
+Terminal=false
+AUTOSTART
 }
 
 install_plymouth_theme()
@@ -1093,14 +1356,17 @@ ImageDir=/usr/local/share/plymouth/themes/quiltboot
 ScriptFile=/usr/local/share/plymouth/themes/quiltboot/quiltbsd.script
 PLYMOUTH
 	cat > "$BSDINSTALL_CHROOT$PLYMOUTH_THEME_DIR/quiltbsd.script" <<'SCRIPT'
-Window.SetBackgroundTopColor (0.06, 0.09, 0.16);
-Window.SetBackgroundBottomColor (0.11, 0.20, 0.85);
-message = "QuiltBSD";
+Window.SetBackgroundTopColor (0.02, 0.03, 0.09);
+Window.SetBackgroundBottomColor (0.07, 0.16, 0.48);
+message = "QuiltBSD Aurora";
 progress = 0;
+wave = 0;
 fun refresh_callback () {
   progress = progress + 0.01;
   if (progress > 1) progress = 0;
-  Window.SetBackgroundTopColor (0.06, 0.09 + progress * 0.02, 0.16 + progress * 0.03);
+  wave = wave + 0.04;
+  Window.SetBackgroundTopColor (0.02 + progress * 0.02, 0.03 + progress * 0.10, 0.09 + progress * 0.16);
+  Window.SetBackgroundBottomColor (0.07 + progress * 0.02, 0.16 + progress * 0.08, 0.48 + progress * 0.10);
 }
 Plymouth.SetRefreshFunction (refresh_callback);
 SCRIPT
@@ -1130,11 +1396,16 @@ Selected desktop environment: $DESKTOP_NAME
 Included by the QuiltBSD desktop installer path:
 - $DESKTOP_NAME desktop environment
 - Firefox preinstalled
+- LibreOffice preinstalled
+- PrismLauncher preinstalled
+- Aurora KDE defaults, desktop shortcuts, and SDDM branding
 - QuiltBSD wallpaper asset and per-user wallpaper apply helper
+- QuiltBSD Aurora Welcome screen and first-login launcher
 - sudo enabled for wheel users
 - bash, vim, tmux, rsync, zip and unzip preinstalled
+- QuiltBSD PKG Store for curated package browsing
 - QuiltBSD PKG GUI for graphical package management
-- QuiltBlaster 3D local shooter game
+- QuiltBlaster Multiplayer local co-op shooter
 - QuiltBoot boot theme files and helper
 - one-shot first-network package refresh and upgrade job
 - /usr/local/bin/quiltbsd-postinstall helper to rerun package maintenance later
@@ -1153,9 +1424,14 @@ POST
 QuiltBSD desktop additions installed:
 - $DESKTOP_NAME
 - Firefox
+- LibreOffice
+- PrismLauncher
 - QuiltBSD wallpaper
+- Aurora KDE defaults and desktop shortcuts
+- QuiltBSD Aurora Welcome
+- QuiltBSD PKG Store
 - QuiltBSD PKG GUI
-- QuiltBlaster 3D
+- QuiltBlaster Multiplayer
 - QuiltBoot theme helper
 - Run /usr/local/bin/quiltbsd-postinstall for a manual package refresh later.
 EOF2
@@ -1231,12 +1507,14 @@ enable_services()
 	esac
 }
 
-select_desktop_environment || exit 1
+configure_desktop_environment || exit 1
 
-bsddialog --backtitle "$OSNAME Installer" --title "Desktop Environment" \
-    --yesno "Install the QuiltBSD desktop profile with $DESKTOP_NAME, Firefox, wallpaper, QuiltBSD PKG GUI, maintenance tools, and first-network package updates into the target system?" 0 0
-if [ $? -ne $BSDDIALOG_OK ]; then
-	exit 1
+if [ "${QUILTBSD_DESKTOP_AUTO:-NO}" != "YES" ]; then
+	bsddialog --backtitle "$OSNAME Installer" --title "Desktop Environment" \
+	    --yesno "Install the fully rebranded QuiltBSD Aurora desktop profile with always-on $DESKTOP_NAME, Firefox, LibreOffice, PrismLauncher, Aurora Welcome, wallpaper, QuiltBSD PKG Store, QuiltBSD PKG GUI, maintenance tools, and first-network package updates into the target system?" 0 0
+	if [ $? -ne $BSDDIALOG_OK ]; then
+		exit 1
+	fi
 fi
 
 if [ -f "$BSDINSTALL_TMPETC/resolv.conf" ]; then
@@ -1257,12 +1535,16 @@ fi
 
 install_wallpaper
 install_user_defaults
+install_kde_branding
+install_welcome_screen
+install_pkg_store
 install_pkg_gui
 install_game
 install_plymouth_theme
 install_support_files
 install_firstboot_update
 enable_services
+touch "$BSDINSTALL_CHROOT$DESKTOP_SENTINEL"
 
 bsddialog --backtitle "$OSNAME Installer" --title "Desktop Environment" \
-    --msgbox "The 100% QuiltBSD desktop profile was installed with $DESKTOP_NAME, Firefox, wallpaper assets, QuiltBSD PKG GUI, the improved QuiltBlaster 3D shooter, an always-on QuiltBoot boot theme helper, shell/tooling defaults, and a first-network pkg update/upgrade job." 0 0
+    --msgbox "The QuiltBSD Aurora profile was installed with always-on $DESKTOP_NAME, Firefox, LibreOffice, PrismLauncher, the Aurora Welcome screen, stronger KDE defaults, desktop shortcuts, SDDM branding, aurora wallpaper assets, QuiltBSD PKG Store, QuiltBSD PKG GUI, QuiltBlaster Multiplayer, the refreshed QuiltBoot boot theme helper, shell/tooling defaults, and a first-network pkg update/upgrade job." 0 0

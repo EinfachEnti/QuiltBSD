@@ -8,6 +8,27 @@
 
 set -eu
 
+find_make_cmd()
+{
+	if [ -n "${MAKE:-}" ]; then
+		printf '%s\n' "$MAKE"
+		return 0
+	fi
+
+	if command -v bmake >/dev/null 2>&1; then
+		printf '%s\n' "bmake"
+		return 0
+	fi
+
+	if command -v make >/dev/null 2>&1; then
+		printf '%s\n' "make"
+		return 0
+	fi
+
+	echo "No make implementation was found in PATH." >&2
+	exit 1
+}
+
 usage()
 {
 	cat <<'EOF2'
@@ -26,7 +47,8 @@ Defaults:
   --jobs N               Pass -jN to make for faster builds.
   --release-dir DIR      Release tree to run make in (default: ../release).
   --output-dir DIR       Copy finished artifacts here after a successful build.
-  --make MAKE            make program to run (default: make).
+  --make MAKE            make program to run (default: bmake when available,
+                         otherwise make).
 
 Environment:
   TARGET, TARGET_ARCH, WITH_DVD, SRC_CONF, MAKEOBJDIRPREFIX, __MAKE_CONF, etc.
@@ -35,7 +57,7 @@ EOF2
 }
 
 MODE=both
-MAKE_CMD=${MAKE:-make}
+MAKE_CMD=$(find_make_cmd)
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 RELEASE_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 OUTPUT_DIR=
