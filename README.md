@@ -111,7 +111,7 @@ checksums.
 QuiltBSD now installs the **QuiltBSD Aurora** desktop profile with **KDE Plasma** automatically during the installer flow.
 If you ever need to rerun or repair it, open the final configuration menu and select **Desktop Environment**.
 
-The desktop installer profile adds common desktop packages such as Firefox, KDE Plasma/GNOME/MATE/XFCE options, sudo, bash, vim, tmux, rsync, zip/unzip, a QuiltBSD wallpaper, a first-network package refresh, QuiltBSD PKG GUI, and desktop launchers.
+The desktop installer profile adds common desktop packages such as Firefox, LibreOffice, PrismLauncher, VLC, VS Codium, Git, KDE Plasma/GNOME/MATE/XFCE options, sudo, bash, vim, tmux, rsync, zip/unzip, a QuiltBSD wallpaper, a first-network package refresh, QuiltBSD PKG GUI, and desktop launchers for all custom QuiltBSD apps, including QuiltBlaster Multiplayer, QuiltCraft3D, QuiltNotes, and QuiltPixel.
 
 ### QuiltBSD PKG GUI
 
@@ -133,7 +133,7 @@ It is available from the application menu, and can also be started manually with
 /usr/local/bin/quiltbsd-pkg-store
 ```
 
-It provides curated package picks for common categories like web, office, media, graphics, chat, development, and utilities, plus manual repository search.
+It provides curated package picks for common categories like web, office, media, graphics, chat, development, and utilities, plus manual repository search and an install-status action for checking whether a package is already present.
 
 ### QuiltBSD Aurora Welcome
 
@@ -144,7 +144,7 @@ It can also be launched manually with:
 /usr/local/bin/quiltbsd-welcome --force
 ```
 
-It provides quick entry points for the PKG Store, PKG GUI, Firefox, LibreOffice, PrismLauncher, QuiltBlaster Multiplayer, the Aurora features overview, and post-install maintenance.
+It provides quick entry points for the PKG Store, PKG GUI, Firefox, LibreOffice, PrismLauncher, VS Codium, VLC, QuiltBlaster Multiplayer, QuiltCraft3D, QuiltNotes, QuiltPixel, the Aurora features overview, and post-install maintenance.
 
 ### QuiltBlaster Multiplayer
 
@@ -155,13 +155,46 @@ You can launch it from the desktop menu or run:
 /usr/local/bin/quiltblaster
 ```
 
-This opens the local game in Firefox from the QuiltBSD shared data directory. The current version includes wave escalation, boss rounds every third wave, pickups, streak scoring, armor, pause support, and an improved HUD/minimap presentation.
+This opens the local game in Firefox from the QuiltBSD shared data directory. The current version includes wave escalation, boss rounds every third wave, pickups, streak scoring, armor, pause support, tactical view switching with the Q key, and an improved HUD/minimap presentation.
 
 Tips:
 
 - Clear waves quickly to keep your streak bonus alive.
 - Boss kills can drop extra healing pickups.
 - Reload before pushing into tight corridors, because close-range enemies hit hard.
+
+### QuiltCraft3D
+
+The desktop profile also installs **QuiltCraft3D**, a local browser-based voxel sandbox inspired by Minecraft.
+You can launch it from the desktop menu or run:
+
+```sh
+/usr/local/bin/quiltcraft3d
+```
+
+This opens a procedural block-building sandbox in Firefox from the QuiltBSD shared data directory. The current version includes four block materials, mouse-look camera controls, instant block placement/removal, toolbar selection, and world regeneration with the `R` key.
+
+### QuiltNotes
+
+The desktop profile also installs **QuiltNotes**, a local note board for ideas, patch plans, and task lists.
+You can launch it from the desktop menu or run:
+
+```sh
+/usr/local/bin/quiltnotes
+```
+
+It stores notes locally in the browser profile and includes priorities, tags, quick editing, and JSON export.
+
+### QuiltPixel
+
+The desktop profile also installs **QuiltPixel**, a lightweight pixel-art and icon sketching app.
+You can launch it from the desktop menu or run:
+
+```sh
+/usr/local/bin/quiltpixel
+```
+
+It provides a small palette-based canvas with local saving, custom colors, fill/clear tools, and PNG export.
 
 ### First-boot maintenance helper
 
